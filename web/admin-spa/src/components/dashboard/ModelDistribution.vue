@@ -1,5 +1,5 @@
 <template>
-  <div class="glass-strong rounded-3xl p-6">
+  <div class="glass-strong rounded-lg p-6">
     <div class="mb-6 flex flex-col items-start justify-between gap-4 md:flex-row md:items-center">
       <h2 class="flex items-center text-xl font-bold text-gray-800">
         <i class="fas fa-robot mr-2 text-purple-500" />

@@ -59,6 +59,17 @@
                 <button
                   :class="[
                     'rounded-md px-3 py-2 text-sm font-medium',
+                    activeTab === 'recharge'
+                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
+                      : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                  ]"
+                  @click="handleTabChange('recharge')"
+                >
+                  Recharge
+                </button>
+                <button
+                  :class="[
+                    'rounded-md px-3 py-2 text-sm font-medium',
                     activeTab === 'tutorial'
                       ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
                       : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
@@ -263,6 +274,70 @@
           </div>
         </div>
 
+        <!-- Balance Warning -->
+        <div
+          v-if="lowBalanceKeys.length > 0"
+          class="rounded-lg border p-4"
+          :class="
+            criticalBalanceKeys.length > 0
+              ? 'border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-900/20'
+              : 'border-yellow-300 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-900/20'
+          "
+        >
+          <div class="flex items-start">
+            <svg
+              class="mt-0.5 h-5 w-5"
+              :class="criticalBalanceKeys.length > 0 ? 'text-red-400' : 'text-yellow-400'"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
+              <path
+                clip-rule="evenodd"
+                d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.168 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z"
+                fill-rule="evenodd"
+              />
+            </svg>
+            <div class="ml-3 flex-1">
+              <h3
+                class="text-sm font-medium"
+                :class="
+                  criticalBalanceKeys.length > 0
+                    ? 'text-red-800 dark:text-red-300'
+                    : 'text-yellow-800 dark:text-yellow-300'
+                "
+              >
+                Low Balance Warning
+              </h3>
+              <div
+                class="mt-1 text-sm"
+                :class="
+                  criticalBalanceKeys.length > 0
+                    ? 'text-red-700 dark:text-red-400'
+                    : 'text-yellow-700 dark:text-yellow-400'
+                "
+              >
+                <p v-for="key in lowBalanceKeys" :key="key.id">
+                  <strong>{{ key.name }}</strong
+                  >: ${{ key.remaining.toFixed(2) }} remaining ({{ key.percent.toFixed(0) }}% used)
+                </p>
+              </div>
+              <div class="mt-3">
+                <button
+                  class="rounded-md px-3 py-1.5 text-sm font-medium text-white"
+                  :class="
+                    criticalBalanceKeys.length > 0
+                      ? 'bg-red-600 hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600'
+                      : 'bg-yellow-600 hover:bg-yellow-700 dark:bg-yellow-500 dark:hover:bg-yellow-600'
+                  "
+                  @click="handleTabChange('recharge')"
+                >
+                  Recharge Now
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- User Info -->
         <div class="rounded-lg bg-white shadow dark:bg-gray-800">
           <div class="px-4 py-5 sm:p-6">
@@ -271,25 +346,25 @@
             </h3>
             <div class="mt-5 border-t border-gray-200 dark:border-gray-700">
               <dl class="divide-y divide-gray-200 dark:divide-gray-700">
-                <div class="py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:py-5">
+                <div class="py-4 sm:grid sm:grid-cols-3 sm:gap-3 sm:py-5">
                   <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Username</dt>
                   <dd class="mt-1 text-sm text-gray-900 dark:text-white sm:col-span-2 sm:mt-0">
                     {{ userProfile?.username }}
                   </dd>
                 </div>
-                <div class="py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:py-5">
+                <div class="py-4 sm:grid sm:grid-cols-3 sm:gap-3 sm:py-5">
                   <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Display Name</dt>
                   <dd class="mt-1 text-sm text-gray-900 dark:text-white sm:col-span-2 sm:mt-0">
                     {{ userProfile?.displayName || 'N/A' }}
                   </dd>
                 </div>
-                <div class="py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:py-5">
+                <div class="py-4 sm:grid sm:grid-cols-3 sm:gap-3 sm:py-5">
                   <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Email</dt>
                   <dd class="mt-1 text-sm text-gray-900 dark:text-white sm:col-span-2 sm:mt-0">
                     {{ userProfile?.email || 'N/A' }}
                   </dd>
                 </div>
-                <div class="py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:py-5">
+                <div class="py-4 sm:grid sm:grid-cols-3 sm:gap-3 sm:py-5">
                   <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Role</dt>
                   <dd class="mt-1 text-sm text-gray-900 dark:text-white sm:col-span-2 sm:mt-0">
                     <span
@@ -299,13 +374,13 @@
                     </span>
                   </dd>
                 </div>
-                <div class="py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:py-5">
+                <div class="py-4 sm:grid sm:grid-cols-3 sm:gap-3 sm:py-5">
                   <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Member Since</dt>
                   <dd class="mt-1 text-sm text-gray-900 dark:text-white sm:col-span-2 sm:mt-0">
                     {{ formatDate(userProfile?.createdAt) }}
                   </dd>
                 </div>
-                <div class="py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:py-5">
+                <div class="py-4 sm:grid sm:grid-cols-3 sm:gap-3 sm:py-5">
                   <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Last Login</dt>
                   <dd class="mt-1 text-sm text-gray-900 dark:text-white sm:col-span-2 sm:mt-0">
                     {{ formatDate(userProfile?.lastLoginAt) || 'N/A' }}
@@ -327,6 +402,11 @@
         <UserUsageStats />
       </div>
 
+      <!-- Recharge Tab -->
+      <div v-else-if="activeTab === 'recharge'">
+        <UserRechargeTab />
+      </div>
+
       <!-- Tutorial Tab -->
       <div v-else-if="activeTab === 'tutorial'" class="space-y-6">
         <TutorialView />
@@ -336,7 +416,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useThemeStore } from '@/stores/theme'
@@ -345,6 +425,7 @@ import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import UserApiKeysManager from '@/components/user/UserApiKeysManager.vue'
 import UserUsageStats from '@/components/user/UserUsageStats.vue'
 import TutorialView from '@/views/TutorialView.vue'
+import UserRechargeTab from '@/components/user/UserRechargeTab.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -353,6 +434,31 @@ const themeStore = useThemeStore()
 const activeTab = ref('overview')
 const userProfile = ref(null)
 const apiKeysStats = ref({ active: 0, deleted: 0 })
+const allApiKeysData = ref([])
+
+// Keys with balance < 20% remaining
+const lowBalanceKeys = computed(() => {
+  return allApiKeysData.value
+    .filter((key) => {
+      if (key.isDeleted === 'true' || key.deletedAt || !key.isActive) return false
+      const limit = key.totalCostLimit || 0
+      if (limit <= 0) return false // unlimited keys are fine
+      const cost = key.totalCost || 0
+      const percent = (cost / limit) * 100
+      return percent >= 80
+    })
+    .map((key) => ({
+      id: key.id,
+      name: key.name,
+      remaining: Math.max(0, (key.totalCostLimit || 0) - (key.totalCost || 0)),
+      percent: ((key.totalCost || 0) / (key.totalCostLimit || 1)) * 100
+    }))
+})
+
+// Keys with balance < 5% remaining (critical)
+const criticalBalanceKeys = computed(() => {
+  return lowBalanceKeys.value.filter((key) => key.percent >= 95)
+})
 
 const handleTabChange = (tab) => {
   activeTab.value = tab
@@ -384,17 +490,12 @@ const loadUserProfile = async () => {
 const loadApiKeysStats = async () => {
   try {
     const allApiKeys = await userStore.getUserApiKeys(true) // Include deleted keys
-    console.log('All API Keys received:', allApiKeys)
+    allApiKeysData.value = allApiKeys
 
     const activeKeys = allApiKeys.filter(
       (key) => !(key.isDeleted === 'true' || key.deletedAt) && key.isActive
     )
     const deletedKeys = allApiKeys.filter((key) => key.isDeleted === 'true' || key.deletedAt)
-
-    console.log('Active keys:', activeKeys)
-    console.log('Deleted keys:', deletedKeys)
-    console.log('Active count:', activeKeys.length)
-    console.log('Deleted count:', deletedKeys.length)
 
     apiKeysStats.value = { active: activeKeys.length, deleted: deletedKeys.length }
   } catch (error) {

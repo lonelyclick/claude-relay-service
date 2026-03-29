@@ -2,7 +2,7 @@
   <div class="flex items-center gap-4">
     <!-- Logo区域 -->
     <div
-      class="flex h-12 w-12 flex-shrink-0 items-center justify-center overflow-hidden rounded-xl border border-gray-300/30 bg-gradient-to-br from-blue-500/20 to-purple-500/20 backdrop-blur-sm dark:border-gray-600/30 dark:from-blue-600/20 dark:to-purple-600/20"
+      class="flex h-12 w-12 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg border border-gray-300/30 bg-gradient-to-br from-blue-500/20 to-purple-500/20 dark:border-gray-600/30 dark:from-blue-600/20 dark:to-purple-600/20"
     >
       <template v-if="!loading">
         <img

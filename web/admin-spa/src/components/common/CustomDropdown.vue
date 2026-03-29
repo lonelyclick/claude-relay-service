@@ -3,7 +3,7 @@
     <!-- 触发器 -->
     <div
       ref="triggerRef"
-      class="relative flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm transition-all duration-200 hover:shadow-md dark:border-gray-600 dark:bg-gray-800"
+      class="relative flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm transition-colors duration-200 hover:shadow-md dark:border-gray-600 dark:bg-gray-800"
       :class="[isOpen && 'border-blue-400 shadow-md']"
       @click="toggleDropdown"
     >

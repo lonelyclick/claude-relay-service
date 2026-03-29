@@ -4,7 +4,7 @@
     <NodeInstallTutorial :platform="platform" :step-number="1" tool-name="Droid CLI" />
 
     <!-- 第二步：配置 Droid CLI -->
-    <div class="mb-4 sm:mb-10 sm:mb-6">
+    <div class="mb-4 sm:mb-10 sm:mb-4">
       <h4
         class="mb-3 flex items-center text-lg font-semibold text-gray-800 dark:text-gray-300 sm:mb-4 sm:text-xl"
       >
@@ -31,7 +31,7 @@
         </template>
       </p>
       <div
-        class="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-500/40 dark:bg-blue-950/30 sm:p-4"
+        class="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-500/40 dark:bg-blue-950/30 sm:p-3"
       >
         <h6 class="mb-2 text-sm font-medium text-blue-800 dark:text-blue-200 sm:text-base">
           配置文件示例

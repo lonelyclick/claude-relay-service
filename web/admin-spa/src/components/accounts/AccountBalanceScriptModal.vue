@@ -68,7 +68,7 @@
         </div>
         <textarea
           v-model="form.scriptBody"
-          class="min-h-[260px] w-full rounded-xl bg-gray-900 font-mono text-sm text-gray-100 shadow-inner focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          class="min-h-[260px] w-full rounded-lg bg-gray-900 font-mono text-sm text-gray-100 shadow-inner focus:outline-none focus:ring-2 focus:ring-indigo-500"
           spellcheck="false"
         ></textarea>
         <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">

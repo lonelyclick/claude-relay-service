@@ -343,6 +343,21 @@ export const getAdminServiceRatesApi = (config) =>
 export const updateAdminServiceRatesApi = (data, config) =>
   request({ url: '/admin/service-rates', method: 'PUT', data, ...config })
 
+// Workers
+export const getWorkersApi = () => request({ url: '/admin/workers', method: 'GET' })
+export const getWorkerApi = (id) => request({ url: `/admin/workers/${id}`, method: 'GET' })
+export const createWorkerApi = (data) => request({ url: '/admin/workers', method: 'POST', data })
+export const updateWorkerApi = (id, data) => request({ url: `/admin/workers/${id}`, method: 'PUT', data })
+export const deleteWorkerApi = (id) => request({ url: `/admin/workers/${id}`, method: 'DELETE' })
+export const regenerateWorkerTokenApi = (id) =>
+  request({ url: `/admin/workers/${id}/regenerate-token`, method: 'POST' })
+export const disconnectWorkerApi = (id, reason) =>
+  request({ url: `/admin/workers/${id}/disconnect`, method: 'POST', data: { reason } })
+export const bindWorkerAccountApi = (id, accountId) =>
+  request({ url: `/admin/workers/${id}/bind-account`, method: 'POST', data: { accountId } })
+export const unbindWorkerAccountApi = (id, accountId) =>
+  request({ url: `/admin/workers/${id}/unbind-account`, method: 'POST', data: { accountId } })
+
 // 系统
 export const checkUpdatesApi = () => request({ url: '/admin/check-updates', method: 'GET' })
 export const getClaudeCodeVersionApi = () =>

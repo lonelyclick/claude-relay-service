@@ -1,7 +1,9 @@
 // App 配置
+// VITE_API_BASE_URL: 完整的 API 基础地址（如 https://relay.example.com）
+// 生产环境不设置时默认为空（同源），设置后支持跨域独立部署
 export const APP_CONFIG = {
   basePath: import.meta.env.VITE_APP_BASE_URL || (import.meta.env.DEV ? '/admin/' : '/web/admin/'),
-  apiPrefix: import.meta.env.DEV ? '/webapi' : ''
+  apiPrefix: import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? '/webapi' : '')
 }
 
 export const getAppUrl = (path = '') => {
@@ -26,7 +28,7 @@ export const showToast = (message, type = 'info', title = '', duration = 3000) =
 
   const id = ++toastId
   const toast = document.createElement('div')
-  toast.className = `toast rounded-2xl p-4 shadow-2xl backdrop-blur-sm toast-${type}`
+  toast.className = `toast rounded-lg p-4 shadow-lg backdrop-blur-sm toast-${type}`
   toast.style.cssText = `
     position: relative;
     min-width: 320px;

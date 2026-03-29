@@ -6,6 +6,7 @@ import { APP_CONFIG, showToast } from '@/utils/tools'
 // 路由懒加载
 const LoginView = () => import('@/views/LoginView.vue')
 const UserLoginView = () => import('@/views/UserLoginView.vue')
+const UserRegisterView = () => import('@/views/UserRegisterView.vue')
 const UserDashboardView = () => import('@/views/UserDashboardView.vue')
 const UserManagementView = () => import('@/views/UserManagementView.vue')
 const MainLayout = () => import('@/components/layout/MainLayout.vue')
@@ -17,6 +18,7 @@ const AccountUsageRecordsView = () => import('@/views/AccountUsageRecordsView.vu
 const SettingsView = () => import('@/views/SettingsView.vue')
 const ApiStatsView = () => import('@/views/ApiStatsView.vue')
 const QuotaCardsView = () => import('@/views/QuotaCardsView.vue')
+const WorkersView = () => import('@/views/WorkersView.vue')
 
 const routes = [
   {
@@ -49,6 +51,12 @@ const routes = [
     path: '/user-login',
     name: 'UserLogin',
     component: UserLoginView,
+    meta: { requiresAuth: false, userAuth: true }
+  },
+  {
+    path: '/user-register',
+    name: 'UserRegister',
+    component: UserRegisterView,
     meta: { requiresAuth: false, userAuth: true }
   },
   {
@@ -159,6 +167,18 @@ const routes = [
       }
     ]
   },
+  {
+    path: '/workers',
+    component: MainLayout,
+    meta: { requiresAuth: true },
+    children: [
+      {
+        path: '',
+        name: 'Workers',
+        component: WorkersView
+      }
+    ]
+  },
   // 捕获所有未匹配的路由
   {
     path: '/:pathMatch(.*)*',
@@ -214,7 +234,7 @@ router.beforeEach(async (to, from, next) => {
   // API Stats 页面不需要认证，直接放行
   if (to.path === '/api-stats' || to.path.startsWith('/api-stats')) {
     next()
-  } else if (to.path === '/user-login') {
+  } else if (to.path === '/user-login' || to.path === '/user-register') {
     // 如果已经是用户登录状态，重定向到用户仪表板
     if (userStore.isAuthenticated) {
       next('/user-dashboard')

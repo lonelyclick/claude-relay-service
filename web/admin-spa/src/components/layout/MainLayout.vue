@@ -1,11 +1,11 @@
 <template>
-  <div class="min-h-screen p-3 sm:p-4 md:p-6">
+  <div class="min-h-screen p-3 sm:p-3 md:p-4">
     <!-- 顶部导航 -->
     <AppHeader />
 
     <!-- 主内容区域 -->
     <div
-      class="glass-strong rounded-xl p-3 shadow-xl sm:rounded-2xl sm:p-4 md:rounded-3xl md:p-6"
+      class="glass-strong rounded-lg p-3 shadow-md sm:rounded-lg sm:p-3 md:rounded-lg md:p-4"
       style="z-index: 1; min-height: calc(100vh - 120px)"
     >
       <!-- 标签栏 -->
@@ -39,6 +39,7 @@ const tabRouteMap = computed(() => {
     dashboard: '/dashboard',
     apiKeys: '/api-keys',
     accounts: '/accounts',
+    workers: '/workers',
     quotaCards: '/quota-cards',
     settings: '/settings'
   }
@@ -67,6 +68,7 @@ const initActiveTab = () => {
       Dashboard: 'dashboard',
       ApiKeys: 'apiKeys',
       Accounts: 'accounts',
+      Workers: 'workers',
       QuotaCards: 'quotaCards',
       Settings: 'settings'
     }

@@ -1,13 +1,13 @@
 <template>
   <Teleport to="body">
-    <div class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
+    <div class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-3">
       <div
-        class="modal-content mx-auto flex max-h-[90vh] w-full max-w-4xl flex-col p-4 sm:p-6 md:p-8"
+        class="modal-content mx-auto flex max-h-[90vh] w-full max-w-4xl flex-col p-4 sm:p-6 md:p-4"
       >
-        <div class="mb-4 flex items-center justify-between sm:mb-6">
+        <div class="mb-4 flex items-center justify-between sm:mb-4">
           <div class="flex items-center gap-2 sm:gap-3">
             <div
-              class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 sm:h-10 sm:w-10 sm:rounded-xl"
+              class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 sm:h-10 sm:w-10 sm:rounded-lg"
             >
               <i class="fas fa-edit text-sm text-white sm:text-base" />
             </div>
@@ -459,7 +459,7 @@
 
           <div class="flex gap-3 pt-4">
             <button
-              class="flex-1 rounded-xl bg-gray-100 px-6 py-3 font-semibold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+              class="flex-1 rounded-lg bg-gray-100 px-6 py-3 font-semibold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
               type="button"
               @click="$emit('close')"
             >

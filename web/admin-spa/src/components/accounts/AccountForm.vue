@@ -1,13 +1,13 @@
 <template>
   <Teleport to="body">
-    <div v-if="show" class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
+    <div v-if="show" class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-3">
       <div
-        class="modal-content custom-scrollbar mx-auto max-h-[90vh] w-full max-w-2xl overflow-y-auto p-4 sm:p-6 md:p-8"
+        class="modal-content custom-scrollbar mx-auto max-h-[90vh] w-full max-w-2xl overflow-y-auto p-4 sm:p-6 md:p-4"
       >
-        <div class="mb-4 flex items-center justify-between sm:mb-6">
+        <div class="mb-4 flex items-center justify-between sm:mb-4">
           <div class="flex items-center gap-2 sm:gap-3">
             <div
-              class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-green-500 to-green-600 sm:h-10 sm:w-10 sm:rounded-xl"
+              class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-green-500 to-green-600 sm:h-10 sm:w-10 sm:rounded-lg"
             >
               <i class="fas fa-user-circle text-sm text-white sm:text-base" />
             </div>
@@ -74,7 +74,7 @@
                 <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <!-- Claude 分组 -->
                   <div
-                    class="group relative cursor-pointer overflow-hidden rounded-lg border-2 transition-all duration-200"
+                    class="group relative cursor-pointer overflow-hidden rounded-lg border-2 transition-colors duration-200"
                     :class="[
                       platformGroup === 'claude'
                         ? 'border-indigo-500 bg-gradient-to-br from-indigo-50 to-purple-50 shadow-md dark:from-indigo-900/20 dark:to-purple-900/20'
@@ -105,7 +105,7 @@
 
                   <!-- OpenAI 分组 -->
                   <div
-                    class="group relative cursor-pointer overflow-hidden rounded-lg border-2 transition-all duration-200"
+                    class="group relative cursor-pointer overflow-hidden rounded-lg border-2 transition-colors duration-200"
                     :class="[
                       platformGroup === 'openai'
                         ? 'border-emerald-500 bg-gradient-to-br from-emerald-50 to-teal-50 shadow-md dark:from-emerald-900/20 dark:to-teal-900/20'
@@ -145,7 +145,7 @@
 
                   <!-- Gemini 分组 -->
                   <div
-                    class="group relative cursor-pointer overflow-hidden rounded-lg border-2 transition-all duration-200"
+                    class="group relative cursor-pointer overflow-hidden rounded-lg border-2 transition-colors duration-200"
                     :class="[
                       platformGroup === 'gemini'
                         ? 'border-blue-500 bg-gradient-to-br from-blue-50 to-indigo-50 shadow-md dark:from-blue-900/20 dark:to-indigo-900/20'
@@ -176,7 +176,7 @@
 
                   <!-- Droid 分组 -->
                   <div
-                    class="group relative cursor-pointer overflow-hidden rounded-lg border-2 transition-all duration-200"
+                    class="group relative cursor-pointer overflow-hidden rounded-lg border-2 transition-colors duration-200"
                     :class="[
                       platformGroup === 'droid'
                         ? 'border-rose-500 bg-gradient-to-br from-rose-50 to-orange-50 shadow-md dark:from-rose-900/20 dark:to-orange-900/20'
@@ -218,7 +218,7 @@
                     <!-- Claude 子选项 -->
                     <template v-if="platformGroup === 'claude'">
                       <label
-                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-all"
+                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-colors"
                         :class="[
                           form.platform === 'claude'
                             ? 'border-indigo-500 bg-indigo-50 dark:border-indigo-400 dark:bg-indigo-900/30'
@@ -249,7 +249,7 @@
                       </label>
 
                       <label
-                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-all"
+                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-colors"
                         :class="[
                           form.platform === 'claude-console'
                             ? 'border-purple-500 bg-purple-50 dark:border-purple-400 dark:bg-purple-900/30'
@@ -282,7 +282,7 @@
                       </label>
 
                       <label
-                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-all"
+                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-colors"
                         :class="[
                           form.platform === 'bedrock'
                             ? 'border-orange-500 bg-orange-50 dark:border-orange-400 dark:bg-orange-900/30'
@@ -313,7 +313,7 @@
                       </label>
 
                       <label
-                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-all"
+                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-colors"
                         :class="[
                           form.platform === 'ccr'
                             ? 'border-cyan-500 bg-cyan-50 dark:border-cyan-400 dark:bg-cyan-900/30'
@@ -346,7 +346,7 @@
                     <!-- OpenAI 子选项 -->
                     <template v-if="platformGroup === 'openai'">
                       <label
-                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-all"
+                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-colors"
                         :class="[
                           form.platform === 'openai'
                             ? 'border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-900/30'
@@ -379,7 +379,7 @@
                       </label>
 
                       <label
-                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-all"
+                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-colors"
                         :class="[
                           form.platform === 'openai-responses'
                             ? 'border-teal-500 bg-teal-50 dark:border-teal-400 dark:bg-teal-900/30'
@@ -412,7 +412,7 @@
                       </label>
 
                       <label
-                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-all"
+                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-colors"
                         :class="[
                           form.platform === 'azure_openai'
                             ? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/30'
@@ -448,7 +448,7 @@
                     <!-- Gemini 子选项 -->
                     <template v-if="platformGroup === 'gemini'">
                       <label
-                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-all"
+                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-colors"
                         :class="[
                           form.platform === 'gemini'
                             ? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/30'
@@ -478,7 +478,7 @@
                         </div>
                       </label>
                       <label
-                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-all"
+                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-colors"
                         :class="[
                           form.platform === 'gemini-antigravity'
                             ? 'border-purple-500 bg-purple-50 dark:border-purple-400 dark:bg-purple-900/30'
@@ -509,7 +509,7 @@
                       </label>
 
                       <label
-                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-all"
+                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-colors"
                         :class="[
                           form.platform === 'gemini-api'
                             ? 'border-amber-500 bg-amber-50 dark:border-amber-400 dark:bg-amber-900/30'
@@ -543,7 +543,7 @@
                     <!-- Droid 子选项 -->
                     <template v-if="platformGroup === 'droid'">
                       <label
-                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-all"
+                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-colors"
                         :class="[
                           form.platform === 'droid'
                             ? 'border-rose-500 bg-rose-50 dark:border-rose-400 dark:bg-rose-900/30'
@@ -1371,7 +1371,7 @@
                 <!-- 模式切换 -->
                 <div class="mb-4 flex gap-2">
                   <button
-                    class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all"
+                    class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
                     :class="
                       modelRestrictionMode === 'whitelist'
                         ? 'bg-blue-500 text-white shadow-md'
@@ -1384,7 +1384,7 @@
                     模型白名单
                   </button>
                   <button
-                    class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all"
+                    class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
                     :class="
                       modelRestrictionMode === 'mapping'
                         ? 'bg-purple-500 text-white shadow-md'
@@ -1412,7 +1412,7 @@
                     <label
                       v-for="model in commonModels"
                       :key="model.value"
-                      class="flex cursor-pointer items-center rounded-lg border p-3 transition-all hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700"
+                      class="flex cursor-pointer items-center rounded-lg border p-3 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700"
                       :class="
                         allowedModels.includes(model.value)
                           ? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/30'
@@ -2271,7 +2271,7 @@
 
             <div class="flex gap-3 pt-4">
               <button
-                class="flex-1 rounded-xl bg-gray-100 px-6 py-3 font-semibold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                class="flex-1 rounded-lg bg-gray-100 px-6 py-3 font-semibold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
                 type="button"
                 @click="$emit('close')"
               >
@@ -2613,7 +2613,7 @@
 
           <div class="flex gap-3 pt-4">
             <button
-              class="flex-1 rounded-xl bg-gray-100 px-6 py-3 font-semibold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              class="flex-1 rounded-lg bg-gray-100 px-6 py-3 font-semibold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
               type="button"
               @click="oauthStep = 1"
             >
@@ -3097,7 +3097,7 @@
               </div>
               <div class="relative h-2 w-full rounded-full bg-gray-200 dark:bg-gray-700">
                 <div
-                  class="absolute left-0 top-0 h-full rounded-full transition-all"
+                  class="absolute left-0 top-0 h-full rounded-full transition-colors"
                   :class="
                     usagePercentage >= 90
                       ? 'bg-red-500'
@@ -3143,7 +3143,7 @@
               <!-- 模式切换 -->
               <div class="mb-4 flex gap-2">
                 <button
-                  class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all"
+                  class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
                   :class="
                     modelRestrictionMode === 'whitelist'
                       ? 'bg-blue-500 text-white shadow-md'
@@ -3156,7 +3156,7 @@
                   模型白名单
                 </button>
                 <button
-                  class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all"
+                  class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
                   :class="
                     modelRestrictionMode === 'mapping'
                       ? 'bg-purple-500 text-white shadow-md'
@@ -3184,7 +3184,7 @@
                   <label
                     v-for="model in commonModels"
                     :key="model.value"
-                    class="flex cursor-pointer items-center rounded-lg border p-3 transition-all hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700"
+                    class="flex cursor-pointer items-center rounded-lg border p-3 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700"
                     :class="
                       allowedModels.includes(model.value)
                         ? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/30'
@@ -3878,16 +3878,16 @@
                   </span>
                 </div>
                 <div
-                  class="relative grid h-11 grid-cols-3 overflow-hidden rounded-2xl border border-purple-200/80 bg-gradient-to-r from-purple-50/80 via-white to-purple-50/80 shadow-inner dark:border-purple-700/70 dark:from-purple-900/40 dark:via-purple-900/20 dark:to-purple-900/40"
+                  class="relative grid h-11 grid-cols-3 overflow-hidden rounded-lg border border-purple-200/80 bg-gradient-to-r from-purple-50/80 via-white to-purple-50/80 shadow-inner dark:border-purple-700/70 dark:from-purple-900/40 dark:via-purple-900/20 dark:to-purple-900/40"
                 >
                   <span
-                    class="pointer-events-none absolute inset-y-0 rounded-2xl bg-gradient-to-r from-purple-500/90 via-purple-600 to-indigo-500/90 shadow-lg ring-1 ring-purple-100/80 transition-all duration-300 ease-out dark:from-purple-500/70 dark:via-purple-600/70 dark:to-indigo-500/70 dark:ring-purple-400/30"
+                    class="pointer-events-none absolute inset-y-0 rounded-lg bg-gradient-to-r from-purple-500/90 via-purple-600 to-indigo-500/90 shadow-lg ring-1 ring-purple-100/80 transition-colors duration-150 ease-out dark:from-purple-500/70 dark:via-purple-600/70 dark:to-indigo-500/70 dark:ring-purple-400/30"
                     :style="apiKeyModeSliderStyle"
                   />
                   <button
                     v-for="option in apiKeyModeOptions"
                     :key="option.value"
-                    class="relative z-10 flex items-center justify-center rounded-2xl px-2 text-xs font-semibold transition-all duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/60 dark:focus-visible:ring-purple-400/60"
+                    class="relative z-10 flex items-center justify-center rounded-lg px-2 text-xs font-semibold transition-colors duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/60 dark:focus-visible:ring-purple-400/60"
                     :class="
                       form.apiKeyUpdateMode === option.value
                         ? 'text-white drop-shadow-sm'
@@ -3992,7 +3992,7 @@
 
           <div class="flex gap-3 pt-4">
             <button
-              class="flex-1 rounded-xl bg-gray-100 px-6 py-3 font-semibold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              class="flex-1 rounded-lg bg-gray-100 px-6 py-3 font-semibold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
               type="button"
               @click="$emit('close')"
             >

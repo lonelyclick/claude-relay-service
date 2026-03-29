@@ -1,10 +1,10 @@
 <template>
   <!-- 顶部导航 -->
   <div
-    class="glass-strong mb-4 rounded-xl p-3 shadow-xl sm:mb-6 sm:rounded-2xl sm:p-4 md:mb-8 md:rounded-3xl md:p-6"
+    class="glass-strong mb-4 rounded-lg p-3 shadow-md sm:mb-4 sm:rounded-lg sm:p-3 md:mb-6 md:rounded-lg md:p-4"
     style="z-index: 10; position: relative"
   >
-    <div class="flex flex-col items-center justify-between gap-3 sm:flex-row sm:gap-4">
+    <div class="flex flex-col items-center justify-between gap-3 sm:flex-row sm:gap-3">
       <div
         class="flex w-full items-center justify-center gap-2 sm:w-auto sm:justify-start sm:gap-3 md:gap-4"
       >
@@ -37,21 +37,22 @@
         </LogoTitle>
       </div>
       <!-- 主题切换和用户菜单 -->
-      <div class="flex items-center gap-2 sm:gap-4">
+      <div class="flex items-center gap-2 sm:gap-3">
         <!-- 主题切换按钮 -->
         <div class="flex items-center">
           <ThemeToggle mode="dropdown" />
         </div>
 
-        <!-- 分隔线 -->
+        <!-- 分隔线（仅管理员登录时显示） -->
         <div
+          v-if="authStore.isAuthenticated"
           class="h-8 w-px bg-gradient-to-b from-transparent via-gray-300 to-transparent opacity-50 dark:via-gray-600"
         />
 
-        <!-- 用户菜单 -->
-        <div class="user-menu-container relative">
+        <!-- 用户菜单（仅管理员登录时显示） -->
+        <div v-if="authStore.isAuthenticated" class="user-menu-container relative">
           <button
-            class="user-menu-button flex items-center gap-2 rounded-2xl px-3 py-2 text-sm font-semibold text-white shadow-lg transition-all duration-200 hover:scale-105 hover:shadow-xl active:scale-95 sm:px-4 sm:py-2.5"
+            class="user-menu-button flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors duration-150 hover:shadow active:scale-95 sm:px-4 sm:py-2.5"
             @click="userMenuOpen = !userMenuOpen"
           >
             <i class="fas fa-user-circle text-sm sm:text-base" />
@@ -65,7 +66,7 @@
           <!-- 悬浮菜单 -->
           <div
             v-if="userMenuOpen"
-            class="user-menu-dropdown absolute right-0 top-full mt-2 w-48 rounded-xl border border-gray-200 bg-white py-2 shadow-xl dark:border-gray-700 dark:bg-gray-800 sm:w-56"
+            class="user-menu-dropdown absolute right-0 top-full mt-2 w-48 rounded-lg border border-gray-200 bg-white py-2 shadow-md dark:border-gray-700 dark:bg-gray-800 sm:w-56"
             style="z-index: 999999"
             @click.stop
           >
@@ -150,13 +151,13 @@
   <!-- 修改账户信息模态框 -->
   <div
     v-if="showChangePasswordModal"
-    class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4"
+    class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-3"
   >
-    <div class="modal-content mx-auto flex max-h-[90vh] w-full max-w-md flex-col p-4 sm:p-6 md:p-8">
+    <div class="modal-content mx-auto flex max-h-[90vh] w-full max-w-md flex-col p-4 sm:p-6 md:p-4">
       <div class="mb-6 flex items-center justify-between">
         <div class="flex items-center gap-3">
           <div
-            class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-blue-600"
+            class="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-600"
           >
             <i class="fas fa-key text-white" />
           </div>
@@ -253,7 +254,7 @@
 
         <div class="flex gap-3 pt-4">
           <button
-            class="flex-1 rounded-xl bg-gray-100 px-6 py-3 font-semibold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+            class="flex-1 rounded-lg bg-gray-100 px-6 py-3 font-semibold text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
             type="button"
             @click="closeChangePasswordModal"
           >

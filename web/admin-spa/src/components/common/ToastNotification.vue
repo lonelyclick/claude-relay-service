@@ -193,7 +193,7 @@ defineExpose({
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .toast-body {
@@ -202,13 +202,13 @@ defineExpose({
 
 .toast-title {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 0.875rem;
   line-height: 1.4;
   margin-bottom: 4px;
 }
 
 .toast-message {
-  font-size: 14px;
+  font-size: 0.875rem;
   line-height: 1.5;
   word-wrap: break-word;
 }

@@ -1,5 +1,6 @@
 const redis = require('../models/redis')
 const crypto = require('crypto')
+const bcrypt = require('bcryptjs')
 const logger = require('../utils/logger')
 const config = require('../../config/config')
 
@@ -7,6 +8,7 @@ class UserService {
   constructor() {
     this.userPrefix = 'user:'
     this.usernamePrefix = 'username:'
+    this.emailPrefix = 'email:'
     this.userSessionPrefix = 'user_session:'
   }
 
@@ -597,6 +599,114 @@ class UserService {
       logger.error('❌ Error transferring matching API keys:', error)
       // Don't throw error to prevent blocking user creation
     }
+  }
+
+  // 📧 通过邮箱获取用户
+  async getUserByEmail(email) {
+    try {
+      const userId = await redis.get(`${this.emailPrefix}${email.toLowerCase()}`)
+      if (!userId) return null
+      return this.getUserById(userId, false)
+    } catch (error) {
+      logger.error('❌ Error getting user by email:', error)
+      return null
+    }
+  }
+
+  // 📝 本地用户注册
+  async registerUser({ username, email, password, displayName }) {
+    try {
+      // 检查用户名是否已存在
+      const existingUser = await this.getUserByUsername(username)
+      if (existingUser) {
+        throw new Error('Username already registered')
+      }
+
+      // 检查邮箱是否已存在
+      const existingEmail = await this.getUserByEmail(email)
+      if (existingEmail) {
+        throw new Error('Email already registered')
+      }
+
+      // 哈希密码
+      const passwordHash = await bcrypt.hash(password, 10)
+
+      // 创建用户对象
+      const userId = this.generateUserId()
+      const user = {
+        id: userId,
+        username,
+        email: email.toLowerCase(),
+        displayName: displayName || username,
+        firstName: '',
+        lastName: '',
+        role: config.userManagement.defaultUserRole,
+        isActive: true,
+        authType: 'local',
+        passwordHash,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        lastLoginAt: null,
+        apiKeyCount: 0,
+        totalUsage: {
+          requests: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalCost: 0
+        }
+      }
+
+      // 存储用户数据和索引
+      await redis.set(`${this.userPrefix}${userId}`, JSON.stringify(user))
+      await redis.set(`${this.usernamePrefix}${username}`, userId)
+      await redis.set(`${this.emailPrefix}${email.toLowerCase()}`, userId)
+      await redis.addToIndex('user:index', userId)
+
+      logger.info(`📝 Registered local user: ${username} (${userId})`)
+      return user
+    } catch (error) {
+      logger.error('❌ Error registering user:', error)
+      throw error
+    }
+  }
+
+  // 🔐 本地密码认证
+  async authenticateLocal(username, password) {
+    try {
+      const user = await this.getUserByUsername(username)
+      if (!user || !user.passwordHash) {
+        return null
+      }
+
+      const isValid = await bcrypt.compare(password, user.passwordHash)
+      if (!isValid) {
+        return null
+      }
+
+      if (!user.isActive) {
+        throw new Error('Your account has been disabled')
+      }
+
+      // 记录登录并创建会话
+      await this.recordUserLogin(user.id)
+      const sessionToken = await this.createUserSession(user.id)
+
+      return {
+        success: true,
+        user,
+        sessionToken
+      }
+    } catch (error) {
+      logger.error('❌ Error authenticating local user:', error)
+      throw error
+    }
+  }
+
+  // 🧹 清理用户返回对象（移除敏感字段）
+  sanitizeUser(user) {
+    if (!user) return null
+    const { passwordHash, ...safeUser } = user
+    return safeUser
   }
 }
 

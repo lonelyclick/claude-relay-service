@@ -6,7 +6,7 @@
     >
       <!-- 时间进度条背景 -->
       <div
-        class="absolute inset-0 h-full bg-gradient-to-r from-blue-500 to-cyan-500 opacity-20 transition-all duration-1000"
+        class="absolute inset-0 h-full bg-gradient-to-r from-blue-500 to-cyan-500 opacity-20 transition-colors duration-1000"
         :style="{ width: timeProgress + '%' }"
       ></div>
 
@@ -41,7 +41,7 @@
       >
         <!-- 进度条 -->
         <div
-          class="absolute inset-0 h-full transition-all duration-500 ease-out"
+          class="absolute inset-0 h-full transition-colors duration-500 ease-out"
           :class="getCostProgressBarClass()"
           :style="{ width: costProgress + '%' }"
         ></div>
@@ -63,7 +63,7 @@
       >
         <!-- 进度条 -->
         <div
-          class="absolute inset-0 h-full transition-all duration-500 ease-out"
+          class="absolute inset-0 h-full transition-colors duration-500 ease-out"
           :class="getRequestProgressBarClass()"
           :style="{ width: requestProgress + '%' }"
         ></div>

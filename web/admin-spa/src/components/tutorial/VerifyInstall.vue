@@ -1,6 +1,6 @@
 <template>
   <div
-    class="rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-500/40 dark:bg-green-950/30 sm:p-4"
+    class="rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-500/40 dark:bg-green-950/30 sm:p-3"
   >
     <h6 class="mb-2 text-sm font-medium text-green-800 dark:text-green-300 sm:text-base">
       验证安装是否成功

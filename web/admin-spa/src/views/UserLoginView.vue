@@ -33,7 +33,7 @@
         </p>
       </div>
 
-      <div class="rounded-lg bg-white px-6 py-8 shadow dark:bg-gray-800 dark:shadow-xl">
+      <div class="rounded-lg bg-white px-6 py-8 shadow dark:bg-gray-800 dark:shadow-md">
         <form class="space-y-6" @submit.prevent="handleLogin">
           <div>
             <label
@@ -134,9 +134,9 @@
           <div class="text-center">
             <router-link
               class="text-sm text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300"
-              to="/admin-login"
+              to="/user-register"
             >
-              Admin Login
+              Don't have an account? Sign Up
             </router-link>
           </div>
         </form>

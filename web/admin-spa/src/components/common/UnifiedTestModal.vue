@@ -1,21 +1,18 @@
 <template>
   <Teleport to="body">
-    <div
-      v-if="show"
-      class="fixed inset-0 z-[1050] flex items-center justify-center bg-gray-900/40 backdrop-blur-sm"
-    >
+    <div v-if="show" class="fixed inset-0 z-[1050] flex items-center justify-center bg-gray-900/40">
       <div class="absolute inset-0" @click="handleClose" />
       <div
-        class="relative z-10 mx-3 flex w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-gray-200/70 bg-white/95 shadow-2xl ring-1 ring-black/5 transition-all dark:border-gray-700/60 dark:bg-gray-900/95 dark:ring-white/10 sm:mx-4"
+        class="relative z-10 mx-3 flex w-full max-w-lg flex-col overflow-hidden rounded-lg border border-gray-200/70 bg-white/95 shadow-lg ring-1 ring-black/5 transition-colors dark:border-gray-700/60 dark:bg-gray-900/95 dark:ring-white/10 sm:mx-4"
       >
         <!-- 顶部栏 -->
         <div
-          class="flex items-center justify-between border-b border-gray-100 bg-white/80 px-5 py-4 backdrop-blur dark:border-gray-800 dark:bg-gray-900/80"
+          class="flex items-center justify-between border-b border-gray-100 bg-white/80 px-5 py-4 dark:border-gray-800 dark:bg-gray-900/80"
         >
           <div class="flex items-center gap-3">
             <div
               :class="[
-                'flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl text-white shadow-lg',
+                'flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg text-white shadow-sm',
                 headerIconBgClass
               ]"
             >
@@ -164,7 +161,7 @@
           <!-- 状态指示 -->
           <div
             :class="[
-              'mb-4 rounded-xl border p-4 transition-all duration-300',
+              'mb-4 rounded-lg border p-4 transition-colors duration-150',
               state.statusCardClass.value
             ]"
           >
@@ -189,7 +186,7 @@
           <!-- 响应内容区域 -->
           <div
             v-if="state.testStatus.value !== 'idle'"
-            class="mb-4 overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50"
+            class="mb-4 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50"
           >
             <div
               class="flex items-center justify-between border-b border-gray-200 bg-gray-100 px-3 py-2 dark:border-gray-700 dark:bg-gray-800"

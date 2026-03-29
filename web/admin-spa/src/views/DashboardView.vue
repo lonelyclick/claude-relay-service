@@ -2,7 +2,7 @@
   <div>
     <!-- 主要统计 -->
     <div
-      class="mb-4 grid grid-cols-1 gap-3 sm:mb-6 sm:grid-cols-2 sm:gap-4 md:mb-8 md:gap-6 lg:grid-cols-4"
+      class="mb-4 grid grid-cols-1 gap-3 sm:mb-4 sm:grid-cols-2 sm:gap-3 md:mb-6 md:gap-6 lg:grid-cols-4"
     >
       <div class="stat-card">
         <div class="flex items-center justify-between">
@@ -197,7 +197,7 @@
     </div>
 
     <!-- 账户余额/配额汇总 -->
-    <div class="mb-4 grid grid-cols-1 gap-3 sm:mb-6 sm:grid-cols-2 sm:gap-4 md:mb-8 md:gap-6">
+    <div class="mb-4 grid grid-cols-1 gap-3 sm:mb-4 sm:grid-cols-2 sm:gap-3 md:mb-6 md:gap-6">
       <div class="stat-card">
         <div class="flex items-center justify-between">
           <div>
@@ -222,7 +222,7 @@
             更新时间: {{ formatLastUpdate(balanceSummaryUpdatedAt) }}
           </p>
           <button
-            class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-all duration-200 hover:border-gray-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500"
+            class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500"
             :disabled="loadingBalanceSummary"
             @click="loadBalanceSummary"
           >
@@ -297,7 +297,7 @@
 
     <!-- Token统计和性能指标 -->
     <div
-      class="mb-4 grid grid-cols-1 gap-3 sm:mb-6 sm:grid-cols-2 sm:gap-4 md:mb-8 md:gap-6 lg:grid-cols-4"
+      class="mb-4 grid grid-cols-1 gap-3 sm:mb-4 sm:grid-cols-2 sm:gap-3 md:mb-6 md:gap-6 lg:grid-cols-4"
     >
       <div class="stat-card">
         <div class="flex items-center justify-between">
@@ -460,7 +460,7 @@
 
     <!-- 模型消费统计 -->
     <div class="mb-8">
-      <div class="mb-4 flex flex-col gap-4 sm:mb-6">
+      <div class="mb-4 flex flex-col gap-4 sm:mb-4">
         <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100 sm:text-xl">
           模型使用分布与Token使用趋势
         </h3>
@@ -540,7 +540,7 @@
                 <input v-model="autoRefreshEnabled" class="peer sr-only" type="checkbox" />
                 <!-- 更小的开关 -->
                 <div
-                  class="peer relative h-5 w-9 rounded-full bg-gray-300 transition-all duration-200 after:absolute after:left-[2px] after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform after:duration-200 after:content-[''] peer-checked:bg-blue-500 peer-checked:after:translate-x-4 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 dark:bg-gray-600 dark:after:bg-gray-300 dark:peer-focus:ring-blue-600"
+                  class="peer relative h-5 w-9 rounded-full bg-gray-300 transition-colors duration-200 after:absolute after:left-[2px] after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform after:duration-200 after:content-[''] peer-checked:bg-blue-500 peer-checked:after:translate-x-4 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 dark:bg-gray-600 dark:after:bg-gray-300 dark:peer-focus:ring-blue-600"
                 />
                 <span
                   class="ml-2.5 flex select-none items-center gap-1 text-sm font-medium text-gray-600 dark:text-gray-300"
@@ -666,7 +666,7 @@
     </div>
 
     <!-- Token使用趋势图 -->
-    <div class="mb-4 sm:mb-6 md:mb-8">
+    <div class="mb-4 sm:mb-4 md:mb-6">
       <div class="card p-4 sm:p-6">
         <div class="sm:h-[300px]" style="height: 250px">
           <canvas ref="usageTrendChart" />
@@ -675,7 +675,7 @@
     </div>
 
     <!-- API Keys 使用趋势图 -->
-    <div class="mb-4 sm:mb-6 md:mb-8">
+    <div class="mb-4 sm:mb-4 md:mb-6">
       <div class="card p-4 sm:p-6">
         <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h3 class="text-base font-semibold text-gray-900 dark:text-gray-100 sm:text-lg">
@@ -722,7 +722,7 @@
     </div>
 
     <!-- 账号使用趋势图 -->
-    <div class="mb-4 sm:mb-6 md:mb-8">
+    <div class="mb-4 sm:mb-4 md:mb-6">
       <div class="card p-4 sm:p-6">
         <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
@@ -1752,9 +1752,9 @@ watch(isDarkMode, () => {
   })
 })
 
-// 监听色系变化，重新创建图表
+// 监听主题变化，重新创建图表
 watch(
-  () => themeStore.colorScheme,
+  () => themeStore.isDarkMode,
   () => {
     nextTick(() => {
       createModelUsageChart()
@@ -1800,7 +1800,7 @@ onUnmounted(() => {
 <style scoped>
 /* 日期选择器基本样式调整 - 让Element Plus官方暗黑模式生效 */
 .custom-date-picker {
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 /* 旋转动画 */

@@ -171,6 +171,61 @@ export const useUserStore = defineStore('user', {
       }
     },
 
+    // 📝 用户注册
+    async register(data) {
+      this.loading = true
+      try {
+        const response = await axios.post(`${API_BASE}/register`, data)
+        if (response.data.success) {
+          this.user = response.data.user
+          this.sessionToken = response.data.sessionToken
+          this.isAuthenticated = true
+          localStorage.setItem('userToken', this.sessionToken)
+          localStorage.setItem('userData', JSON.stringify(this.user))
+          this.setAuthHeader()
+        }
+        return response.data
+      } catch (error) {
+        this.clearAuth()
+        throw error
+      } finally {
+        this.loading = false
+      }
+    },
+
+    // 🎫 兑换额度卡
+    async redeemCard({ code, apiKeyId }) {
+      try {
+        const response = await axios.post(`${API_BASE}/redeem-card`, { code, apiKeyId })
+        return response.data
+      } catch (error) {
+        console.error('Failed to redeem card:', error)
+        throw error
+      }
+    },
+
+    // 📋 获取兑换历史
+    async getRedemptionHistory(params = {}) {
+      try {
+        const response = await axios.get(`${API_BASE}/redemption-history`, { params })
+        return response.data.success ? response.data.data : { redemptions: [], total: 0 }
+      } catch (error) {
+        console.error('Failed to fetch redemption history:', error)
+        return { redemptions: [], total: 0 }
+      }
+    },
+
+    // 📊 获取每日费用明细
+    async getCostDetails(days = 7) {
+      try {
+        const response = await axios.get(`${API_BASE}/cost-details`, { params: { days } })
+        return response.data.success ? response.data.data : []
+      } catch (error) {
+        console.error('Failed to fetch cost details:', error)
+        return []
+      }
+    },
+
     // 🧹 清除认证信息
     clearAuth() {
       this.user = null

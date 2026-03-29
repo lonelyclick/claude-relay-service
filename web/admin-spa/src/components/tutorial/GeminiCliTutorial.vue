@@ -4,7 +4,7 @@
     <NodeInstallTutorial :platform="platform" :step-number="1" tool-name="Gemini CLI" />
 
     <!-- 第二步：配置环境变量 -->
-    <div class="mb-4 sm:mb-10 sm:mb-6">
+    <div class="mb-4 sm:mb-10 sm:mb-4">
       <h4
         class="mb-3 flex items-center text-lg font-semibold text-gray-800 dark:text-gray-300 sm:mb-4 sm:text-xl"
       >
@@ -22,7 +22,7 @@
         <!-- Windows -->
         <template v-if="platform === 'windows'">
           <div
-            class="rounded-lg border border-green-200 bg-white p-3 dark:border-green-700 dark:bg-gray-800 sm:p-4"
+            class="rounded-lg border border-green-200 bg-white p-3 dark:border-green-700 dark:bg-gray-800 sm:p-3"
           >
             <h6 class="mb-2 text-sm font-medium text-gray-800 dark:text-gray-300 sm:text-base">
               PowerShell 设置方法
@@ -47,7 +47,7 @@
           </div>
 
           <div
-            class="rounded-lg border border-green-200 bg-white p-3 dark:border-green-700 dark:bg-gray-800 sm:p-4"
+            class="rounded-lg border border-green-200 bg-white p-3 dark:border-green-700 dark:bg-gray-800 sm:p-3"
           >
             <h6 class="mb-2 text-sm font-medium text-gray-800 dark:text-gray-300 sm:text-base">
               PowerShell 永久设置（用户级）
@@ -82,7 +82,7 @@
         <!-- macOS / Linux -->
         <template v-else>
           <div
-            class="rounded-lg border border-green-200 bg-white p-3 dark:border-green-700 dark:bg-gray-800 sm:p-4"
+            class="rounded-lg border border-green-200 bg-white p-3 dark:border-green-700 dark:bg-gray-800 sm:p-3"
           >
             <h6 class="mb-2 text-sm font-medium text-gray-800 dark:text-gray-300 sm:text-base">
               临时设置（当前会话）
@@ -105,7 +105,7 @@
           </div>
 
           <div
-            class="rounded-lg border border-green-200 bg-white p-3 dark:border-green-700 dark:bg-gray-800 sm:p-4"
+            class="rounded-lg border border-green-200 bg-white p-3 dark:border-green-700 dark:bg-gray-800 sm:p-3"
           >
             <h6 class="mb-2 text-sm font-medium text-gray-800 dark:text-gray-300 sm:text-base">
               永久设置（Shell 配置文件）
@@ -139,7 +139,7 @@
 
         <!-- 验证 -->
         <div
-          class="rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-500/40 dark:bg-green-950/30 sm:p-4"
+          class="rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-500/40 dark:bg-green-950/30 sm:p-3"
         >
           <h6 class="mb-2 font-medium text-green-800 dark:text-green-300">
             验证 Gemini CLI 环境变量

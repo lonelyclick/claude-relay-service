@@ -4,7 +4,7 @@
     <NodeInstallTutorial :platform="platform" :step-number="1" tool-name="Claude Code" />
 
     <!-- 第二步：安装 Claude Code -->
-    <div class="mb-4 sm:mb-10 sm:mb-6">
+    <div class="mb-4 sm:mb-10 sm:mb-4">
       <h4
         class="mb-3 flex items-center text-lg font-semibold text-gray-800 dark:text-gray-300 sm:mb-4 sm:text-xl"
       >
@@ -16,7 +16,7 @@
       </h4>
 
       <div
-        class="mb-4 rounded-xl border border-green-100 bg-gradient-to-r from-green-50 to-emerald-50 p-4 dark:border-green-500/40 dark:from-green-950/30 dark:to-emerald-950/30 sm:mb-6 sm:p-6"
+        class="mb-4 rounded-lg border border-green-100 bg-gradient-to-r from-green-50 to-emerald-50 p-4 dark:border-green-500/40 dark:from-green-950/30 dark:to-emerald-950/30 sm:mb-4 sm:p-6"
       >
         <h5
           class="mb-2 flex items-center text-base font-semibold text-gray-800 dark:text-gray-200 sm:mb-3 sm:text-lg"
@@ -28,7 +28,7 @@
           {{ platform === 'windows' ? '打开 PowerShell 或 CMD' : '打开终端' }}，运行以下命令：
         </p>
         <div
-          class="mb-4 overflow-x-auto rounded-lg bg-gray-900 p-3 font-mono text-xs text-green-400 sm:p-4 sm:text-sm"
+          class="mb-4 overflow-x-auto rounded-lg bg-gray-900 p-3 font-mono text-xs text-green-400 sm:p-3 sm:text-sm"
         >
           <div class="mb-2"># 全局安装 Claude Code</div>
           <div class="whitespace-nowrap text-gray-300">
@@ -44,7 +44,7 @@
         </p>
 
         <div
-          class="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-500/40 dark:bg-blue-950/30 sm:p-4"
+          class="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-500/40 dark:bg-blue-950/30 sm:p-3"
         >
           <h6 class="mb-2 text-sm font-medium text-blue-800 dark:text-blue-300 sm:text-base">
             提示
@@ -68,7 +68,7 @@
 
       <!-- 验证安装 -->
       <div
-        class="rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-500/40 dark:bg-green-950/30 sm:p-4"
+        class="rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-500/40 dark:bg-green-950/30 sm:p-3"
       >
         <h6 class="mb-2 font-medium text-green-800 dark:text-green-300">验证 Claude Code 安装</h6>
         <p class="mb-3 text-sm text-green-700 dark:text-green-300">
@@ -98,7 +98,7 @@
       </h4>
 
       <div
-        class="mb-4 rounded-xl border border-purple-100 bg-gradient-to-r from-purple-50 to-pink-50 p-4 dark:border-purple-500/40 dark:from-purple-950/30 dark:to-pink-950/30 sm:mb-6 sm:p-6"
+        class="mb-4 rounded-lg border border-purple-100 bg-gradient-to-r from-purple-50 to-pink-50 p-4 dark:border-purple-500/40 dark:from-purple-950/30 dark:to-pink-950/30 sm:mb-4 sm:p-6"
       >
         <h5
           class="mb-2 flex items-center text-base font-semibold text-gray-800 dark:text-gray-200 sm:mb-3 sm:text-lg"
@@ -114,7 +114,7 @@
           <!-- Windows 环境变量设置 -->
           <template v-if="platform === 'windows'">
             <div
-              class="rounded-lg border border-purple-200 bg-white p-3 dark:border-purple-700 dark:bg-gray-800 sm:p-4"
+              class="rounded-lg border border-purple-200 bg-white p-3 dark:border-purple-700 dark:bg-gray-800 sm:p-3"
             >
               <h6 class="mb-2 text-sm font-medium text-gray-800 dark:text-gray-300 sm:text-base">
                 方法一：PowerShell 临时设置（当前会话）
@@ -138,7 +138,7 @@
             </div>
 
             <div
-              class="rounded-lg border border-purple-200 bg-white p-3 dark:border-purple-700 dark:bg-gray-800 sm:p-4"
+              class="rounded-lg border border-purple-200 bg-white p-3 dark:border-purple-700 dark:bg-gray-800 sm:p-3"
             >
               <h6 class="mb-2 text-sm font-medium text-gray-800 dark:text-gray-300 sm:text-base">
                 方法二：PowerShell 永久设置（用户级）
@@ -169,7 +169,7 @@
           <!-- macOS / Linux 环境变量设置 -->
           <template v-else>
             <div
-              class="rounded-lg border border-purple-200 bg-white p-3 dark:border-purple-700 dark:bg-gray-800 sm:p-4"
+              class="rounded-lg border border-purple-200 bg-white p-3 dark:border-purple-700 dark:bg-gray-800 sm:p-3"
             >
               <h6 class="mb-2 text-sm font-medium text-gray-800 dark:text-gray-300 sm:text-base">
                 方法一：临时设置（当前会话）
@@ -191,7 +191,7 @@
             </div>
 
             <div
-              class="rounded-lg border border-purple-200 bg-white p-3 dark:border-purple-700 dark:bg-gray-800 sm:p-4"
+              class="rounded-lg border border-purple-200 bg-white p-3 dark:border-purple-700 dark:bg-gray-800 sm:p-3"
             >
               <h6 class="mb-2 text-sm font-medium text-gray-800 dark:text-gray-300 sm:text-base">
                 方法二：永久设置（Shell 配置文件）
@@ -226,7 +226,7 @@
 
       <!-- VSCode 插件配置 -->
       <div
-        class="mt-6 rounded-lg border border-indigo-200 bg-indigo-50 p-3 dark:border-indigo-500/40 dark:bg-indigo-950/30 sm:p-4"
+        class="mt-6 rounded-lg border border-indigo-200 bg-indigo-50 p-3 dark:border-indigo-500/40 dark:bg-indigo-950/30 sm:p-3"
       >
         <h6 class="mb-2 font-medium text-indigo-800 dark:text-indigo-300">
           VSCode Claude 插件配置
@@ -258,7 +258,7 @@
 
       <!-- 验证环境变量设置 -->
       <div
-        class="mt-6 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-500/40 dark:bg-blue-950/30 sm:p-4"
+        class="mt-6 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-500/40 dark:bg-blue-950/30 sm:p-3"
       >
         <h6 class="mb-2 font-medium text-blue-800 dark:text-blue-300">验证环境变量设置</h6>
         <p class="mb-3 text-sm text-blue-700 dark:text-blue-300">
@@ -312,7 +312,7 @@
         开始使用 Claude Code
       </h4>
       <div
-        class="rounded-xl border border-orange-100 bg-gradient-to-r from-orange-50 to-yellow-50 p-4 dark:border-orange-500/40 dark:from-orange-950/30 dark:to-yellow-950/30 sm:p-6"
+        class="rounded-lg border border-orange-100 bg-gradient-to-r from-orange-50 to-yellow-50 p-4 dark:border-orange-500/40 dark:from-orange-950/30 dark:to-yellow-950/30 sm:p-6"
       >
         <p class="mb-3 text-sm text-gray-700 dark:text-gray-300 sm:mb-4 sm:text-base">
           现在你可以开始使用 Claude Code 了！
@@ -365,7 +365,7 @@
           class="rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800"
         >
           <summary
-            class="cursor-pointer p-3 text-sm font-medium text-gray-800 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 sm:p-4 sm:text-base"
+            class="cursor-pointer p-3 text-sm font-medium text-gray-800 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 sm:p-3 sm:text-base"
           >
             安装时提示 "permission denied" 错误
           </summary>
@@ -394,7 +394,7 @@
           class="rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800"
         >
           <summary
-            class="cursor-pointer p-3 text-sm font-medium text-gray-800 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 sm:p-4 sm:text-base"
+            class="cursor-pointer p-3 text-sm font-medium text-gray-800 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 sm:p-3 sm:text-base"
           >
             PowerShell 执行策略错误
           </summary>
@@ -414,7 +414,7 @@
           class="rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800"
         >
           <summary
-            class="cursor-pointer p-3 text-sm font-medium text-gray-800 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 sm:p-4 sm:text-base"
+            class="cursor-pointer p-3 text-sm font-medium text-gray-800 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 sm:p-3 sm:text-base"
           >
             环境变量设置后不生效
           </summary>
@@ -455,7 +455,7 @@
           class="rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800"
         >
           <summary
-            class="cursor-pointer p-3 text-sm font-medium text-gray-800 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 sm:p-4 sm:text-base"
+            class="cursor-pointer p-3 text-sm font-medium text-gray-800 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 sm:p-3 sm:text-base"
           >
             WSL2 中无法访问 Windows 文件
           </summary>

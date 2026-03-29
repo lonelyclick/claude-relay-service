@@ -1,7 +1,7 @@
 <template>
   <div class="space-y-6">
     <div class="flex flex-col gap-4 lg:flex-row">
-      <div class="glass-strong flex-1 rounded-2xl p-4 shadow-lg">
+      <div class="glass-strong flex-1 rounded-lg p-4 shadow-sm">
         <div class="mb-3 flex items-center justify-between">
           <div>
             <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">脚本余额配置</div>
@@ -87,7 +87,7 @@
         </div>
       </div>
 
-      <div class="glass-strong w-full max-w-xl rounded-2xl p-4 shadow-lg">
+      <div class="glass-strong w-full max-w-xl rounded-lg p-4 shadow-sm">
         <div class="mb-3 flex items-center justify-between">
           <div>
             <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">测试脚本</div>
@@ -121,7 +121,7 @@
           </div>
         </div>
 
-        <div v-if="testResult" class="mt-4 space-y-2 rounded-xl bg-gray-50 p-3 dark:bg-gray-800/60">
+        <div v-if="testResult" class="mt-4 space-y-2 rounded-lg bg-gray-50 p-3 dark:bg-gray-800/60">
           <div class="flex items-center justify-between text-sm">
             <span class="font-semibold text-gray-800 dark:text-gray-100">测试结果</span>
             <span
@@ -164,7 +164,7 @@
       </div>
     </div>
 
-    <div class="glass-strong rounded-2xl p-4 shadow-lg">
+    <div class="glass-strong rounded-lg p-4 shadow-sm">
       <div class="mb-2 flex items-center justify-between">
         <div>
           <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">提取器代码</div>
@@ -181,7 +181,7 @@
       </div>
       <textarea
         v-model="form.scriptBody"
-        class="min-h-[320px] w-full rounded-xl bg-gray-900 font-mono text-sm text-gray-100 shadow-inner focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        class="min-h-[320px] w-full rounded-lg bg-gray-900 font-mono text-sm text-gray-100 shadow-inner focus:outline-none focus:ring-2 focus:ring-indigo-500"
         spellcheck="false"
       ></textarea>
       <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">

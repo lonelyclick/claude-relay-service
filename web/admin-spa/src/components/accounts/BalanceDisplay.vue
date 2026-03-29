@@ -75,7 +75,7 @@
             <div class="flex w-[94px] flex-col gap-0.5">
               <div class="h-1.5 w-full rounded-full bg-gray-200 dark:bg-gray-600">
                 <div
-                  class="h-1.5 rounded-full transition-all"
+                  class="h-1.5 rounded-full transition-colors"
                   :class="row.barClass"
                   :style="{ width: `${row.remainingPercent ?? 0}%` }"
                 ></div>
@@ -100,7 +100,7 @@
         </div>
         <div class="h-1.5 w-full rounded-full bg-gray-200 dark:bg-gray-700">
           <div
-            class="h-1.5 rounded-full transition-all"
+            class="h-1.5 rounded-full transition-colors"
             :class="quotaBarClass"
             :style="{ width: `${Math.min(100, quotaInfo.percentage)}%` }"
           ></div>

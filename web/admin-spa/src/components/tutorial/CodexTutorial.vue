@@ -4,7 +4,7 @@
     <NodeInstallTutorial :platform="platform" :step-number="1" tool-name="Codex" />
 
     <!-- 第二步：配置 Codex -->
-    <div class="mb-4 sm:mb-10 sm:mb-6">
+    <div class="mb-4 sm:mb-10 sm:mb-4">
       <h4
         class="mb-3 flex items-center text-lg font-semibold text-gray-800 dark:text-gray-300 sm:mb-4 sm:text-xl"
       >
@@ -21,7 +21,7 @@
       <div class="space-y-4">
         <!-- config.toml 配置 -->
         <div
-          class="rounded-lg border border-yellow-200 bg-yellow-50 p-3 dark:border-yellow-500/40 dark:bg-yellow-950/30 sm:p-4"
+          class="rounded-lg border border-yellow-200 bg-yellow-50 p-3 dark:border-yellow-500/40 dark:bg-yellow-950/30 sm:p-3"
         >
           <h6 class="mb-2 font-medium text-yellow-800 dark:text-yellow-300">
             1. 配置文件 config.toml
@@ -53,7 +53,7 @@
 
         <!-- auth.json 配置 -->
         <div
-          class="rounded-lg border border-orange-200 bg-orange-50 p-3 dark:border-orange-500/40 dark:bg-orange-950/30 sm:p-4"
+          class="rounded-lg border border-orange-200 bg-orange-50 p-3 dark:border-orange-500/40 dark:bg-orange-950/30 sm:p-3"
         >
           <h6 class="mb-2 font-medium text-orange-800 dark:text-orange-300">
             2. 认证文件 auth.json
@@ -85,7 +85,7 @@
 
         <!-- 提示 -->
         <div
-          class="rounded-lg border border-yellow-200 bg-yellow-50 p-3 dark:border-yellow-500/40 dark:bg-yellow-950/30 sm:p-4"
+          class="rounded-lg border border-yellow-200 bg-yellow-50 p-3 dark:border-yellow-500/40 dark:bg-yellow-950/30 sm:p-3"
         >
           <p class="text-sm text-yellow-700 dark:text-yellow-300">
             💡 请将示例中的

@@ -13,13 +13,13 @@
     </div>
 
     <!-- 系统选择标签 -->
-    <div class="mb-4 sm:mb-6">
-      <div class="flex flex-wrap gap-1 rounded-xl bg-gray-100 p-1 dark:bg-gray-800 sm:gap-2 sm:p-2">
+    <div class="mb-4 sm:mb-4">
+      <div class="flex flex-wrap gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800 sm:gap-2 sm:p-2">
         <button
           v-for="system in tutorialSystems"
           :key="system.key"
           :class="[
-            'flex flex-1 items-center justify-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold transition-all duration-300 sm:gap-2 sm:px-6 sm:py-3 sm:text-sm',
+            'flex flex-1 items-center justify-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors duration-150 sm:gap-2 sm:px-6 sm:py-3 sm:text-sm',
             activeTutorialSystem === system.key
               ? 'bg-white text-blue-600 shadow-sm dark:bg-blue-600 dark:text-white dark:shadow-blue-500/40'
               : 'text-gray-600 hover:bg-white/50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white'
@@ -34,12 +34,12 @@
 
     <!-- CLI 工具选择标签 -->
     <div class="mb-4 sm:mb-8">
-      <div class="flex flex-wrap gap-1 rounded-xl bg-gray-100 p-1 dark:bg-gray-800 sm:gap-2 sm:p-2">
+      <div class="flex flex-wrap gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800 sm:gap-2 sm:p-2">
         <button
           v-for="tool in cliTools"
           :key="tool.key"
           :class="[
-            'flex flex-1 items-center justify-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold transition-all duration-300 sm:gap-2 sm:px-4 sm:py-3 sm:text-sm',
+            'flex flex-1 items-center justify-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors duration-150 sm:gap-2 sm:px-4 sm:py-3 sm:text-sm',
             activeCliTool === tool.key
               ? 'bg-white text-blue-600 shadow-sm dark:bg-blue-600 dark:text-white dark:shadow-blue-500/40'
               : 'text-gray-600 hover:bg-white/50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white'

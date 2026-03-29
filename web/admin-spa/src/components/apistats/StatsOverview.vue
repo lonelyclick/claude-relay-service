@@ -1,7 +1,7 @@
 <template>
   <div class="space-y-4 sm:space-y-6 md:space-y-8">
     <div
-      class="grid grid-cols-1 items-stretch gap-3 sm:gap-4 md:gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]"
+      class="grid grid-cols-1 items-stretch gap-3 sm:gap-3 md:gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]"
     >
       <!-- 基础信息 / 批量概要 -->
       <div class="card-section">
@@ -284,7 +284,7 @@
             </div>
             <p
               v-else
-              class="rounded-xl bg-gray-100 px-3 py-2 text-xs text-gray-500 dark:bg-gray-800 dark:text-gray-300"
+              class="rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-500 dark:bg-gray-800 dark:text-gray-300"
             >
               暂无额度使用数据
             </p>
@@ -540,7 +540,7 @@ const getCodexWindowLabel = (type) => (type === 'secondary' ? '周限' : '5h')
 
 <style scoped>
 .card-section {
-  @apply flex h-full flex-col gap-4 rounded-2xl p-4 shadow-md md:p-6;
+  @apply flex h-full flex-col gap-4 rounded-lg p-4 shadow-md md:p-4;
   background: var(--surface-color);
   border: 1px solid var(--border-color);
 }
@@ -586,7 +586,7 @@ const getCodexWindowLabel = (type) => (type === 'secondary' ? '周限' : '5h')
 }
 
 .info-item {
-  @apply rounded-xl p-4;
+  @apply rounded-lg p-4;
   background: rgba(var(--primary-rgb), 0.03);
   border: 1px solid var(--border-color);
   min-height: 86px;
@@ -630,7 +630,7 @@ const getCodexWindowLabel = (type) => (type === 'secondary' ? '周限' : '5h')
 }
 
 .metric-card {
-  @apply rounded-xl p-4 text-center shadow-sm;
+  @apply rounded-lg p-4 text-center shadow-sm;
   background: rgba(var(--primary-rgb), 0.03);
   border: 1px solid var(--border-color);
 }
@@ -653,7 +653,7 @@ const getCodexWindowLabel = (type) => (type === 'secondary' ? '周限' : '5h')
 }
 
 .account-card {
-  @apply rounded-2xl p-4 shadow-sm transition-shadow hover:shadow-md;
+  @apply rounded-lg p-4 shadow-sm transition-shadow hover:shadow-md;
   background: var(--surface-color);
   border: 1px solid var(--border-color);
 }
@@ -707,7 +707,7 @@ const getCodexWindowLabel = (type) => (type === 'secondary' ? '周限' : '5h')
 }
 
 .progress-bar {
-  @apply h-1.5 rounded-full transition-all duration-300;
+  @apply h-1.5 rounded-full transition-colors duration-150;
 }
 
 .progress-value {
@@ -720,7 +720,7 @@ const getCodexWindowLabel = (type) => (type === 'secondary' ? '周限' : '5h')
 }
 
 .quota-row {
-  @apply rounded-xl p-3;
+  @apply rounded-lg p-3;
   background: rgba(var(--primary-rgb), 0.03);
   border: 1px solid var(--border-color);
 }

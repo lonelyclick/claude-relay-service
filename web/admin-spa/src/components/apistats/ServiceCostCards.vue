@@ -1,5 +1,5 @@
 <template>
-  <div v-if="serviceRates && modelStats.length > 0" class="card p-3 sm:p-4 md:p-6">
+  <div v-if="serviceRates && modelStats.length > 0" class="card p-3 sm:p-3 md:p-4">
     <h3
       class="mb-2 flex items-center justify-between text-base font-bold text-gray-900 dark:text-gray-100 sm:mb-3 sm:text-lg md:mb-4 md:text-xl"
     >
@@ -16,7 +16,7 @@
       <div
         v-for="service in serviceStats"
         :key="service.name"
-        class="rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
+        class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
       >
         <!-- 服务名和倍率 -->
         <div class="mb-2 flex items-center justify-between">

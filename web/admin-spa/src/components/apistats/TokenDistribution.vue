@@ -1,5 +1,5 @@
 <template>
-  <div class="card p-3 sm:p-4 md:p-6">
+  <div class="card p-3 sm:p-3 md:p-4">
     <h3
       class="mb-2 flex flex-col text-base font-bold text-gray-900 dark:text-gray-100 sm:mb-3 sm:flex-row sm:items-center sm:text-lg md:mb-4 md:text-xl"
     >

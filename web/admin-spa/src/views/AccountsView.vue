@@ -1,7 +1,7 @@
 <template>
   <div class="accounts-container">
     <div class="card p-4 sm:p-6">
-      <div class="mb-4 flex flex-col gap-4 sm:mb-6">
+      <div class="mb-4 flex flex-col gap-4 sm:mb-4">
         <div>
           <h3 class="mb-1 text-lg font-bold text-gray-900 dark:text-gray-100 sm:mb-2 sm:text-xl">
             账户管理
@@ -16,7 +16,7 @@
             <!-- 排序选择器 -->
             <div class="group relative min-w-[160px]">
               <div
-                class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-indigo-500 to-blue-500 opacity-0 blur transition duration-300 group-hover:opacity-20"
+                class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-indigo-500 to-blue-500 opacity-0 blur transition duration-150 group-hover:opacity-20"
               ></div>
               <CustomDropdown
                 v-model="accountsSortBy"
@@ -31,7 +31,7 @@
             <!-- 平台筛选器 -->
             <div class="group relative min-w-[140px]">
               <div
-                class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-blue-500 to-indigo-500 opacity-0 blur transition duration-300 group-hover:opacity-20"
+                class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-blue-500 to-indigo-500 opacity-0 blur transition duration-150 group-hover:opacity-20"
               ></div>
               <CustomDropdown
                 v-model="platformFilter"
@@ -46,7 +46,7 @@
             <!-- 分组筛选器 -->
             <div class="group relative min-w-[160px]">
               <div
-                class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 blur transition duration-300 group-hover:opacity-20"
+                class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 blur transition duration-150 group-hover:opacity-20"
               ></div>
               <CustomDropdown
                 v-model="groupFilter"
@@ -61,7 +61,7 @@
             <!-- 状态筛选器 -->
             <div class="group relative min-w-[120px]">
               <div
-                class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-green-500 to-emerald-500 opacity-0 blur transition duration-300 group-hover:opacity-20"
+                class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-green-500 to-emerald-500 opacity-0 blur transition duration-150 group-hover:opacity-20"
               ></div>
               <CustomDropdown
                 v-model="statusFilter"
@@ -75,12 +75,12 @@
             <!-- 搜索框 -->
             <div class="group relative min-w-[200px]">
               <div
-                class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-cyan-500 to-teal-500 opacity-0 blur transition duration-300 group-hover:opacity-20"
+                class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-cyan-500 to-teal-500 opacity-0 blur transition duration-150 group-hover:opacity-20"
               ></div>
               <div class="relative flex items-center">
                 <input
                   v-model="searchKeyword"
-                  class="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 pl-9 text-sm text-gray-700 placeholder-gray-400 shadow-sm transition-all duration-200 hover:border-gray-300 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-500 dark:hover:border-gray-500"
+                  class="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 pl-9 text-sm text-gray-700 placeholder-gray-400 shadow-sm transition-colors duration-200 hover:border-gray-300 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-500 dark:hover:border-gray-500"
                   placeholder="搜索账户名称..."
                   type="text"
                 />
@@ -101,11 +101,11 @@
             <div class="relative">
               <el-tooltip content="查看账户统计汇总" effect="dark" placement="bottom">
                 <button
-                  class="group relative flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-all duration-200 hover:border-gray-300 hover:shadow-md dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
+                  class="group relative flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:shadow-md dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
                   @click="showAccountStatsModal = true"
                 >
                   <div
-                    class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-violet-500 to-purple-500 opacity-0 blur transition duration-300 group-hover:opacity-20"
+                    class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-violet-500 to-purple-500 opacity-0 blur transition duration-150 group-hover:opacity-20"
                   ></div>
                   <i class="fas fa-chart-bar relative text-violet-500" />
                   <span class="relative">统计</span>
@@ -121,14 +121,14 @@
                 placement="bottom"
               >
                 <button
-                  class="group relative flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-all duration-200 hover:border-gray-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
+                  class="group relative flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
                   :disabled="accountsLoading"
                   @click.ctrl.exact="loadAccounts(true)"
                   @click.exact="loadAccounts(false)"
                   @click.meta.exact="loadAccounts(true)"
                 >
                   <div
-                    class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-green-500 to-teal-500 opacity-0 blur transition duration-300 group-hover:opacity-20"
+                    class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-green-500 to-teal-500 opacity-0 blur transition duration-150 group-hover:opacity-20"
                   ></div>
                   <i
                     :class="[
@@ -145,12 +145,12 @@
             <div class="relative">
               <el-tooltip :content="refreshBalanceTooltip" effect="dark" placement="bottom">
                 <button
-                  class="group relative flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-all duration-200 hover:border-gray-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
+                  class="group relative flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
                   :disabled="accountsLoading || refreshingBalances || !canRefreshVisibleBalances"
                   @click="refreshVisibleBalances"
                 >
                   <div
-                    class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-blue-500 to-indigo-500 opacity-0 blur transition duration-300 group-hover:opacity-20"
+                    class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-blue-500 to-indigo-500 opacity-0 blur transition duration-150 group-hover:opacity-20"
                   ></div>
                   <i
                     :class="[
@@ -165,7 +165,7 @@
 
             <!-- 选择/取消选择按钮 -->
             <button
-              class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-all duration-200 hover:border-gray-300 hover:bg-gray-50 hover:shadow-md dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:bg-gray-50 hover:shadow-md dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
               @click="toggleSelectionMode"
             >
               <i :class="showCheckboxes ? 'fas fa-times' : 'fas fa-check-square'"></i>
@@ -176,11 +176,11 @@
             <div class="relative">
               <el-tooltip content="管理账户分组" effect="dark" placement="bottom">
                 <button
-                  class="group relative flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-all duration-200 hover:border-gray-300 hover:shadow-md dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
+                  class="group relative flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:shadow-md dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
                   @click="showGroupManagementModal = true"
                 >
                   <div
-                    class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 blur transition duration-300 group-hover:opacity-20"
+                    class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 blur transition duration-150 group-hover:opacity-20"
                   ></div>
                   <i class="fas fa-layer-group relative text-purple-500" />
                   <span class="relative">分组</span>
@@ -191,11 +191,11 @@
             <!-- 批量删除按钮 -->
             <button
               v-if="selectedAccounts.length > 0"
-              class="group relative flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 shadow-sm transition-all duration-200 hover:border-red-300 hover:bg-red-100 hover:shadow-md dark:border-red-700 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/50 sm:w-auto"
+              class="group relative flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 shadow-sm transition-colors duration-200 hover:border-red-300 hover:bg-red-100 hover:shadow-md dark:border-red-700 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/50 sm:w-auto"
               @click="batchDeleteAccounts"
             >
               <div
-                class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-red-500 to-pink-500 opacity-0 blur transition duration-300 group-hover:opacity-20"
+                class="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-red-500 to-pink-500 opacity-0 blur transition duration-150 group-hover:opacity-20"
               ></div>
               <i class="fas fa-trash relative text-red-600 dark:text-red-400" />
               <span class="relative">删除选中 ({{ selectedAccounts.length }})</span>
@@ -203,7 +203,7 @@
 
             <!-- 添加账户按钮 -->
             <button
-              class="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-green-500 to-green-600 px-5 py-2.5 text-sm font-medium text-white shadow-md transition-all duration-200 hover:from-green-600 hover:to-green-700 hover:shadow-lg sm:w-auto"
+              class="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-green-500 to-green-600 px-5 py-2.5 text-sm font-medium text-white shadow-md transition-colors duration-200 hover:from-green-600 hover:to-green-700 hover:shadow-md sm:w-auto"
               @click.stop="openCreateAccountModal"
             >
               <i class="fas fa-plus"></i>
@@ -233,7 +233,7 @@
         <div ref="tableContainerRef" class="table-container">
           <table class="w-full">
             <thead
-              class="sticky top-0 z-10 bg-gradient-to-b from-gray-50 to-gray-100/90 backdrop-blur-sm dark:from-gray-700 dark:to-gray-800/90"
+              class="sticky top-0 z-10 bg-gradient-to-b from-gray-50 to-gray-100/90 dark:from-gray-700 dark:to-gray-800/90"
             >
               <tr>
                 <th
@@ -904,7 +904,7 @@
                               <div class="h-2 flex-1 rounded-full bg-gray-200 dark:bg-gray-600">
                                 <div
                                   :class="[
-                                    'h-2 rounded-full transition-all duration-300',
+                                    'h-2 rounded-full transition-colors duration-150',
                                     getClaudeUsageBarClass(account.claudeUsage.fiveHour)
                                   ]"
                                   :style="{
@@ -937,7 +937,7 @@
                               <div class="h-2 flex-1 rounded-full bg-gray-200 dark:bg-gray-600">
                                 <div
                                   :class="[
-                                    'h-2 rounded-full transition-all duration-300',
+                                    'h-2 rounded-full transition-colors duration-150',
                                     getClaudeUsageBarClass(account.claudeUsage.sevenDay)
                                   ]"
                                   :style="{
@@ -970,7 +970,7 @@
                               <div class="h-2 flex-1 rounded-full bg-gray-200 dark:bg-gray-600">
                                 <div
                                   :class="[
-                                    'h-2 rounded-full transition-all duration-300',
+                                    'h-2 rounded-full transition-colors duration-150',
                                     getClaudeUsageBarClass(account.claudeUsage.sevenDayOpus)
                                   ]"
                                   :style="{
@@ -1024,7 +1024,7 @@
                         <div class="h-2 w-24 rounded-full bg-gray-200 dark:bg-gray-700">
                           <div
                             :class="[
-                              'h-2 rounded-full transition-all duration-300',
+                              'h-2 rounded-full transition-colors duration-150',
                               getSessionProgressBarClass(
                                 account.sessionWindow.sessionWindowStatus,
                                 account
@@ -1074,7 +1074,7 @@
                           <div class="h-2 w-24 rounded-full bg-gray-200 dark:bg-gray-700">
                             <div
                               :class="[
-                                'h-2 rounded-full transition-all duration-300',
+                                'h-2 rounded-full transition-colors duration-150',
                                 getQuotaBarClass(getQuotaUsagePercent(account))
                               ]"
                               :style="{ width: Math.min(100, getQuotaUsagePercent(account)) + '%' }"
@@ -1119,7 +1119,7 @@
                         <div class="h-2 w-24 rounded-full bg-gray-200 dark:bg-gray-700">
                           <div
                             :class="[
-                              'h-2 rounded-full transition-all duration-300',
+                              'h-2 rounded-full transition-colors duration-150',
                               getConcurrencyBarClass(getConsoleConcurrencyPercent(account))
                             ]"
                             :style="{
@@ -1159,7 +1159,7 @@
                               <div class="h-2 flex-1 rounded-full bg-gray-200 dark:bg-gray-600">
                                 <div
                                   :class="[
-                                    'h-2 rounded-full transition-all duration-300',
+                                    'h-2 rounded-full transition-colors duration-150',
                                     getCodexUsageBarClass(account.codexUsage.primary)
                                   ]"
                                   :style="{
@@ -1191,7 +1191,7 @@
                               <div class="h-2 flex-1 rounded-full bg-gray-200 dark:bg-gray-600">
                                 <div
                                   :class="[
-                                    'h-2 rounded-full transition-all duration-300',
+                                    'h-2 rounded-full transition-colors duration-150',
                                     getCodexUsageBarClass(account.codexUsage.secondary)
                                   ]"
                                   :style="{
@@ -1241,7 +1241,7 @@
                   >
                     <div class="h-2 w-16 rounded-full bg-gray-200">
                       <div
-                        class="h-2 rounded-full bg-gradient-to-r from-green-500 to-blue-600 transition-all duration-300"
+                        class="h-2 rounded-full bg-gradient-to-r from-green-500 to-blue-600 transition-colors duration-150"
                         :style="{ width: 101 - (account.priority || 50) + '%' }"
                       />
                     </div>
@@ -1269,8 +1269,7 @@
                     <span v-if="account.expiresAt">
                       <span
                         v-if="isExpired(account.expiresAt)"
-                        class="inline-flex cursor-pointer items-center text-red-600 hover:underline"
-                        style="font-size: 13px"
+                        class="inline-flex cursor-pointer items-center text-sm text-red-600 hover:underline"
                         @click.stop="startEditAccountExpiry(account)"
                       >
                         <i class="fas fa-exclamation-circle mr-1 text-xs" />
@@ -1278,8 +1277,7 @@
                       </span>
                       <span
                         v-else-if="isExpiringSoon(account.expiresAt)"
-                        class="inline-flex cursor-pointer items-center text-orange-600 hover:underline"
-                        style="font-size: 13px"
+                        class="inline-flex cursor-pointer items-center text-sm text-orange-600 hover:underline"
                         @click.stop="startEditAccountExpiry(account)"
                       >
                         <i class="fas fa-clock mr-1 text-xs" />
@@ -1287,8 +1285,7 @@
                       </span>
                       <span
                         v-else
-                        class="cursor-pointer text-gray-600 hover:underline dark:text-gray-400"
-                        style="font-size: 13px"
+                        class="cursor-pointer text-sm text-gray-600 hover:underline dark:text-gray-400"
                         @click.stop="startEditAccountExpiry(account)"
                       >
                         {{ formatExpireDate(account.expiresAt) }}
@@ -1297,8 +1294,7 @@
                     <!-- 永不过期 -->
                     <span
                       v-else
-                      class="inline-flex cursor-pointer items-center text-gray-400 hover:underline dark:text-gray-500"
-                      style="font-size: 13px"
+                      class="inline-flex cursor-pointer items-center text-sm text-gray-400 hover:underline dark:text-gray-500"
                       @click.stop="startEditAccountExpiry(account)"
                     >
                       <i class="fas fa-infinity mr-1 text-xs" />
@@ -1434,7 +1430,7 @@
         <div
           v-for="account in paginatedAccounts"
           :key="account.id"
-          class="card p-4 transition-shadow hover:shadow-lg"
+          class="card p-4 transition-shadow hover:shadow-md"
         >
           <!-- 卡片头部 -->
           <div class="mb-3 flex items-start justify-between">
@@ -1604,7 +1600,7 @@
                         <div class="h-2 flex-1 rounded-full bg-gray-200 dark:bg-gray-600">
                           <div
                             :class="[
-                              'h-2 rounded-full transition-all duration-300',
+                              'h-2 rounded-full transition-colors duration-150',
                               getClaudeUsageBarClass(account.claudeUsage.fiveHour)
                             ]"
                             :style="{
@@ -1637,7 +1633,7 @@
                         <div class="h-2 flex-1 rounded-full bg-gray-200 dark:bg-gray-600">
                           <div
                             :class="[
-                              'h-2 rounded-full transition-all duration-300',
+                              'h-2 rounded-full transition-colors duration-150',
                               getClaudeUsageBarClass(account.claudeUsage.sevenDay)
                             ]"
                             :style="{
@@ -1670,7 +1666,7 @@
                         <div class="h-2 flex-1 rounded-full bg-gray-200 dark:bg-gray-600">
                           <div
                             :class="[
-                              'h-2 rounded-full transition-all duration-300',
+                              'h-2 rounded-full transition-colors duration-150',
                               getClaudeUsageBarClass(account.claudeUsage.sevenDayOpus)
                             ]"
                             :style="{
@@ -1719,7 +1715,7 @@
                 <div class="h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-600">
                   <div
                     :class="[
-                      'h-full transition-all duration-300',
+                      'h-full transition-colors duration-150',
                       getSessionProgressBarClass(account.sessionWindow.sessionWindowStatus, account)
                     ]"
                     :style="{ width: account.sessionWindow.progress + '%' }"
@@ -1759,7 +1755,7 @@
                         <div class="h-2 flex-1 rounded-full bg-gray-200 dark:bg-gray-600">
                           <div
                             :class="[
-                              'h-2 rounded-full transition-all duration-300',
+                              'h-2 rounded-full transition-colors duration-150',
                               getCodexUsageBarClass(account.codexUsage.primary)
                             ]"
                             :style="{
@@ -1791,7 +1787,7 @@
                         <div class="h-2 flex-1 rounded-full bg-gray-200 dark:bg-gray-600">
                           <div
                             :class="[
-                              'h-2 rounded-full transition-all duration-300',
+                              'h-2 rounded-full transition-colors duration-150',
                               getCodexUsageBarClass(account.codexUsage.secondary)
                             ]"
                             :style="{
@@ -4365,7 +4361,7 @@ const getDroidApiKeyCount = (account) => {
 const getDroidApiKeyBadgeClasses = (account) => {
   const count = getDroidApiKeyCount(account)
   const baseClass =
-    'ml-1 inline-flex items-center gap-1 rounded-md border px-1.5 py-[1px] text-[10px] font-medium shadow-sm backdrop-blur-sm'
+    'ml-1 inline-flex items-center gap-1 rounded-md border px-1.5 py-[1px] text-[10px] font-medium shadow-sm'
 
   if (count > 0) {
     return [

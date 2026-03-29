@@ -1711,13 +1711,15 @@ const requireAdmin = (req, res, next) => {
 // 🚦 CORS中间件（优化版，支持Chrome插件）
 const corsMiddleware = (req, res, next) => {
   const { origin } = req.headers
+  const config = require('../../config/config')
 
-  // 允许的源（可以从配置文件读取）
+  // 允许的源：内置 + 配置的 CRS_CORS_ORIGINS
   const allowedOrigins = [
     'http://localhost:3000',
     'https://localhost:3000',
     'http://127.0.0.1:3000',
-    'https://127.0.0.1:3000'
+    'https://127.0.0.1:3000',
+    ...(config.web.corsOrigins || [])
   ]
 
   // 🆕 检查是否为Chrome插件请求

@@ -1,13 +1,13 @@
 <template>
   <Teleport to="body">
-    <div v-if="show" class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
+    <div v-if="show" class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-3">
       <div
-        class="modal-content custom-scrollbar mx-auto max-h-[90vh] w-full max-w-4xl overflow-y-auto p-4 sm:p-6 md:p-8"
+        class="modal-content custom-scrollbar mx-auto max-h-[90vh] w-full max-w-4xl overflow-y-auto p-4 sm:p-6 md:p-4"
       >
-        <div class="mb-4 flex items-center justify-between sm:mb-6">
+        <div class="mb-4 flex items-center justify-between sm:mb-4">
           <div class="flex items-center gap-2 sm:gap-3">
             <div
-              class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500 to-purple-600 sm:h-10 sm:w-10 sm:rounded-xl"
+              class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500 to-purple-600 sm:h-10 sm:w-10 sm:rounded-lg"
             >
               <i class="fas fa-layer-group text-sm text-white sm:text-base" />
             </div>
@@ -29,7 +29,7 @@
             v-for="tab in platformTabs"
             :key="tab.key"
             :class="[
-              'rounded-lg px-3 py-1.5 text-sm font-medium transition-all',
+              'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
               activeTab === tab.key
                 ? tab.key === 'claude'
                   ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
@@ -149,7 +149,7 @@
     <!-- 编辑分组模态框 -->
     <div
       v-if="showEditForm"
-      class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4"
+      class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-3"
     >
       <div class="modal-content w-full max-w-lg p-4 sm:p-6">
         <div class="mb-4 flex items-center justify-between">
@@ -212,7 +212,7 @@
     <!-- 创建分组模态框 -->
     <div
       v-if="showCreateForm"
-      class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4"
+      class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-3"
     >
       <div class="modal-content w-full max-w-lg p-4 sm:p-6">
         <div class="mb-4 flex items-center justify-between">

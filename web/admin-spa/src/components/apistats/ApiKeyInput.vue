@@ -1,5 +1,5 @@
 <template>
-  <div class="api-input-wide-card mb-8 rounded-3xl p-6 shadow-xl">
+  <div class="api-input-wide-card mb-8 rounded-lg p-6 shadow-md">
     <!-- 标题区域 -->
     <div class="wide-card-title mb-6">
       <h2 class="mb-2 text-2xl font-bold text-gray-900 dark:text-gray-200">
@@ -171,7 +171,6 @@ const hasValidInput = computed(() => {
 /* 宽卡片样式 - 使用CSS变量 */
 .api-input-wide-card {
   background: var(--surface-color);
-  backdrop-filter: blur(25px);
   border: 1px solid var(--border-color);
   box-shadow:
     0 25px 50px -12px rgba(0, 0, 0, 0.25),
@@ -241,9 +240,8 @@ const hasValidInput = computed(() => {
   border: 2px solid var(--input-border);
   border-radius: 12px;
   padding: 14px 16px;
-  font-size: 16px;
+  font-size: 1rem;
   transition: all 0.3s ease;
-  backdrop-filter: blur(10px);
   color: var(--text-primary);
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
@@ -295,7 +293,7 @@ const hasValidInput = computed(() => {
 /* 查询按钮特定样式 */
 .btn-query {
   padding: 14px 24px;
-  font-size: 16px;
+  font-size: 1rem;
 }
 
 .btn-primary {
@@ -323,7 +321,6 @@ const hasValidInput = computed(() => {
 .security-notice {
   background: rgba(255, 255, 255, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.4);
-  backdrop-filter: blur(10px);
   border-radius: 8px;
   padding: 12px 16px;
   color: #374151;
@@ -492,12 +489,12 @@ const hasValidInput = computed(() => {
 
   .wide-card-input {
     padding: 12px 14px;
-    font-size: 15px;
+    font-size: 0.9375rem;
   }
 
   .btn-query {
     padding: 12px 20px;
-    font-size: 15px;
+    font-size: 0.9375rem;
   }
 
   .security-notice {
@@ -537,12 +534,12 @@ const hasValidInput = computed(() => {
 
   .wide-card-input {
     padding: 10px 12px;
-    font-size: 14px;
+    font-size: 0.875rem;
   }
 
   .btn-query {
     padding: 10px 16px;
-    font-size: 14px;
+    font-size: 0.875rem;
   }
 }
 </style>

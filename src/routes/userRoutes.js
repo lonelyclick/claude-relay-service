@@ -8,6 +8,7 @@ const config = require('../../config/config')
 const inputValidator = require('../utils/inputValidator')
 const { RateLimiterRedis } = require('rate-limiter-flexible')
 const redis = require('../models/redis')
+const quotaCardService = require('../services/quotaCardService')
 const { authenticateUser, authenticateUserOrAdmin, requireAdmin } = require('../middleware/auth')
 
 // 🚦 配置登录速率限制
@@ -114,40 +115,48 @@ router.post('/login', async (req, res) => {
       })
     }
 
-    // 检查LDAP是否启用
-    if (!config.ldap || !config.ldap.enabled) {
-      return res.status(503).json({
-        error: 'Service unavailable',
-        message: 'LDAP authentication is not enabled'
-      })
-    }
+    let authResult
 
-    // 尝试LDAP认证
-    const authResult = await ldapService.authenticateUserCredentials(validatedUsername, password)
+    if (config.ldap && config.ldap.enabled) {
+      // LDAP 认证模式
+      authResult = await ldapService.authenticateUserCredentials(validatedUsername, password)
 
-    if (!authResult.success) {
-      // 登录失败
-      logger.info(`🚫 Failed login attempt for user: ${validatedUsername} from IP: ${clientIp}`)
-      return res.status(401).json({
-        error: 'Authentication failed',
-        message: authResult.message
-      })
+      if (!authResult.success) {
+        logger.info(`🚫 Failed LDAP login attempt for user: ${validatedUsername} from IP: ${clientIp}`)
+        return res.status(401).json({
+          error: 'Authentication failed',
+          message: authResult.message
+        })
+      }
+    } else {
+      // 本地密码认证模式
+      authResult = await userService.authenticateLocal(validatedUsername, password)
+
+      if (!authResult) {
+        logger.info(`🚫 Failed local login attempt for user: ${validatedUsername} from IP: ${clientIp}`)
+        return res.status(401).json({
+          error: 'Authentication failed',
+          message: 'Invalid username or password'
+        })
+      }
     }
 
     // 登录成功
     logger.info(`✅ User login successful: ${validatedUsername} from IP: ${clientIp}`)
 
+    const safeUser = userService.sanitizeUser(authResult.user)
+
     res.json({
       success: true,
       message: 'Login successful',
       user: {
-        id: authResult.user.id,
-        username: authResult.user.username,
-        email: authResult.user.email,
-        displayName: authResult.user.displayName,
-        firstName: authResult.user.firstName,
-        lastName: authResult.user.lastName,
-        role: authResult.user.role
+        id: safeUser.id,
+        username: safeUser.username,
+        email: safeUser.email,
+        displayName: safeUser.displayName,
+        firstName: safeUser.firstName,
+        lastName: safeUser.lastName,
+        role: safeUser.role
       },
       sessionToken: authResult.sessionToken
     })
@@ -156,6 +165,123 @@ router.post('/login', async (req, res) => {
     res.status(500).json({
       error: 'Login error',
       message: 'Internal server error during login'
+    })
+  }
+})
+
+// 📝 用户注册端点
+router.post('/register', async (req, res) => {
+  try {
+    const { username, email, password, displayName } = req.body
+    const clientIp = req.ip || req.connection.remoteAddress || 'unknown'
+
+    // 速率限制
+    const limiters = initRateLimiters()
+    if (limiters.ipRateLimiter) {
+      try {
+        await limiters.ipRateLimiter.consume(clientIp)
+      } catch (rateLimiterRes) {
+        const retryAfter = Math.round(rateLimiterRes.msBeforeNext / 1000) || 900
+        res.set('Retry-After', String(retryAfter))
+        return res.status(429).json({
+          error: 'Too many requests',
+          message: 'Too many registration attempts. Please try again later.'
+        })
+      }
+    }
+
+    // 检查用户管理和注册是否启用
+    if (!config.userManagement.enabled) {
+      return res.status(503).json({
+        error: 'Service unavailable',
+        message: 'User management is not enabled'
+      })
+    }
+    if (!config.userManagement.allowRegistration) {
+      return res.status(403).json({
+        error: 'Registration disabled',
+        message: 'Public registration is currently disabled'
+      })
+    }
+
+    // 输入验证
+    if (!username || !email || !password) {
+      return res.status(400).json({
+        error: 'Missing fields',
+        message: 'Username, email, and password are required'
+      })
+    }
+
+    let validatedUsername
+    try {
+      validatedUsername = inputValidator.validateUsername(username)
+      inputValidator.validatePassword(password)
+    } catch (validationError) {
+      return res.status(400).json({
+        error: 'Invalid input',
+        message: validationError.message
+      })
+    }
+
+    // 邮箱格式验证
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        error: 'Invalid email',
+        message: 'Please provide a valid email address'
+      })
+    }
+
+    // 注册用户
+    const user = await userService.registerUser({
+      username: validatedUsername,
+      email,
+      password,
+      displayName
+    })
+
+    // 创建会话（注册后直接登录）
+    const sessionToken = await userService.createUserSession(user.id)
+
+    // 自动创建 API Key
+    const initialCostLimit = config.userManagement.initialCostLimit || 0.01
+    const newApiKey = await apiKeyService.createApiKey({
+      name: `${validatedUsername}'s Key`,
+      description: 'Auto-created on registration',
+      userId: user.id,
+      userUsername: validatedUsername,
+      totalCostLimit: initialCostLimit,
+      createdBy: 'system'
+    })
+
+    const safeUser = userService.sanitizeUser(user)
+
+    logger.info(`📝 New user registered: ${validatedUsername} from IP: ${clientIp}`)
+
+    res.status(201).json({
+      success: true,
+      message: 'Registration successful',
+      user: {
+        id: safeUser.id,
+        username: safeUser.username,
+        email: safeUser.email,
+        displayName: safeUser.displayName,
+        role: safeUser.role
+      },
+      sessionToken,
+      apiKey: {
+        id: newApiKey.id,
+        key: newApiKey.apiKey,
+        name: newApiKey.name,
+        totalCostLimit: initialCostLimit
+      }
+    })
+  } catch (error) {
+    logger.error('❌ User registration error:', error)
+    const statusCode = error.message.includes('already registered') ? 409 : 500
+    res.status(statusCode).json({
+      error: 'Registration error',
+      message: error.message || 'Internal server error during registration'
     })
   }
 })
@@ -495,6 +621,209 @@ router.get('/', authenticateUserOrAdmin, requireAdmin, async (req, res) => {
   }
 })
 
+// 📊 获取用户每日费用明细
+router.get('/cost-details', authenticateUser, async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days) || 7, 30)
+    const userApiKeys = await apiKeyService.getUserApiKeys(req.user.id, false)
+    const client = redis.getClientSafe()
+
+    // 获取时区偏移
+    const tzOffset = (config.system?.timezoneOffset ?? parseInt(process.env.TIMEZONE_OFFSET) ?? 0) * 3600000
+
+    const result = []
+    for (let i = 0; i < days; i++) {
+      const date = new Date(Date.now() + tzOffset - i * 86400000)
+      const dateStr = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`
+
+      let dailyTotal = 0
+      let dailyRealTotal = 0
+      for (const key of userApiKeys) {
+        const [cost, realCost] = await Promise.all([
+          client.get(`usage:cost:daily:${key.id}:${dateStr}`),
+          client.get(`usage:cost:real:daily:${key.id}:${dateStr}`)
+        ])
+        dailyTotal += parseFloat(cost || 0)
+        dailyRealTotal += parseFloat(realCost || 0)
+      }
+
+      result.push({ date: dateStr, cost: dailyTotal, realCost: dailyRealTotal })
+    }
+
+    res.json({ success: true, data: result.reverse() })
+  } catch (error) {
+    logger.error('❌ Get cost details error:', error)
+    res.status(500).json({
+      error: 'Cost details error',
+      message: 'Failed to retrieve cost details'
+    })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 额度卡核销相关路由（必须在 /:userId 之前，否则会被通配符路由拦截）
+// ═══════════════════════════════════════════════════════════════════════════
+
+// 🎫 核销额度卡
+router.post('/redeem-card', authenticateUser, async (req, res) => {
+  try {
+    const { code, apiKeyId } = req.body
+
+    if (!code) {
+      return res.status(400).json({
+        error: 'Missing card code',
+        message: 'Card code is required'
+      })
+    }
+
+    if (!apiKeyId) {
+      return res.status(400).json({
+        error: 'Missing API key ID',
+        message: 'API key ID is required'
+      })
+    }
+
+    // 验证 API Key 属于当前用户
+    const keyData = await redis.getApiKey(apiKeyId)
+    if (!keyData || Object.keys(keyData).length === 0) {
+      return res.status(404).json({
+        error: 'API key not found',
+        message: 'The specified API key does not exist'
+      })
+    }
+
+    if (keyData.userId !== req.user.id) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You can only redeem cards to your own API keys'
+      })
+    }
+
+    // 执行核销
+    const result = await quotaCardService.redeemCard(code, apiKeyId, req.user.id, req.user.username)
+
+    logger.success(`🎫 User ${req.user.username} redeemed card ${code} to key ${apiKeyId}`)
+
+    res.json({
+      success: true,
+      data: result
+    })
+  } catch (error) {
+    logger.error('❌ Redeem card error:', error)
+    res.status(400).json({
+      error: 'Redeem failed',
+      message: error.message
+    })
+  }
+})
+
+// 📋 获取用户的核销历史
+router.get('/redemption-history', authenticateUser, async (req, res) => {
+  try {
+    const { limit = 50, offset = 0 } = req.query
+
+    const result = await quotaCardService.getRedemptions({
+      userId: req.user.id,
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    })
+
+    res.json({
+      success: true,
+      data: result
+    })
+  } catch (error) {
+    logger.error('❌ Get redemption history error:', error)
+    res.status(500).json({
+      error: 'Failed to get redemption history',
+      message: error.message
+    })
+  }
+})
+
+// 📊 获取用户的额度信息
+router.get('/quota-info', authenticateUser, async (req, res) => {
+  try {
+    const { apiKeyId } = req.query
+
+    if (!apiKeyId) {
+      return res.status(400).json({
+        error: 'Missing API key ID',
+        message: 'API key ID is required'
+      })
+    }
+
+    // 验证 API Key 属于当前用户
+    const keyData = await redis.getApiKey(apiKeyId)
+    if (!keyData || Object.keys(keyData).length === 0) {
+      return res.status(404).json({
+        error: 'API key not found',
+        message: 'The specified API key does not exist'
+      })
+    }
+
+    if (keyData.userId !== req.user.id) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You can only view your own API key quota'
+      })
+    }
+
+    // 检查是否为聚合 Key
+    if (keyData.isAggregated !== 'true') {
+      return res.json({
+        success: true,
+        data: {
+          isAggregated: false,
+          message: 'This is a traditional API key, not using quota system'
+        }
+      })
+    }
+
+    // 解析聚合 Key 数据
+    let permissions = []
+    let serviceQuotaLimits = {}
+    let serviceQuotaUsed = {}
+
+    try {
+      permissions = JSON.parse(keyData.permissions || '[]')
+    } catch (e) {
+      permissions = [keyData.permissions]
+    }
+
+    try {
+      serviceQuotaLimits = JSON.parse(keyData.serviceQuotaLimits || '{}')
+      serviceQuotaUsed = JSON.parse(keyData.serviceQuotaUsed || '{}')
+    } catch (e) {
+      // 解析失败使用默认值
+    }
+
+    res.json({
+      success: true,
+      data: {
+        isAggregated: true,
+        quotaLimit: parseFloat(keyData.quotaLimit || 0),
+        quotaUsed: parseFloat(keyData.quotaUsed || 0),
+        quotaRemaining: parseFloat(keyData.quotaLimit || 0) - parseFloat(keyData.quotaUsed || 0),
+        permissions,
+        serviceQuotaLimits,
+        serviceQuotaUsed,
+        expiresAt: keyData.expiresAt
+      }
+    })
+  } catch (error) {
+    logger.error('❌ Get quota info error:', error)
+    res.status(500).json({
+      error: 'Failed to get quota info',
+      message: error.message
+    })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 管理员路由（/:userId 通配符必须在所有具名路由之后）
+// ═══════════════════════════════════════════════════════════════════════════
+
 // 👤 获取特定用户信息（管理员）
 router.get('/:userId', authenticateUserOrAdmin, requireAdmin, async (req, res) => {
   try {
@@ -757,168 +1086,6 @@ router.get('/admin/ldap-test', authenticateUserOrAdmin, requireAdmin, async (req
     res.status(500).json({
       error: 'LDAP test error',
       message: 'Failed to test LDAP connection'
-    })
-  }
-})
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 额度卡核销相关路由
-// ═══════════════════════════════════════════════════════════════════════════
-
-const quotaCardService = require('../services/quotaCardService')
-
-// 🎫 核销额度卡
-router.post('/redeem-card', authenticateUser, async (req, res) => {
-  try {
-    const { code, apiKeyId } = req.body
-
-    if (!code) {
-      return res.status(400).json({
-        error: 'Missing card code',
-        message: 'Card code is required'
-      })
-    }
-
-    if (!apiKeyId) {
-      return res.status(400).json({
-        error: 'Missing API key ID',
-        message: 'API key ID is required'
-      })
-    }
-
-    // 验证 API Key 属于当前用户
-    const keyData = await redis.getApiKey(apiKeyId)
-    if (!keyData || Object.keys(keyData).length === 0) {
-      return res.status(404).json({
-        error: 'API key not found',
-        message: 'The specified API key does not exist'
-      })
-    }
-
-    if (keyData.userId !== req.user.id) {
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: 'You can only redeem cards to your own API keys'
-      })
-    }
-
-    // 执行核销
-    const result = await quotaCardService.redeemCard(code, apiKeyId, req.user.id, req.user.username)
-
-    logger.success(`🎫 User ${req.user.username} redeemed card ${code} to key ${apiKeyId}`)
-
-    res.json({
-      success: true,
-      data: result
-    })
-  } catch (error) {
-    logger.error('❌ Redeem card error:', error)
-    res.status(400).json({
-      error: 'Redeem failed',
-      message: error.message
-    })
-  }
-})
-
-// 📋 获取用户的核销历史
-router.get('/redemption-history', authenticateUser, async (req, res) => {
-  try {
-    const { limit = 50, offset = 0 } = req.query
-
-    const result = await quotaCardService.getRedemptions({
-      userId: req.user.id,
-      limit: parseInt(limit),
-      offset: parseInt(offset)
-    })
-
-    res.json({
-      success: true,
-      data: result
-    })
-  } catch (error) {
-    logger.error('❌ Get redemption history error:', error)
-    res.status(500).json({
-      error: 'Failed to get redemption history',
-      message: error.message
-    })
-  }
-})
-
-// 📊 获取用户的额度信息
-router.get('/quota-info', authenticateUser, async (req, res) => {
-  try {
-    const { apiKeyId } = req.query
-
-    if (!apiKeyId) {
-      return res.status(400).json({
-        error: 'Missing API key ID',
-        message: 'API key ID is required'
-      })
-    }
-
-    // 验证 API Key 属于当前用户
-    const keyData = await redis.getApiKey(apiKeyId)
-    if (!keyData || Object.keys(keyData).length === 0) {
-      return res.status(404).json({
-        error: 'API key not found',
-        message: 'The specified API key does not exist'
-      })
-    }
-
-    if (keyData.userId !== req.user.id) {
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: 'You can only view your own API key quota'
-      })
-    }
-
-    // 检查是否为聚合 Key
-    if (keyData.isAggregated !== 'true') {
-      return res.json({
-        success: true,
-        data: {
-          isAggregated: false,
-          message: 'This is a traditional API key, not using quota system'
-        }
-      })
-    }
-
-    // 解析聚合 Key 数据
-    let permissions = []
-    let serviceQuotaLimits = {}
-    let serviceQuotaUsed = {}
-
-    try {
-      permissions = JSON.parse(keyData.permissions || '[]')
-    } catch (e) {
-      permissions = [keyData.permissions]
-    }
-
-    try {
-      serviceQuotaLimits = JSON.parse(keyData.serviceQuotaLimits || '{}')
-      serviceQuotaUsed = JSON.parse(keyData.serviceQuotaUsed || '{}')
-    } catch (e) {
-      // 解析失败使用默认值
-    }
-
-    res.json({
-      success: true,
-      data: {
-        isAggregated: true,
-        quotaLimit: parseFloat(keyData.quotaLimit || 0),
-        quotaUsed: parseFloat(keyData.quotaUsed || 0),
-        quotaRemaining: parseFloat(keyData.quotaLimit || 0) - parseFloat(keyData.quotaUsed || 0),
-        permissions,
-        serviceQuotaLimits,
-        serviceQuotaUsed,
-        expiresAt: keyData.expiresAt
-      }
-    })
-  } catch (error) {
-    logger.error('❌ Get quota info error:', error)
-    res.status(500).json({
-      error: 'Failed to get quota info',
-      message: error.message
     })
   }
 })

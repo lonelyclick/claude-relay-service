@@ -1,18 +1,18 @@
 <template>
   <Teleport to="body">
-    <div v-if="show" class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
+    <div v-if="show" class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-3">
       <!-- 背景遮罩 -->
-      <div class="fixed inset-0 bg-gray-900 bg-opacity-50 backdrop-blur-sm" @click="close" />
+      <div class="fixed inset-0 bg-gray-900 bg-opacity-50" @click="close" />
 
       <!-- 模态框 -->
       <div
-        class="modal-content relative mx-auto flex max-h-[90vh] w-[95%] max-w-5xl flex-col p-4 sm:w-full sm:p-6 md:p-8"
+        class="modal-content relative mx-auto flex max-h-[90vh] w-[95%] max-w-5xl flex-col p-4 sm:w-full sm:p-6 md:p-4"
       >
         <!-- 标题栏 -->
-        <div class="mb-4 flex items-center justify-between sm:mb-6">
+        <div class="mb-4 flex items-center justify-between sm:mb-4">
           <div class="flex items-center gap-2 sm:gap-3">
             <div
-              class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 sm:h-10 sm:w-10 sm:rounded-xl"
+              class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 sm:h-10 sm:w-10 sm:rounded-lg"
             >
               <i class="fas fa-chart-line text-sm text-white sm:text-base" />
             </div>

@@ -1,5 +1,5 @@
 <template>
-  <div class="mb-4 sm:mb-10 sm:mb-6">
+  <div class="mb-4 sm:mb-10 sm:mb-4">
     <h4
       class="mb-3 flex items-center text-lg font-semibold text-gray-800 dark:text-gray-300 sm:mb-4 sm:text-xl"
     >
@@ -9,14 +9,14 @@
       >
       安装 Node.js 环境
     </h4>
-    <p class="mb-4 text-sm text-gray-600 dark:text-gray-400 sm:mb-4 sm:mb-6 sm:text-base">
+    <p class="mb-4 text-sm text-gray-600 dark:text-gray-400 sm:mb-4 sm:text-base">
       {{ toolName }} 需要 Node.js 环境才能运行。
     </p>
 
     <!-- Windows -->
     <div v-if="platform === 'windows'" class="node-install-section">
       <div
-        class="mb-4 rounded-xl border border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50 p-4 dark:border-blue-500/40 dark:from-blue-950/30 dark:to-indigo-950/30 sm:mb-6 sm:p-6"
+        class="mb-4 rounded-lg border border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50 p-4 dark:border-blue-500/40 dark:from-blue-950/30 dark:to-indigo-950/30 sm:mb-4 sm:p-6"
       >
         <h5
           class="mb-2 flex items-center text-base font-semibold text-gray-800 dark:text-gray-200 sm:mb-3 sm:text-lg"
@@ -58,7 +58,7 @@
             如果你安装了 Chocolatey 或 Scoop，可以使用命令行安装：
           </p>
           <div
-            class="overflow-x-auto rounded-lg bg-gray-900 p-3 font-mono text-xs text-green-400 dark:border dark:border-gray-700 dark:bg-gray-900 sm:p-4 sm:text-sm"
+            class="overflow-x-auto rounded-lg bg-gray-900 p-3 font-mono text-xs text-green-400 dark:border dark:border-gray-700 dark:bg-gray-900 sm:p-3 sm:text-sm"
           >
             <div class="mb-2"># 使用 Chocolatey</div>
             <div class="whitespace-nowrap text-gray-300">choco install nodejs</div>
@@ -67,7 +67,7 @@
           </div>
         </div>
         <div
-          class="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-500/40 dark:bg-blue-950/30 sm:p-4"
+          class="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-500/40 dark:bg-blue-950/30 sm:p-3"
         >
           <h6 class="mb-2 text-sm font-medium text-blue-800 dark:text-blue-300 sm:text-base">
             Windows 注意事项
@@ -85,7 +85,7 @@
     <!-- macOS -->
     <div v-else-if="platform === 'macos'" class="node-install-section">
       <div
-        class="mb-4 rounded-xl border border-gray-200 bg-gradient-to-r from-gray-50 to-gray-50 p-4 dark:border-gray-700 dark:from-gray-800 dark:to-gray-800 sm:mb-6 sm:p-6"
+        class="mb-4 rounded-lg border border-gray-200 bg-gradient-to-r from-gray-50 to-gray-50 p-4 dark:border-gray-700 dark:from-gray-800 dark:to-gray-800 sm:mb-4 sm:p-6"
       >
         <h5
           class="mb-2 flex items-center text-base font-semibold text-gray-800 dark:text-gray-200 sm:mb-3 sm:text-lg"
@@ -99,7 +99,7 @@
             如果你已经安装了 Homebrew，使用它安装 Node.js 会更方便：
           </p>
           <div
-            class="overflow-x-auto rounded-lg bg-gray-900 p-3 font-mono text-xs text-green-400 dark:border dark:border-gray-700 dark:bg-gray-900 sm:p-4 sm:text-sm"
+            class="overflow-x-auto rounded-lg bg-gray-900 p-3 font-mono text-xs text-green-400 dark:border dark:border-gray-700 dark:bg-gray-900 sm:p-3 sm:text-sm"
           >
             <div class="mb-2"># 更新 Homebrew</div>
             <div class="whitespace-nowrap text-gray-300">brew update</div>
@@ -132,7 +132,7 @@
           </ol>
         </div>
         <div
-          class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-600 dark:bg-gray-800 sm:p-4"
+          class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-600 dark:bg-gray-800 sm:p-3"
         >
           <h6 class="mb-2 text-sm font-medium text-gray-800 dark:text-gray-300 sm:text-base">
             macOS 注意事项
@@ -153,7 +153,7 @@
     <!-- Linux -->
     <div v-else class="node-install-section">
       <div
-        class="mb-4 rounded-xl border border-orange-100 bg-gradient-to-r from-orange-50 to-amber-50 p-4 dark:border-orange-500/40 dark:from-orange-950/30 dark:to-amber-950/30 sm:mb-6 sm:p-6"
+        class="mb-4 rounded-lg border border-orange-100 bg-gradient-to-r from-orange-50 to-amber-50 p-4 dark:border-orange-500/40 dark:from-orange-950/30 dark:to-amber-950/30 sm:mb-4 sm:p-6"
       >
         <h5
           class="mb-2 flex items-center text-base font-semibold text-gray-800 dark:text-gray-200 sm:mb-3 sm:text-lg"
@@ -167,7 +167,7 @@
             nvm 可以方便地管理多个 Node.js 版本：
           </p>
           <div
-            class="overflow-x-auto rounded-lg bg-gray-900 p-3 font-mono text-xs text-green-400 dark:border dark:border-gray-700 dark:bg-gray-900 sm:p-4 sm:text-sm"
+            class="overflow-x-auto rounded-lg bg-gray-900 p-3 font-mono text-xs text-green-400 dark:border dark:border-gray-700 dark:bg-gray-900 sm:p-3 sm:text-sm"
           >
             <div class="mb-2"># 安装 nvm</div>
             <div class="whitespace-nowrap text-gray-300">
@@ -182,7 +182,7 @@
         <div class="mb-4">
           <p class="mb-3 text-gray-700 dark:text-gray-300">方法二：使用包管理器</p>
           <div
-            class="overflow-x-auto rounded-lg bg-gray-900 p-3 font-mono text-xs text-green-400 dark:border dark:border-gray-700 dark:bg-gray-900 sm:p-4 sm:text-sm"
+            class="overflow-x-auto rounded-lg bg-gray-900 p-3 font-mono text-xs text-green-400 dark:border dark:border-gray-700 dark:bg-gray-900 sm:p-3 sm:text-sm"
           >
             <div class="mb-2"># Ubuntu/Debian</div>
             <div class="whitespace-nowrap text-gray-300">
@@ -196,7 +196,7 @@
           </div>
         </div>
         <div
-          class="rounded-lg border border-orange-200 bg-orange-50 p-3 dark:border-orange-500/40 dark:bg-orange-950/30 sm:p-4"
+          class="rounded-lg border border-orange-200 bg-orange-50 p-3 dark:border-orange-500/40 dark:bg-orange-950/30 sm:p-3"
         >
           <h6 class="mb-2 text-sm font-medium text-orange-800 dark:text-orange-300 sm:text-base">
             Linux / WSL2 注意事项

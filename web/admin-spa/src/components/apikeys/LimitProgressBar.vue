@@ -23,7 +23,7 @@
       </div>
       <div class="relative h-1.5 overflow-hidden rounded-full bg-gray-200/85 dark:bg-gray-700/70">
         <div
-          class="absolute inset-y-0 rounded-full transition-all duration-500 ease-out"
+          class="absolute inset-y-0 rounded-full transition-colors duration-500 ease-out"
           :class="compactBarClass"
           :style="{ width: progress + '%' }"
         ></div>
@@ -31,7 +31,7 @@
     </div>
     <div
       v-else
-      class="group relative h-9 w-full overflow-hidden rounded-xl border transition-all duration-300 ease-out"
+      class="group relative h-9 w-full overflow-hidden rounded-lg border transition-colors duration-150 ease-out"
       :class="containerClass"
     >
       <!-- 背景层 -->
@@ -39,14 +39,14 @@
 
       <!-- 进度条层 -->
       <div
-        class="absolute inset-0 h-full transition-all duration-500 ease-out"
+        class="absolute inset-0 h-full transition-colors duration-500 ease-out"
         :class="progressBarClass"
         :style="{ width: progress + '%' }"
       ></div>
 
       <!-- 内部高光边框 -->
       <div
-        class="pointer-events-none absolute inset-0 rounded-xl border border-white/50 opacity-40 mix-blend-overlay dark:border-white/10"
+        class="pointer-events-none absolute inset-0 rounded-lg border border-white/50 opacity-40 mix-blend-overlay dark:border-white/10"
       ></div>
 
       <!-- 文字层 - 使用双层文字技术确保可读性 -->

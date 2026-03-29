@@ -1,13 +1,13 @@
 <template>
   <div
-    class="min-h-screen p-2 sm:p-4 md:p-6"
+    class="min-h-screen p-2 sm:p-3 md:p-4"
     :class="isDarkMode ? 'gradient-bg-dark' : 'gradient-bg'"
   >
     <!-- 顶部导航 -->
     <div
-      class="glass-strong mb-4 rounded-2xl p-3 shadow-xl sm:mb-6 sm:rounded-3xl sm:p-4 md:mb-8 md:p-6"
+      class="glass-strong mb-4 rounded-lg p-3 shadow-md sm:mb-4 sm:rounded-lg sm:p-3 md:mb-6 md:p-4"
     >
-      <div class="flex flex-col items-center justify-between gap-3 sm:gap-4 md:flex-row">
+      <div class="flex flex-col items-center justify-between gap-3 sm:gap-3 md:flex-row">
         <LogoTitle
           :loading="oemLoading"
           :logo-src="oemSettings.siteIconData || oemSettings.siteIcon"
@@ -35,7 +35,7 @@
           <!-- 用户登录按钮 (仅在 LDAP 启用时显示) -->
           <router-link
             v-if="oemSettings.ldapEnabled"
-            class="user-login-button flex items-center gap-2 rounded-2xl px-4 py-2 text-white transition-all duration-300 md:px-5 md:py-2.5"
+            class="user-login-button flex items-center gap-2 rounded-lg px-4 py-2 text-white transition-colors duration-150 md:px-5 md:py-2.5"
             to="/user-login"
           >
             <i class="fas fa-user text-sm md:text-base" />
@@ -44,7 +44,7 @@
           <!-- 管理后台按钮 -->
           <router-link
             v-if="oemSettings.showAdminButton !== false"
-            class="admin-button-refined flex items-center gap-2 rounded-2xl px-4 py-2 transition-all duration-300 md:px-5 md:py-2.5"
+            class="admin-button-refined flex items-center gap-2 rounded-lg px-4 py-2 transition-colors duration-150 md:px-5 md:py-2.5"
             to="/dashboard"
           >
             <i class="fas fa-shield-alt text-sm md:text-base" />
@@ -55,10 +55,10 @@
     </div>
 
     <!-- Tab 切换 -->
-    <div class="mb-4 sm:mb-6 md:mb-8">
+    <div class="mb-4 sm:mb-4 md:mb-6">
       <div class="flex justify-center">
         <div
-          class="inline-flex w-full max-w-2xl flex-wrap justify-center gap-1 rounded-full border border-white/20 bg-white/10 p-1 shadow-lg backdrop-blur-xl sm:w-auto sm:flex-nowrap"
+          class="inline-flex w-full max-w-2xl flex-wrap justify-center gap-1 rounded-full border border-white/20 bg-white/10 p-1 shadow-sm sm:w-auto sm:flex-nowrap"
         >
           <button
             :class="['tab-pill-button', currentTab === 'stats' ? 'active' : '']"
@@ -91,9 +91,9 @@
       <ApiKeyInput />
 
       <!-- 错误提示 -->
-      <div v-if="error" class="mb-4 sm:mb-6 md:mb-8">
+      <div v-if="error" class="mb-4 sm:mb-4 md:mb-6">
         <div
-          class="rounded-xl border border-red-500/30 bg-red-500/20 p-3 text-sm text-red-800 backdrop-blur-sm dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200 md:p-4 md:text-base"
+          class="rounded-lg border border-red-500/30 bg-red-500/20 p-3 text-sm text-red-800 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200 md:p-4 md:text-base"
         >
           <i class="fas fa-exclamation-triangle mr-2" />
           {{ error }}
@@ -102,7 +102,7 @@
 
       <!-- 统计数据展示区域 -->
       <div v-if="statsData" class="fade-in">
-        <div class="glass-strong rounded-2xl p-3 shadow-xl sm:rounded-3xl sm:p-4 md:p-6">
+        <div class="glass-strong rounded-lg p-3 shadow-md sm:rounded-lg sm:p-3 md:p-4">
           <!-- 时间范围选择器 -->
           <div
             class="mb-3 border-b border-gray-200 pb-3 dark:border-gray-700 sm:mb-4 sm:pb-4 md:mb-6 md:pb-6"
@@ -203,7 +203,7 @@
 
           <!-- Token 分布和限制配置 -->
           <div
-            class="mb-4 mt-4 grid grid-cols-1 gap-3 sm:mb-6 sm:mt-6 sm:gap-4 md:mb-8 md:mt-8 md:gap-6 xl:grid-cols-2 xl:items-stretch"
+            class="mb-4 mt-4 grid grid-cols-1 gap-3 sm:mb-4 sm:mt-6 sm:gap-3 md:mb-6 md:mt-8 md:gap-6 xl:grid-cols-2 xl:items-stretch"
           >
             <TokenDistribution class="h-full" />
             <template v-if="multiKeyMode">
@@ -215,7 +215,7 @@
           </div>
 
           <!-- 服务费用统计卡片 -->
-          <ServiceCostCards class="mb-4 sm:mb-6" />
+          <ServiceCostCards class="mb-4 sm:mb-4" />
 
           <!-- 模型使用统计 - 三个时间段 -->
           <div class="space-y-4 sm:space-y-6">
@@ -229,21 +229,21 @@
 
     <!-- 教程内容 -->
     <div v-if="currentTab === 'tutorial'" class="tab-content">
-      <div class="glass-strong rounded-3xl shadow-xl">
+      <div class="glass-strong rounded-lg shadow-md">
         <TutorialView />
       </div>
     </div>
 
     <!-- 额度卡内容（含二级 tab） -->
     <div v-if="currentTab === 'quota'" class="tab-content">
-      <div class="glass-strong rounded-2xl p-4 shadow-xl sm:rounded-3xl sm:p-6 md:p-8">
+      <div class="glass-strong rounded-lg p-4 shadow-md sm:rounded-lg sm:p-6 md:p-4">
         <!-- 二级 Tab -->
         <div
           class="mb-4 flex gap-2 border-b border-gray-200 pb-4 dark:border-gray-700 md:mb-6 md:pb-6"
         >
           <button
             :class="[
-              'rounded-lg px-4 py-2 text-sm font-medium transition-all',
+              'rounded-lg px-4 py-2 text-sm font-medium transition-colors',
               quotaSubTab === 'redeem'
                 ? 'bg-blue-500 text-white'
                 : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
@@ -255,7 +255,7 @@
           </button>
           <button
             :class="[
-              'rounded-lg px-4 py-2 text-sm font-medium transition-all',
+              'rounded-lg px-4 py-2 text-sm font-medium transition-colors',
               quotaSubTab === 'history'
                 ? 'bg-blue-500 text-white'
                 : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
@@ -276,7 +276,7 @@
               <p>请先在「统计查询」页面输入您的 API Key</p>
             </div>
             <button
-              class="rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 px-6 py-2.5 font-medium text-white transition-all hover:from-blue-600 hover:to-cyan-600"
+              class="rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 px-6 py-2.5 font-medium text-white transition-colors hover:from-blue-600 hover:to-cyan-600"
               @click="currentTab = 'stats'"
             >
               前往输入 API Key
@@ -285,7 +285,7 @@
 
           <!-- 兑换表单 -->
           <div v-else>
-            <div class="mb-6 rounded-xl bg-blue-50 p-4 dark:bg-blue-900/20">
+            <div class="mb-6 rounded-lg bg-blue-50 p-4 dark:bg-blue-900/20">
               <p class="text-sm text-blue-700 dark:text-blue-300">
                 <i class="fas fa-info-circle mr-2" />
                 当前 API Key: <span class="font-medium">{{ statsData?.name || apiId }}</span>
@@ -299,7 +299,7 @@
                 </label>
                 <input
                   v-model="redeemCode"
-                  class="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-gray-900 placeholder-gray-400 transition-all focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+                  class="w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-gray-900 placeholder-gray-400 transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
                   placeholder="请输入额度卡卡号"
                   type="text"
                   @keyup.enter="handleRedeem"
@@ -307,7 +307,7 @@
               </div>
 
               <button
-                class="w-full rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 px-6 py-3 font-medium text-white transition-all hover:from-green-600 hover:to-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
+                class="w-full rounded-lg bg-gradient-to-r from-green-500 to-emerald-500 px-6 py-3 font-medium text-white transition-colors hover:from-green-600 hover:to-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
                 :disabled="!redeemCode.trim() || redeemLoading"
                 @click="handleRedeem"
               >
@@ -321,7 +321,7 @@
             <div v-if="redeemResult" class="mt-6">
               <div
                 :class="[
-                  'rounded-xl p-4',
+                  'rounded-lg p-4',
                   redeemResult.success
                     ? redeemResult.hasWarnings
                       ? 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300'
@@ -386,7 +386,7 @@
               <p>请先在「统计查询」页面输入您的 API Key</p>
             </div>
             <button
-              class="rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 px-6 py-2.5 font-medium text-white transition-all hover:from-blue-600 hover:to-cyan-600"
+              class="rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 px-6 py-2.5 font-medium text-white transition-colors hover:from-blue-600 hover:to-cyan-600"
               @click="currentTab = 'stats'"
             >
               前往输入 API Key
@@ -409,7 +409,7 @@
               <div
                 v-for="record in redemptionHistory"
                 :key="record.id"
-                class="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800"
+                class="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800"
               >
                 <div class="flex items-start justify-between gap-4">
                   <div class="min-w-0 flex-1">
@@ -482,16 +482,16 @@
       <Transition name="fade">
         <div
           v-if="showNotice"
-          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           @click.self="dismissNotice"
         >
           <div
-            class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-800"
+            class="w-full max-w-md rounded-lg bg-white p-6 shadow-lg dark:bg-gray-800"
             @click.stop
           >
             <div class="mb-4 flex items-center gap-3">
               <div
-                class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 text-white"
+                class="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 text-white"
               >
                 <i class="fas fa-bell" />
               </div>
@@ -513,7 +513,7 @@
               <span class="text-sm text-gray-600 dark:text-gray-400">本次会话不再显示</span>
             </label>
             <button
-              class="w-full rounded-xl bg-gradient-to-r from-blue-500 to-cyan-500 px-4 py-2.5 font-medium text-white transition-all hover:from-blue-600 hover:to-cyan-600"
+              class="w-full rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 px-4 py-2.5 font-medium text-white transition-colors hover:from-blue-600 hover:to-cyan-600"
               @click="dismissNotice"
             >
               知道了
@@ -893,7 +893,6 @@ watch(apiKey, (newValue) => {
 /* 玻璃态效果 - 使用CSS变量 */
 .glass-strong {
   background: var(--glass-strong-color);
-  backdrop-filter: blur(25px);
   border: 1px solid var(--border-color);
   box-shadow:
     0 25px 50px -12px rgba(0, 0, 0, 0.25),
@@ -924,7 +923,6 @@ watch(apiKey, (newValue) => {
 /* 用户登录按钮 */
 .user-login-button {
   background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
-  backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.3);
   text-decoration: none;
   box-shadow:
@@ -991,7 +989,6 @@ watch(apiKey, (newValue) => {
 /* 管理后台按钮 - 精致版本 */
 .admin-button-refined {
   background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
-  backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.3);
   color: white;
   text-decoration: none;

@@ -3,9 +3,20 @@ export default {
   content: ['./index.html', './src/**/*.{vue,js,ts,jsx,tsx}'],
   darkMode: 'class',
   theme: {
+    fontSize: {
+      xs: ['0.6875rem', { lineHeight: '1rem' }],       // 11px
+      sm: ['0.8125rem', { lineHeight: '1.25rem' }],     // 13px
+      base: ['0.875rem', { lineHeight: '1.375rem' }],   // 14px
+      lg: ['1rem', { lineHeight: '1.5rem' }],            // 16px
+      xl: ['1.125rem', { lineHeight: '1.75rem' }],       // 18px
+      '2xl': ['1.375rem', { lineHeight: '1.875rem' }],   // 22px
+      '3xl': ['1.75rem', { lineHeight: '2.125rem' }],    // 28px
+      '4xl': ['2.125rem', { lineHeight: '2.5rem' }],     // 34px
+      '5xl': ['2.75rem', { lineHeight: '1' }],            // 44px
+      '6xl': ['3.5rem', { lineHeight: '1' }],             // 56px
+    },
     extend: {
       colors: {
-        // 主题色 - 使用 CSS 变量
         primary: {
           DEFAULT: 'var(--primary-color)',
           rgb: 'rgb(var(--primary-rgb))'
@@ -18,7 +29,6 @@ export default {
           DEFAULT: 'var(--accent-color)',
           rgb: 'rgb(var(--accent-rgb))'
         },
-        // 表面颜色
         surface: 'var(--surface-color)',
         'glass-strong': 'var(--glass-strong-color)',
         glass: 'var(--glass-color)'
@@ -29,32 +39,6 @@ export default {
       },
       borderColor: {
         'theme-border': 'var(--border-color)'
-      },
-      animation: {
-        gradient: 'gradient 8s ease infinite',
-        float: 'float 6s ease-in-out infinite',
-        'float-delayed': 'float 6s ease-in-out infinite 2s',
-        'pulse-glow': 'pulse-glow 2s ease-in-out infinite'
-      },
-      keyframes: {
-        gradient: {
-          '0%, 100%': {
-            'background-size': '200% 200%',
-            'background-position': 'left center'
-          },
-          '50%': {
-            'background-size': '200% 200%',
-            'background-position': 'right center'
-          }
-        },
-        float: {
-          '0%, 100%': { transform: 'translateY(0px)' },
-          '50%': { transform: 'translateY(-10px)' }
-        },
-        'pulse-glow': {
-          '0%, 100%': { opacity: 1 },
-          '50%': { opacity: 0.8 }
-        }
       }
     }
   },

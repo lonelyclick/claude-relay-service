@@ -1,11 +1,11 @@
 <template>
   <Teleport to="body">
-    <div class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
+    <div class="modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-3">
       <div class="modal-content mx-auto flex max-h-[90vh] w-full max-w-4xl flex-col p-4 sm:p-6">
         <div class="mb-4 flex items-center justify-between">
           <div class="flex items-center gap-2 sm:gap-3">
             <div
-              class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 sm:h-10 sm:w-10 sm:rounded-xl"
+              class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 sm:h-10 sm:w-10 sm:rounded-lg"
             >
               <i class="fas fa-key text-sm text-white sm:text-base" />
             </div>
@@ -27,7 +27,7 @@
         >
           <!-- 创建类型选择 -->
           <div
-            class="rounded-lg border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-3 dark:border-blue-700 dark:from-blue-900/20 dark:to-indigo-900/20 sm:p-4"
+            class="rounded-lg border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-3 dark:border-blue-700 dark:from-blue-900/20 dark:to-indigo-900/20 sm:p-3"
           >
             <div
               :class="[
@@ -39,7 +39,7 @@
                 class="flex h-full items-center text-xs font-semibold text-gray-700 dark:text-gray-300 sm:text-sm"
                 >创建类型</label
               >
-              <div class="flex items-center gap-3 sm:gap-4">
+              <div class="flex items-center gap-3 sm:gap-3">
                 <label class="flex cursor-pointer items-center">
                   <input
                     v-model="form.createType"
@@ -498,7 +498,7 @@
 
           <!-- 服务倍率设置 -->
           <div
-            class="rounded-lg border border-purple-200 bg-gradient-to-r from-purple-50 to-indigo-50 p-3 dark:border-purple-700 dark:from-purple-900/20 dark:to-indigo-900/20 sm:p-4"
+            class="rounded-lg border border-purple-200 bg-gradient-to-r from-purple-50 to-indigo-50 p-3 dark:border-purple-700 dark:from-purple-900/20 dark:to-indigo-900/20 sm:p-3"
           >
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">

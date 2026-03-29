@@ -1,5 +1,5 @@
 <template>
-  <div class="card h-full p-4 md:p-6">
+  <div class="card h-full p-4 md:p-4">
     <h3
       class="mb-3 flex flex-col text-lg font-bold text-gray-900 dark:text-gray-100 sm:flex-row sm:items-center md:mb-4 md:text-xl"
     >
@@ -25,7 +25,7 @@
         </div>
         <div class="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-700">
           <div
-            class="h-2 rounded-full transition-all duration-300"
+            class="h-2 rounded-full transition-colors duration-150"
             :class="getProgressColor(index)"
             :style="{ width: calculatePercentage(stat) + '%' }"
           />

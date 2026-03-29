@@ -2,10 +2,7 @@
   <Teleport to="body">
     <div v-if="show" class="modal fixed inset-0 z-50 flex items-center justify-center p-4">
       <!-- 背景遮罩 -->
-      <div
-        class="fixed inset-0 bg-gray-900 bg-opacity-50 backdrop-blur-sm"
-        @click="$emit('close')"
-      />
+      <div class="fixed inset-0 bg-gray-900 bg-opacity-50" @click="$emit('close')" />
 
       <!-- 模态框内容 -->
       <div class="modal-content relative mx-auto w-full max-w-lg p-8">
@@ -13,7 +10,7 @@
         <div class="mb-6 flex items-center justify-between">
           <div class="flex items-center gap-3">
             <div
-              class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-600"
+              class="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-600"
             >
               <i class="fas fa-clock text-white" />
             </div>
@@ -84,7 +81,7 @@
                 v-for="option in quickOptions"
                 :key="option.value"
                 :class="[
-                  'rounded-lg px-3 py-2 text-sm font-medium transition-all',
+                  'rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                   localForm.expireDuration === option.value
                     ? 'bg-blue-500 text-white shadow-md'
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
@@ -95,7 +92,7 @@
               </button>
               <button
                 :class="[
-                  'rounded-lg px-3 py-2 text-sm font-medium transition-all',
+                  'rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                   localForm.expireDuration === 'custom'
                     ? 'bg-blue-500 text-white shadow-md'
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'

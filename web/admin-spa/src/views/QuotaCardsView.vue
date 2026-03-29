@@ -2,7 +2,7 @@
   <div class="tab-content">
     <div class="card p-4 sm:p-6">
       <!-- Header -->
-      <div class="mb-4 flex flex-col gap-4 sm:mb-6">
+      <div class="mb-4 flex flex-col gap-4 sm:mb-4">
         <div class="flex items-center justify-between">
           <div>
             <h3 class="mb-1 text-lg font-bold text-gray-900 dark:text-gray-100 sm:mb-2 sm:text-xl">
@@ -22,7 +22,7 @@
         </div>
 
         <!-- Stats Cards -->
-        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
+        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-3">
           <div class="stat-card">
             <div class="flex items-center justify-between">
               <div>
@@ -519,7 +519,7 @@
           <div class="mb-6 flex items-center justify-between">
             <div class="flex items-center gap-3">
               <div
-                class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-blue-600"
+                class="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-600"
               >
                 <i class="fas fa-ticket-alt text-white" />
               </div>
@@ -613,14 +613,14 @@
           <!-- Footer -->
           <div class="mt-6 flex gap-3">
             <button
-              class="flex-1 rounded-xl bg-gray-100 px-4 py-2.5 font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+              class="flex-1 rounded-lg bg-gray-100 px-4 py-2.5 font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
               type="button"
               @click="showCreateModal = false"
             >
               取消
             </button>
             <button
-              class="flex-1 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 px-4 py-2.5 font-medium text-white shadow-sm transition-colors hover:from-blue-600 hover:to-blue-700 disabled:opacity-50"
+              class="flex-1 rounded-lg bg-gradient-to-r from-blue-500 to-blue-600 px-4 py-2.5 font-medium text-white shadow-sm transition-colors hover:from-blue-600 hover:to-blue-700 disabled:opacity-50"
               :disabled="creating"
               type="button"
               @click="createCard"
@@ -644,7 +644,7 @@
           <div class="mb-6 flex items-center justify-between">
             <div class="flex items-center gap-3">
               <div
-                class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-green-500 to-green-600"
+                class="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-green-500 to-green-600"
               >
                 <i class="fas fa-check text-white" />
               </div>
@@ -702,7 +702,7 @@
           <!-- Actions -->
           <div class="flex gap-3">
             <button
-              class="flex-1 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 px-4 py-2.5 font-medium text-white shadow-sm transition-colors hover:from-blue-600 hover:to-blue-700"
+              class="flex-1 rounded-lg bg-gradient-to-r from-blue-500 to-blue-600 px-4 py-2.5 font-medium text-white shadow-sm transition-colors hover:from-blue-600 hover:to-blue-700"
               type="button"
               @click="downloadCards"
             >
@@ -710,7 +710,7 @@
               下载 TXT
             </button>
             <button
-              class="flex-1 rounded-xl bg-gray-100 px-4 py-2.5 font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+              class="flex-1 rounded-lg bg-gray-100 px-4 py-2.5 font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
               type="button"
               @click="copyAllCards"
             >
@@ -725,10 +725,10 @@
     <Teleport to="body">
       <div
         v-if="showRevokeModal"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
         @click.self="showRevokeModal = false"
       >
-        <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-800">
+        <div class="w-full max-w-md rounded-lg bg-white p-6 shadow-lg dark:bg-gray-800">
           <h3 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">撤销核销</h3>
           <div class="mb-4">
             <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">

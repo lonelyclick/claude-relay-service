@@ -26,7 +26,7 @@
         </div>
         <div class="h-1 w-full rounded-full bg-gray-200">
           <div
-            class="h-1 rounded-full transition-all duration-300"
+            class="h-1 rounded-full transition-colors duration-150"
             :class="getRequestProgressColor()"
             :style="{ width: getRequestProgress() + '%' }"
           />
@@ -43,7 +43,7 @@
         </div>
         <div class="h-1 w-full rounded-full bg-gray-200">
           <div
-            class="h-1 rounded-full transition-all duration-300"
+            class="h-1 rounded-full transition-colors duration-150"
             :class="getTokenProgressColor()"
             :style="{ width: getTokenProgress() + '%' }"
           />
@@ -60,7 +60,7 @@
         </div>
         <div class="h-1 w-full rounded-full bg-gray-200">
           <div
-            class="h-1 rounded-full transition-all duration-300"
+            class="h-1 rounded-full transition-colors duration-150"
             :class="getCostProgressColor()"
             :style="{ width: getCostProgress() + '%' }"
           />

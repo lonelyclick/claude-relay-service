@@ -3,10 +3,10 @@
     <Transition name="modal">
       <div
         v-if="show"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
         @click.self="handleClose"
       >
-        <div class="w-full max-w-lg rounded-2xl bg-white shadow-2xl dark:bg-gray-800" @click.stop>
+        <div class="w-full max-w-lg rounded-lg bg-white shadow-lg dark:bg-gray-800" @click.stop>
           <!-- 头部 -->
           <div
             class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-700"
@@ -122,10 +122,10 @@
   <Teleport to="body">
     <div
       v-if="showRenameModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       @click.self="showRenameModal = false"
     >
-      <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-800">
+      <div class="w-full max-w-md rounded-lg bg-white p-6 shadow-lg dark:bg-gray-800">
         <h3 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">重命名标签</h3>
         <div class="mb-4">
           <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">

@@ -1,7 +1,7 @@
 <template>
-  <div class="flex h-full flex-col gap-3 sm:gap-4 md:gap-6">
+  <div class="flex h-full flex-col gap-3 sm:gap-3 md:gap-6">
     <!-- 限制配置 / 聚合模式提示 -->
-    <div class="card flex h-full flex-col p-3 sm:p-4 md:p-6">
+    <div class="card flex h-full flex-col p-3 sm:p-3 md:p-4">
       <h3
         class="mb-2 flex items-center text-base font-bold text-gray-900 dark:text-gray-100 sm:mb-3 sm:text-lg md:mb-4 md:text-xl"
       >
@@ -125,7 +125,7 @@
             class="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-700"
           >
             <div
-              class="h-2 rounded-full transition-all duration-300"
+              class="h-2 rounded-full transition-colors duration-150"
               :class="getDailyCostProgressColor()"
               :style="{ width: getDailyCostProgress() + '%' }"
             />
@@ -157,7 +157,7 @@
             class="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-700"
           >
             <div
-              class="h-2 rounded-full transition-all duration-300"
+              class="h-2 rounded-full transition-colors duration-150"
               :class="getTotalCostProgressColor()"
               :style="{ width: getTotalCostProgress() + '%' }"
             />
@@ -181,7 +181,7 @@
           </div>
           <div class="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-700">
             <div
-              class="h-2 rounded-full transition-all duration-300"
+              class="h-2 rounded-full transition-colors duration-150"
               :class="getOpusWeeklyCostProgressColor()"
               :style="{ width: getOpusWeeklyCostProgress() + '%' }"
             />
@@ -295,7 +295,7 @@
     </div>
 
     <!-- 详细限制信息 -->
-    <div v-if="hasModelRestrictions" class="card !overflow-visible p-4 md:p-6">
+    <div v-if="hasModelRestrictions" class="card !overflow-visible p-4 md:p-4">
       <h3
         class="mb-3 flex items-center text-lg font-bold text-gray-900 dark:text-gray-100 md:mb-4 md:text-xl"
       >
