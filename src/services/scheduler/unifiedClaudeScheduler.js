@@ -957,6 +957,23 @@ class UnifiedClaudeScheduler {
     )
 
     // 🚨 最终检查：只有在没有任何可用账户时，才根据Console并发排除情况抛出专用错误码
+    // 🔌 Worker 在线检查：过滤掉绑定了离线 Worker 的账户
+    // 如果账户绑定了 workerId 但该 Worker 不在线，本地无法代替执行（IP 不同）
+    const workerService = require('../../services/worker/workerService')
+    const beforeWorkerFilter = availableAccounts.length
+    const filteredAccounts = availableAccounts.filter(acc => {
+      if (!acc.workerId) return true // 无绑定，本地可用
+      return workerService.isOnline(acc.workerId) // 有绑定，必须在线
+    })
+    if (filteredAccounts.length < beforeWorkerFilter) {
+      logger.info(
+        `🔌 Worker filter: ${beforeWorkerFilter - filteredAccounts.length} accounts excluded (bound to offline workers)`
+      )
+    }
+    // 用过滤后的列表替换
+    availableAccounts.length = 0
+    availableAccounts.push(...filteredAccounts)
+
     if (availableAccounts.length === 0) {
       // 如果所有Console账户都因并发满额被排除，抛出专用错误码（503）
       if (

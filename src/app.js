@@ -9,7 +9,9 @@ const bcrypt = require('bcryptjs')
 const config = require('../config/config')
 const logger = require('./utils/logger')
 const redis = require('./models/redis')
+const pg = require('./models/pg')
 const pricingService = require('./services/pricingService')
+const workerWsServer = require('./services/worker/workerWsServer')
 const cacheMonitor = require('./utils/cacheMonitor')
 const { getSafeMessage } = require('./utils/errorSanitizer')
 
@@ -52,6 +54,11 @@ class Application {
       logger.info('🔄 Connecting to Redis...')
       await redis.connect()
       logger.success('Redis connected successfully')
+
+      // 🐘 连接 PostgreSQL
+      logger.info('🔄 Connecting to PostgreSQL...')
+      await pg.connect()
+      logger.success('PostgreSQL connected successfully')
 
       // 📊 检查数据迁移（版本 > 1.1.250 时执行）
       const { getAppVersion, versionGt } = require('./utils/commonHelper')
@@ -621,6 +628,10 @@ class Application {
       this.server.keepAliveTimeout = serverTimeout + 5000 // keepAlive 稍长一点
       logger.info(`⏱️  Server timeout set to ${serverTimeout}ms (${serverTimeout / 1000}s)`)
 
+      // 🔌 挂载 Worker WebSocket Server
+      workerWsServer.attach(this.server)
+      logger.info(`🔌 Worker WebSocket: ws://${config.server.host}:${config.server.port}/ws/worker`)
+
       // 🔄 定期清理任务
       this.startCleanupTasks()
 
@@ -905,11 +916,27 @@ class Application {
             // 不阻止退出流程
           }
 
+          // 关闭 Worker WebSocket Server
+          try {
+            workerWsServer.close()
+            logger.info('🔌 Worker WebSocket server closed')
+          } catch (error) {
+            logger.error('❌ Error closing Worker WebSocket server:', error)
+          }
+
           try {
             await redis.disconnect()
             logger.info('👋 Redis disconnected')
           } catch (error) {
             logger.error('❌ Error disconnecting Redis:', error)
+          }
+
+          // 关闭 PostgreSQL 连接池
+          try {
+            await pg.close()
+            logger.info('🐘 PostgreSQL pool closed')
+          } catch (error) {
+            logger.error('❌ Error closing PostgreSQL pool:', error)
           }
 
           logger.success('Graceful shutdown completed')

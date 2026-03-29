@@ -1,0 +1,12 @@
+{
+  "name": "claude-relay-worker",
+  "version": "1.0.0",
+  "description": "Distributed Worker node for Claude Relay Service",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

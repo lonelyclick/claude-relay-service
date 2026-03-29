@@ -1620,6 +1620,41 @@ class ClaudeRelayService {
     let { bodyString } = prepared
     const { headers, isRealClaudeCode, toolNameMap } = prepared
 
+    // 🔌 Worker 路由：如果账户绑定了在线的远程 Worker，通过 WebSocket 下发
+    const workerRouter = require('../worker/workerRouter')
+    const routing = workerRouter.resolve(account?.workerId)
+    if (routing.mode === 'remote') {
+      const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
+      let requestPath = url.pathname
+      if (requestOptions.customPath) {
+        const baseUrl = new URL('https://api.anthropic.com')
+        const customUrl = new URL(requestOptions.customPath, baseUrl)
+        requestPath = customUrl.pathname
+      }
+      const fullUrl = `https://${url.hostname}${requestPath}${url.search || ''}`
+
+      logger.info(`🔌 [Worker] Routing non-stream request to remote worker ${routing.workerId} for account ${accountId}`)
+
+      const result = await remoteWorkerProxy.sendRequest(routing.workerId, {
+        url: fullUrl,
+        method: 'POST',
+        headers,
+        body: bodyString
+      }, config.requestTimeout || 600000)
+
+      // 远程 Worker 返回的响应格式与本地一致：{ statusCode, headers, body }
+      let responseBody = result.body || ''
+      if (!isRealClaudeCode && toolNameMap) {
+        responseBody = this._restoreToolNamesInResponseBody(responseBody, toolNameMap)
+      }
+
+      return {
+        statusCode: result.statusCode,
+        headers: result.headers || {},
+        body: responseBody
+      }
+    }
+
     return new Promise((resolve, reject) => {
       // 支持自定义路径（如 count_tokens）
       let requestPath = url.pathname
@@ -2044,6 +2079,93 @@ class ClaudeRelayService {
       streamTransformer,
       toolNameMap
     )
+
+    // 🔌 Worker 路由：如果账户绑定了在线的远程 Worker，通过 WebSocket 下发流式请求
+    const workerRouter = require('../worker/workerRouter')
+    const routing = workerRouter.resolve(account?.workerId)
+    if (routing.mode === 'remote') {
+      const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
+      const url = new URL(this.claudeApiUrl)
+      const fullUrl = `https://${url.hostname}${url.pathname}${url.search || ''}`
+
+      logger.info(`🔌 [Worker] Routing stream request to remote worker ${routing.workerId} for account ${accountId}`)
+
+      return remoteWorkerProxy.sendStreamRequest(routing.workerId, {
+        url: fullUrl,
+        method: 'POST',
+        headers,
+        body: bodyString
+      }, {
+        onResponseStart: async (statusCode, resHeaders) => {
+          // 触发队列锁提前释放
+          if (onResponseStart) onResponseStart()
+
+          if (statusCode !== 200) {
+            logger.warn(`🔌 [Worker] Stream response status: ${statusCode} from worker ${routing.workerId}`)
+            // 标记账户状态（与本地路径一致）
+            try {
+              if (statusCode === 401) {
+                await upstreamErrorHelper.markTempUnavailable(accountId, accountType, 401).catch(() => {})
+              } else if (statusCode === 403) {
+                await upstreamErrorHelper.markTempUnavailable(accountId, accountType, 403).catch(() => {})
+              } else if (statusCode === 429) {
+                await unifiedClaudeScheduler.markAccountRateLimited(accountId, accountType, null, null).catch(() => {})
+              } else if (statusCode === 529) {
+                await upstreamErrorHelper.markTempUnavailable(accountId, accountType, 529).catch(() => {})
+              }
+            } catch (markErr) {
+              logger.warn(`🔌 [Worker] Failed to mark account status: ${markErr.message}`)
+            }
+          }
+
+          // 写入响应头到客户端（只转发安全的头部，避免 transfer-encoding 冲突）
+          if (responseStream && !responseStream.headersSent) {
+            const safeHeaders = {
+              'Content-Type': resHeaders['content-type'] || 'text/event-stream',
+              'Cache-Control': 'no-cache',
+              'Connection': 'keep-alive',
+              'X-Accel-Buffering': 'no'
+            }
+            // 透传 Anthropic 特有的响应头
+            for (const key of Object.keys(resHeaders)) {
+              if (key.startsWith('x-') || key.startsWith('anthropic-') || key === 'request-id') {
+                safeHeaders[key] = resHeaders[key]
+              }
+            }
+            responseStream.writeHead(statusCode, safeHeaders)
+          }
+        },
+        onData: (chunk) => {
+          // 直接转发数据块到客户端
+          if (responseStream && !responseStream.destroyed) {
+            // 应用 tool name 还原和 stream transformer
+            if (toolNameStreamTransformer) {
+              const data = typeof chunk === 'string' ? chunk : chunk.toString()
+              responseStream.write(toolNameStreamTransformer(data))
+            } else {
+              responseStream.write(chunk)
+            }
+          }
+        },
+        onEnd: (summary) => {
+          // 流结束，关闭客户端连接
+          if (responseStream && !responseStream.destroyed) {
+            responseStream.end()
+          }
+          // 提取 usage 数据
+          if (usageCallback && summary?.usage) {
+            usageCallback(summary.usage)
+          }
+        },
+        onError: (err) => {
+          logger.error(`🔌 [Worker] Stream error from worker ${routing.workerId}: ${err.message}`)
+          if (responseStream && !responseStream.destroyed && !responseStream.headersSent) {
+            responseStream.writeHead(502, { 'Content-Type': 'application/json' })
+            responseStream.end(JSON.stringify({ error: 'Worker stream failed', message: err.message }))
+          }
+        }
+      }, config.requestTimeout || 600000)
+    }
 
     return new Promise((resolve, reject) => {
       const url = new URL(this.claudeApiUrl)
