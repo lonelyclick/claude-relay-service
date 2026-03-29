@@ -605,7 +605,8 @@ router.post('/droid-accounts/:id/refresh-token', authenticateAdmin, async (req, 
 // 测试 Droid 账户连通性
 router.post('/droid-accounts/:accountId/test', authenticateAdmin, async (req, res) => {
   const { accountId } = req.params
-  const { model = 'claude-sonnet-4-20250514' } = req.body
+  // 使用 Factory API 支持的默认模型（Sonnet 4.5）
+  const { model = 'claude-sonnet-4-5-20250929' } = req.body
   const startTime = Date.now()
 
   try {
@@ -616,32 +617,126 @@ router.post('/droid-accounts/:accountId/test', authenticateAdmin, async (req, re
     }
 
     // 确保 token 有效
-    const tokenResult = await droidAccountService.ensureValidToken(accountId)
-    if (!tokenResult.success) {
-      return res.status(401).json({
-        error: 'Token refresh failed',
-        message: tokenResult.error
-      })
+    // 注意：对于 api_key 模式的账户，直接从账户数据中获取
+    let accessToken
+    if (
+      typeof account.authenticationMethod === 'string' &&
+      account.authenticationMethod.toLowerCase().trim() === 'api_key'
+    ) {
+      // API Key 模式：从 apiKeys 中随机获取一个
+      const decryptedApiKeys = await droidAccountService.getDecryptedApiKeyEntries(accountId)
+      if (!decryptedApiKeys || decryptedApiKeys.length === 0) {
+        return res.status(400).json({
+          error: 'No API keys available',
+          message: '此账户配置为 API Key 模式，但没���可用的 API Key'
+        })
+      }
+      // 随机选择一个 API Key
+      const randomIndex = Math.floor(Math.random() * decryptedApiKeys.length)
+      accessToken = decryptedApiKeys[randomIndex].key
+    } else {
+      // OAuth 模式：使用 getValidAccessToken 获取有效 token
+      try {
+        accessToken = await droidAccountService.getValidAccessToken(accountId)
+      } catch (tokenError) {
+        return res.status(401).json({
+          error: 'Token refresh failed',
+          message: tokenError.message
+        })
+      }
     }
 
-    const { accessToken } = tokenResult
+    if (!accessToken) {
+      return res.status(401).json({
+        error: 'No valid token',
+        message: '无法获取有效的访问令牌'
+      })
+    }
 
     // 构造测试请求
     const axios = require('axios')
     const { getProxyAgent } = require('../../utils/proxyHelper')
 
-    const apiUrl = 'https://api.factory.ai/v1/messages'
-    const payload = {
-      model,
-      max_tokens: 100,
-      messages: [{ role: 'user', content: 'Say "Hello" in one word.' }]
+    // 使用正确的 Factory API 地址和端点
+    // 参考 droidRelayService 的配置
+    const factoryApiBaseUrl = 'https://api.factory.ai/api/llm'
+    const endpointType = account.endpointType || 'anthropic'
+    const endpoints = {
+      anthropic: '/a/v1/messages',
+      openai: '/o/v1/responses',
+      comm: '/o/v1/chat/completions'
+    }
+    const endpointPath = endpoints[endpointType] || endpoints.anthropic
+    const apiUrl = `${factoryApiBaseUrl}${endpointPath}`
+
+    // 根据端点类型构造测试 payload
+    let payload
+    if (endpointType === 'anthropic') {
+      payload = {
+        model,
+        max_tokens: 100,
+        messages: [{ role: 'user', content: 'Say "Hello" in one word.' }]
+      }
+    } else if (endpointType === 'openai') {
+      payload = {
+        model,
+        instructions: 'Say "Hello" in one word.',
+        input: ''
+      }
+    } else {
+      // comm 端点使用 OpenAI 格式
+      payload = {
+        model,
+        messages: [{ role: 'user', content: 'Say "Hello" in one word.' }]
+      }
+    }
+
+    // 构造请求头（参考 droidRelayService._buildHeaders）
+    // Factory API 要求最低版本 v0.57.0
+    const userAgent = account.userAgent || 'factory-cli/0.57.0'
+    const headers = {
+      'content-type': 'application/json',
+      'authorization': `Bearer ${accessToken}`,
+      'user-agent': userAgent,
+      'x-factory-client': 'cli',
+      'connection': 'keep-alive'
+    }
+
+    // Anthropic 特定头
+    if (endpointType === 'anthropic') {
+      headers['accept'] = 'application/json'
+      headers['anthropic-version'] = '2023-06-01'
+      headers['x-api-key'] = 'placeholder'
+      headers['x-api-provider'] = 'anthropic'
+    }
+
+    // OpenAI 特定头
+    if (endpointType === 'openai') {
+      const modelLower = (model || '').toLowerCase()
+      if (modelLower.includes('-max')) {
+        headers['x-api-provider'] = 'openai'
+      } else {
+        headers['x-api-provider'] = 'azure_openai'
+      }
+    }
+
+    // Comm 端点根据模型设置 provider
+    if (endpointType === 'comm') {
+      // 根据模型推断 provider
+      const modelLower = (model || '').toLowerCase()
+      if (modelLower.startsWith('gemini-') || modelLower.includes('gemini')) {
+        headers['x-api-provider'] = 'google'
+      } else if (modelLower.startsWith('claude-') || modelLower.includes('claude')) {
+        headers['x-api-provider'] = 'anthropic'
+      } else if (modelLower.startsWith('gpt-') || modelLower.includes('gpt')) {
+        headers['x-api-provider'] = 'azure_openai'
+      } else {
+        headers['x-api-provider'] = 'baseten'
+      }
     }
 
     const requestConfig = {
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`
-      },
+      headers,
       timeout: 30000
     }
 
@@ -657,14 +752,29 @@ router.post('/droid-accounts/:accountId/test', authenticateAdmin, async (req, re
     const response = await axios.post(apiUrl, payload, requestConfig)
     const latency = Date.now() - startTime
 
-    // 提取响应文本
+    // 根据端点类型提取响应文本
     let responseText = ''
-    if (response.data?.content?.[0]?.text) {
-      responseText = response.data.content[0].text
+    if (endpointType === 'anthropic') {
+      // Anthropic 格式: { content: [{ type: 'text', text: '...' }] }
+      if (response.data?.content?.[0]?.text) {
+        responseText = response.data.content[0].text
+      }
+    } else if (endpointType === 'openai') {
+      // OpenAI Response API 格式: { output: { data: [...] } }
+      if (response.data?.output?.data?.[0]?.text) {
+        responseText = response.data.output.data[0].text
+      } else if (response.data?.output?.text) {
+        responseText = response.data.output.text
+      }
+    } else {
+      // comm 端点（OpenAI Chat Completions 格式）: { choices: [{ message: { content: '...' } }] }
+      if (response.data?.choices?.[0]?.message?.content) {
+        responseText = response.data.choices[0].message.content
+      }
     }
 
     logger.success(
-      `✅ Droid account test passed: ${account.name} (${accountId}), latency: ${latency}ms`
+      `✅ Droid account test passed: ${account.name} (${accountId}), endpoint: ${endpointType}, latency: ${latency}ms`
     )
 
     return res.json({
@@ -680,6 +790,16 @@ router.post('/droid-accounts/:accountId/test', authenticateAdmin, async (req, re
   } catch (error) {
     const latency = Date.now() - startTime
     logger.error(`❌ Droid account test failed: ${accountId}`, error.message)
+
+    // 详细记录 Factory API 的错误响应
+    if (error.response) {
+      logger.error(`❌ Factory API error response:`, {
+        status: error.response.status,
+        statusText: error.response.statusText,
+        data: error.response.data,
+        headers: error.response.config?.headers
+      })
+    }
 
     return res.status(500).json({
       success: false,
