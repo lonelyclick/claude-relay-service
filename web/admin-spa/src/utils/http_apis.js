@@ -347,7 +347,8 @@ export const updateAdminServiceRatesApi = (data, config) =>
 export const getWorkersApi = () => request({ url: '/admin/workers', method: 'GET' })
 export const getWorkerApi = (id) => request({ url: `/admin/workers/${id}`, method: 'GET' })
 export const createWorkerApi = (data) => request({ url: '/admin/workers', method: 'POST', data })
-export const updateWorkerApi = (id, data) => request({ url: `/admin/workers/${id}`, method: 'PUT', data })
+export const updateWorkerApi = (id, data) =>
+  request({ url: `/admin/workers/${id}`, method: 'PUT', data })
 export const deleteWorkerApi = (id) => request({ url: `/admin/workers/${id}`, method: 'DELETE' })
 export const regenerateWorkerTokenApi = (id) =>
   request({ url: `/admin/workers/${id}/regenerate-token`, method: 'POST' })

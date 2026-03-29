@@ -111,9 +111,13 @@
                 </span>
               </div>
 
-              <div class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500 dark:text-gray-400">
+              <div
+                class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500 dark:text-gray-400"
+              >
                 <span class="font-mono text-xs">{{ worker.id.slice(0, 8) }}...</span>
-                <span v-if="worker.region"><i class="fas fa-map-marker-alt mr-1" />{{ worker.region }}</span>
+                <span v-if="worker.region"
+                  ><i class="fas fa-map-marker-alt mr-1" />{{ worker.region }}</span
+                >
                 <span><i class="fas fa-layer-group mr-1" />{{ worker.type || 'remote' }}</span>
                 <span><i class="fas fa-tasks mr-1" />Max: {{ worker.maxConcurrency }}</span>
                 <span v-if="worker.currentLoad !== undefined">
@@ -180,7 +184,9 @@
         <h3 class="mb-4 text-lg font-bold text-gray-900 dark:text-gray-100">创建 Worker</h3>
         <div class="space-y-4">
           <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">名称</label>
+            <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+              >名称</label
+            >
             <input
               v-model="createForm.name"
               class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
@@ -188,7 +194,9 @@
             />
           </div>
           <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">地区</label>
+            <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+              >地区</label
+            >
             <input
               v-model="createForm.region"
               class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
@@ -196,12 +204,14 @@
             />
           </div>
           <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">最大并发数</label>
+            <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+              >最大并发数</label
+            >
             <input
               v-model.number="createForm.maxConcurrency"
-              type="number"
-              min="1"
               class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+              min="1"
+              type="number"
             />
           </div>
         </div>
@@ -237,7 +247,9 @@
           此 Token 仅显示一次，请妥善保存！
         </p>
         <div class="relative rounded-md bg-gray-100 p-3 dark:bg-gray-700">
-          <code class="block break-all text-sm text-gray-800 dark:text-gray-200">{{ newToken }}</code>
+          <code class="block break-all text-sm text-gray-800 dark:text-gray-200">{{
+            newToken
+          }}</code>
           <button
             class="absolute right-2 top-2 rounded px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
             @click="copyToken"
@@ -266,26 +278,32 @@
         <h3 class="mb-4 text-lg font-bold text-gray-900 dark:text-gray-100">编辑 Worker</h3>
         <div class="space-y-4">
           <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">名称</label>
+            <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+              >名称</label
+            >
             <input
               v-model="editForm.name"
               class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
             />
           </div>
           <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">地区</label>
+            <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+              >地区</label
+            >
             <input
               v-model="editForm.region"
               class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
             />
           </div>
           <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">最大并发数</label>
+            <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+              >最大并发数</label
+            >
             <input
               v-model.number="editForm.maxConcurrency"
-              type="number"
-              min="1"
               class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+              min="1"
+              type="number"
             />
           </div>
         </div>
@@ -329,14 +347,51 @@
 
         <!-- Info -->
         <div class="mb-4 grid grid-cols-2 gap-3 text-sm">
-          <div><span class="text-gray-500 dark:text-gray-400">ID:</span> <span class="font-mono text-gray-900 dark:text-gray-100">{{ selectedWorker?.id }}</span></div>
-          <div><span class="text-gray-500 dark:text-gray-400">Type:</span> <span class="text-gray-900 dark:text-gray-100">{{ selectedWorker?.type }}</span></div>
-          <div><span class="text-gray-500 dark:text-gray-400">Region:</span> <span class="text-gray-900 dark:text-gray-100">{{ selectedWorker?.region || '-' }}</span></div>
-          <div><span class="text-gray-500 dark:text-gray-400">Status:</span> <span :class="selectedWorker?.status === 'online' ? 'text-green-600' : 'text-gray-500'">{{ selectedWorker?.status }}</span></div>
-          <div><span class="text-gray-500 dark:text-gray-400">Max Concurrency:</span> <span class="text-gray-900 dark:text-gray-100">{{ selectedWorker?.maxConcurrency }}</span></div>
-          <div><span class="text-gray-500 dark:text-gray-400">Current Load:</span> <span class="text-gray-900 dark:text-gray-100">{{ selectedWorker?.currentLoad ?? '-' }}</span></div>
-          <div><span class="text-gray-500 dark:text-gray-400">Last IP:</span> <span class="font-mono text-gray-900 dark:text-gray-100">{{ selectedWorker?.ip || '-' }}</span></div>
-          <div><span class="text-gray-500 dark:text-gray-400">Created:</span> <span class="text-gray-900 dark:text-gray-100">{{ formatTime(selectedWorker?.createdAt) }}</span></div>
+          <div>
+            <span class="text-gray-500 dark:text-gray-400">ID:</span>
+            <span class="font-mono text-gray-900 dark:text-gray-100">{{ selectedWorker?.id }}</span>
+          </div>
+          <div>
+            <span class="text-gray-500 dark:text-gray-400">Type:</span>
+            <span class="text-gray-900 dark:text-gray-100">{{ selectedWorker?.type }}</span>
+          </div>
+          <div>
+            <span class="text-gray-500 dark:text-gray-400">Region:</span>
+            <span class="text-gray-900 dark:text-gray-100">{{
+              selectedWorker?.region || '-'
+            }}</span>
+          </div>
+          <div>
+            <span class="text-gray-500 dark:text-gray-400">Status:</span>
+            <span
+              :class="selectedWorker?.status === 'online' ? 'text-green-600' : 'text-gray-500'"
+              >{{ selectedWorker?.status }}</span
+            >
+          </div>
+          <div>
+            <span class="text-gray-500 dark:text-gray-400">Max Concurrency:</span>
+            <span class="text-gray-900 dark:text-gray-100">{{
+              selectedWorker?.maxConcurrency
+            }}</span>
+          </div>
+          <div>
+            <span class="text-gray-500 dark:text-gray-400">Current Load:</span>
+            <span class="text-gray-900 dark:text-gray-100">{{
+              selectedWorker?.currentLoad ?? '-'
+            }}</span>
+          </div>
+          <div>
+            <span class="text-gray-500 dark:text-gray-400">Last IP:</span>
+            <span class="font-mono text-gray-900 dark:text-gray-100">{{
+              selectedWorker?.ip || '-'
+            }}</span>
+          </div>
+          <div>
+            <span class="text-gray-500 dark:text-gray-400">Created:</span>
+            <span class="text-gray-900 dark:text-gray-100">{{
+              formatTime(selectedWorker?.createdAt)
+            }}</span>
+          </div>
         </div>
 
         <!-- Bound Accounts -->
@@ -351,7 +406,9 @@
               class="flex items-center justify-between rounded border border-gray-200 px-3 py-2 text-sm dark:border-gray-700"
             >
               <div>
-                <span class="font-medium text-gray-900 dark:text-gray-100">{{ acc.name || acc.id.slice(0, 8) }}</span>
+                <span class="font-medium text-gray-900 dark:text-gray-100">{{
+                  acc.name || acc.id.slice(0, 8)
+                }}</span>
                 <span class="ml-2 text-xs text-gray-500">{{ acc.platform }}</span>
               </div>
               <button
@@ -363,9 +420,7 @@
             </div>
           </div>
         </div>
-        <div v-else class="mt-4 text-sm text-gray-500 dark:text-gray-400">
-          暂无绑定的账户
-        </div>
+        <div v-else class="mt-4 text-sm text-gray-500 dark:text-gray-400">暂无绑定的账户</div>
 
         <div class="mt-6 flex justify-end">
           <button
@@ -389,8 +444,7 @@
           <i class="fas fa-exclamation-triangle mr-2" />确认删除
         </h3>
         <p class="mb-4 text-sm text-gray-600 dark:text-gray-400">
-          确定要删除 Worker「{{ workerToDelete?.name }}」吗？
-          绑定到该 Worker 的账户将被解除绑定。
+          确定要删除 Worker「{{ workerToDelete?.name }}」吗？ 绑定到该 Worker 的账户将被解除绑定。
         </p>
         <div class="flex justify-end gap-3">
           <button
@@ -440,7 +494,7 @@ const workerToDelete = ref(null)
 const newToken = ref('')
 
 // Computed
-const onlineCount = computed(() => workers.value.filter(w => w.status === 'online').length)
+const onlineCount = computed(() => workers.value.filter((w) => w.status === 'online').length)
 
 // Methods
 async function loadWorkers() {
