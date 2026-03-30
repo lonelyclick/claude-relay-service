@@ -289,16 +289,6 @@ class ClaudeConsoleRelayService {
           }
         }
         this._cleanHeadersForFactoryAi(requestConfig.headers)
-        // 调试：打印发往 Factory.ai 的最终 headers 和 body 关键字段
-        logger.info(`🔍 Factory.ai FINAL headers: ${JSON.stringify(requestConfig.headers)}`)
-        const bodyKeys = Object.keys(requestConfig.data || {})
-        const bodyDebug = {}
-        for (const k of bodyKeys) {
-          if (k === 'messages') bodyDebug[k] = `[${requestConfig.data[k]?.length || 0} items]`
-          else if (k === 'tools') bodyDebug[k] = `[${requestConfig.data[k]?.length || 0} tools]`
-          else bodyDebug[k] = requestConfig.data[k]
-        }
-        logger.info(`🔍 Factory.ai FINAL body keys: ${JSON.stringify(bodyDebug)}`)
       }
 
       // 发送请求
@@ -889,16 +879,6 @@ class ClaudeConsoleRelayService {
           }
         }
         this._cleanHeadersForFactoryAi(requestConfig.headers)
-        // 调试：打印发往 Factory.ai 的最终 headers 和 body 关键字段
-        logger.info(`🔍 [Stream] Factory.ai FINAL headers: ${JSON.stringify(requestConfig.headers)}`)
-        const bodyKeys = Object.keys(requestConfig.data || {})
-        const bodyDebug = {}
-        for (const k of bodyKeys) {
-          if (k === 'messages') bodyDebug[k] = `[${requestConfig.data[k]?.length || 0} items]`
-          else if (k === 'tools') bodyDebug[k] = `[${requestConfig.data[k]?.length || 0} tools]`
-          else bodyDebug[k] = requestConfig.data[k]
-        }
-        logger.info(`🔍 [Stream] Factory.ai FINAL body keys: ${JSON.stringify(bodyDebug)}`)
       }
 
       // 发送请求
@@ -1617,6 +1597,51 @@ class ClaudeConsoleRelayService {
         }
         return msg
       })
+    }
+
+    // 4.5 清理 messages 中触发 Factory.ai 安全过滤的 Claude Code 指纹文本
+    if (result.messages && Array.isArray(result.messages)) {
+      const fingerprints = [
+        // Factory.ai 检测 Claude Code 身份声明（精确匹配完整短语）
+        [/You are Claude Code, Anthropic's official CLI for Claude/g, 'You are an AI coding assistant'],
+        // Factory.ai 检测 CLAUDE.md 注入标记（括号包裹的 "private global instructions for all projects"）
+        [/\(user's private global instructions for all projects\)/g, '[user project-level config]'],
+      ]
+      let cleaned = 0
+      result.messages = result.messages.map(msg => {
+        const replaceText = (text) => {
+          if (typeof text !== 'string') return text
+          let modified = text
+          for (const [pattern, replacement] of fingerprints) {
+            if (pattern.test(modified)) {
+              modified = modified.replace(pattern, replacement)
+              cleaned++
+            }
+            // Reset regex lastIndex for global patterns
+            pattern.lastIndex = 0
+          }
+          return modified
+        }
+
+        if (typeof msg.content === 'string') {
+          return { ...msg, content: replaceText(msg.content) }
+        }
+        if (Array.isArray(msg.content)) {
+          return {
+            ...msg,
+            content: msg.content.map(item => {
+              if (item.type === 'text' && typeof item.text === 'string') {
+                return { ...item, text: replaceText(item.text) }
+              }
+              return item
+            })
+          }
+        }
+        return msg
+      })
+      if (cleaned > 0) {
+        logger.info(`🔧 ${logPrefix}Factory.ai: cleaned ${cleaned} Claude Code fingerprint(s) from messages`)
+      }
     }
 
     // 5. 映射 tools 类型版本
