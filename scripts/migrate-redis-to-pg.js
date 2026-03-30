@@ -62,13 +62,38 @@ async function scanKeys(pattern) {
 
 const ACCOUNT_PLATFORMS = [
   { pattern: 'claude:account:*', platform: 'claude', index: 'claude:account:index', type: 'hash' },
-  { pattern: 'claude_console_account:*', platform: 'claude-console', index: 'claude_console_account:index', type: 'hash' },
-  { pattern: 'bedrock_account:*', platform: 'bedrock', index: 'bedrock_account:index', type: 'json' },
+  {
+    pattern: 'claude_console_account:*',
+    platform: 'claude-console',
+    index: 'claude_console_account:index',
+    type: 'hash'
+  },
+  {
+    pattern: 'bedrock_account:*',
+    platform: 'bedrock',
+    index: 'bedrock_account:index',
+    type: 'json'
+  },
   { pattern: 'gemini_account:*', platform: 'gemini', index: 'gemini_account:index', type: 'hash' },
-  { pattern: 'gemini_api_account:*', platform: 'gemini-api', index: 'gemini_api_account:index', type: 'hash' },
+  {
+    pattern: 'gemini_api_account:*',
+    platform: 'gemini-api',
+    index: 'gemini_api_account:index',
+    type: 'hash'
+  },
   { pattern: 'openai:account:*', platform: 'openai', index: 'openai:account:index', type: 'hash' },
-  { pattern: 'openai_responses_account:*', platform: 'openai-responses', index: 'openai_responses_account:index', type: 'hash' },
-  { pattern: 'azure_openai:account:*', platform: 'azure-openai', index: 'azure_openai:account:index', type: 'hash' },
+  {
+    pattern: 'openai_responses_account:*',
+    platform: 'openai-responses',
+    index: 'openai_responses_account:index',
+    type: 'hash'
+  },
+  {
+    pattern: 'azure_openai:account:*',
+    platform: 'azure-openai',
+    index: 'azure_openai:account:index',
+    type: 'hash'
+  },
   { pattern: 'ccr_account:*', platform: 'ccr', index: 'ccr_account:index', type: 'hash' }
 ]
 
@@ -80,14 +105,16 @@ async function migrateAccounts() {
     let accountIds = []
     try {
       accountIds = await redis.smembers(index)
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     if (!accountIds.length) {
       const keys = await scanKeys(pattern)
       // 过滤掉 index 和 empty 标记
       accountIds = keys
-        .filter(k => !k.endsWith(':index') && !k.endsWith(':empty'))
-        .map(k => {
+        .filter((k) => !k.endsWith(':index') && !k.endsWith(':empty'))
+        .map((k) => {
           // 从 key 中提取 ID
           const parts = k.split(':')
           // claude:account:{id} → id 在最后
@@ -110,16 +137,22 @@ async function migrateAccounts() {
           // Bedrock 用 JSON string 存储
           const keyName = pattern.replace('*', id)
           const raw = await redis.get(keyName)
-          if (!raw) continue
+          if (!raw) {
+            continue
+          }
           data = JSON.parse(raw)
         } else {
           // 其他用 Hash 存储
           const keyName = pattern.replace('*', id)
           data = await redis.hgetall(keyName)
-          if (!data || Object.keys(data).length === 0) continue
+          if (!data || Object.keys(data).length === 0) {
+            continue
+          }
         }
 
-        if (!data.id) data.id = id
+        if (!data.id) {
+          data.id = id
+        }
 
         if (!DRY_RUN) {
           await dal.accounts.setAccount(id, data, platform)
@@ -146,14 +179,22 @@ async function migrateApiKeys() {
   let keyIds = []
   try {
     keyIds = await redis.smembers('apikey:idx:all')
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   if (!keyIds.length) {
     const keys = await scanKeys('apikey:*')
     keyIds = keys
-      .filter(k => !k.includes('hash_map') && !k.includes('apikey_hash:') &&
-                    !k.includes(':index') && !k.includes(':tags:') && !k.includes(':idx:'))
-      .map(k => k.replace('apikey:', ''))
+      .filter(
+        (k) =>
+          !k.includes('hash_map') &&
+          !k.includes('apikey_hash:') &&
+          !k.includes(':index') &&
+          !k.includes(':tags:') &&
+          !k.includes(':idx:')
+      )
+      .map((k) => k.replace('apikey:', ''))
   }
 
   console.log(`  Found ${keyIds.length} API keys`)
@@ -162,7 +203,9 @@ async function migrateApiKeys() {
   for (const keyId of keyIds) {
     try {
       const data = await redis.hgetall(`apikey:${keyId}`)
-      if (!data || Object.keys(data).length === 0) continue
+      if (!data || Object.keys(data).length === 0) {
+        continue
+      }
 
       if (!DRY_RUN) {
         await dal.apiKeys.setApiKey(keyId, data)
@@ -184,11 +227,12 @@ async function migrateApiKeys() {
 async function migrateUsers() {
   // Users 存储为 JSON string
   const keys = await scanKeys('user:*')
-  const userKeys = keys.filter(k =>
-    !k.startsWith('user_session:') &&
-    !k.startsWith('username:') &&
-    !k.startsWith('email:') &&
-    !k.includes(':index')
+  const userKeys = keys.filter(
+    (k) =>
+      !k.startsWith('user_session:') &&
+      !k.startsWith('username:') &&
+      !k.startsWith('email:') &&
+      !k.includes(':index')
   )
 
   console.log(`  Found ${userKeys.length} users`)
@@ -197,9 +241,13 @@ async function migrateUsers() {
   for (const key of userKeys) {
     try {
       const raw = await redis.get(key)
-      if (!raw) continue
+      if (!raw) {
+        continue
+      }
       const data = JSON.parse(raw)
-      if (!data.id) data.id = key.replace('user:', '')
+      if (!data.id) {
+        data.id = key.replace('user:', '')
+      }
 
       if (!DRY_RUN) {
         // 检查用户是否已存在（避免 unique 冲突）
@@ -242,7 +290,9 @@ async function migrateAccountGroups() {
   for (const groupId of groupIds) {
     try {
       const data = await redis.hgetall(`account_group:${groupId}`)
-      if (!data || Object.keys(data).length === 0) continue
+      if (!data || Object.keys(data).length === 0) {
+        continue
+      }
 
       if (!DRY_RUN) {
         await dal.accountGroups.createGroup({
@@ -281,7 +331,9 @@ async function migrateTestConfigs() {
   for (const key of keys) {
     try {
       const data = await redis.hgetall(key)
-      if (!data || Object.keys(data).length === 0) continue
+      if (!data || Object.keys(data).length === 0) {
+        continue
+      }
 
       // key format: account:test_config:{platform}:{accountId}
       const parts = key.split(':')
@@ -318,7 +370,9 @@ async function migrateBalanceScripts() {
   for (const key of keys) {
     try {
       const raw = await redis.get(key)
-      if (!raw) continue
+      if (!raw) {
+        continue
+      }
 
       // key format: account_balance_script:{platform}:{accountId}
       const parts = key.split(':')
@@ -372,7 +426,7 @@ async function main() {
   console.log('\n💰 6/6 Migrating balance scripts...')
   results.balanceScripts = await migrateBalanceScripts()
 
-  console.log('\n' + '='.repeat(50))
+  console.log(`\n${'='.repeat(50)}`)
   console.log('📊 Migration Summary:')
   for (const [key, count] of Object.entries(results)) {
     console.log(`  ${key}: ${count}`)
@@ -389,7 +443,7 @@ async function main() {
   await pg.close()
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('\n❌ Migration failed:', err)
   process.exit(1)
 })

@@ -18,7 +18,6 @@
 const WebSocket = require('ws')
 const https = require('https')
 const http = require('http')
-const url = require('url')
 const zlib = require('zlib')
 
 // ============================================================
@@ -28,8 +27,10 @@ const zlib = require('zlib')
 const CONFIG = {
   hubUrl: process.env.HUB_URL || 'ws://localhost:3000',
   workerToken: process.env.WORKER_TOKEN || '',
-  heartbeatInterval: 25000, // 25s（Hub 检测间隔 30s）
-  reconnectDelay: 3000,     // 重连延迟
+  // Worker 心跳间隔（需小于 Hub 检测间隔，确保 Hub 能收到心跳）
+  // Hub 配置: 检测间隔 30s, 超时阈值 90s (3次)
+  heartbeatInterval: 25000, // 25s - Worker 每 25s 发一次心跳
+  reconnectDelay: 3000, // 重连延迟
   maxReconnectDelay: 60000, // 最大重连延迟
   logLevel: process.env.LOG_LEVEL || 'info'
 }
@@ -42,10 +43,12 @@ const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3 }
 const currentLevel = LOG_LEVELS[CONFIG.logLevel] ?? 1
 
 const log = {
-  debug: (...args) => currentLevel <= 0 && console.log('[DEBUG]', new Date().toISOString(), ...args),
+  debug: (...args) =>
+    currentLevel <= 0 && console.log('[DEBUG]', new Date().toISOString(), ...args),
   info: (...args) => currentLevel <= 1 && console.log('[INFO]', new Date().toISOString(), ...args),
   warn: (...args) => currentLevel <= 2 && console.warn('[WARN]', new Date().toISOString(), ...args),
-  error: (...args) => currentLevel <= 3 && console.error('[ERROR]', new Date().toISOString(), ...args)
+  error: (...args) =>
+    currentLevel <= 3 && console.error('[ERROR]', new Date().toISOString(), ...args)
 }
 
 // ============================================================
@@ -97,11 +100,19 @@ class WorkerClient {
       log.warn(`WebSocket closed: code=${code} reason=${reason}`)
       this._stopHeartbeat()
       // 中断所有进行中的 HTTP 请求（避免资源泄漏）
+      const activeCount = this.activeRequests.size
       for (const [reqId, entry] of this.activeRequests) {
         log.warn(`[${reqId}] Aborting HTTP request due to WS disconnect`)
-        try { entry.req.destroy() } catch {}
+        try {
+          entry.req.destroy()
+        } catch (_err) {
+          // ignore
+        }
       }
       this.activeRequests.clear()
+      // 同步调整 currentLoad：中断的请求最终会执行 finally 块 decrement，
+      // 但这里先减去，避免重连期间计数虚高
+      this.currentLoad = Math.max(0, this.currentLoad - activeCount)
       if (!this.isShuttingDown) {
         this._scheduleReconnect()
       }
@@ -117,7 +128,9 @@ class WorkerClient {
   }
 
   _scheduleReconnect() {
-    if (this.reconnectTimer) return
+    if (this.reconnectTimer) {
+      return
+    }
     log.info(`Reconnecting in ${this.reconnectDelay / 1000}s...`)
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
@@ -155,8 +168,29 @@ class WorkerClient {
         this._handleRequest(msg.id, msg.data)
         break
 
+      case 'cancel_request':
+        this._handleCancelRequest(msg.id, msg.data)
+        break
+
       default:
         log.debug(`Unknown message type: ${msg.type}`)
+    }
+  }
+
+  /**
+   * 处理 Hub 发来的取消请求（超时或主动取消）
+   * 中断正在执行的 HTTP 请求
+   */
+  _handleCancelRequest(requestId, data) {
+    const entry = this.activeRequests.get(requestId)
+    if (entry) {
+      log.info(`[${requestId}] Request cancelled by Hub: ${data.reason || 'unknown'}`)
+      try {
+        entry.req.destroy()
+      } catch (_err) {
+        // ignore
+      }
+      this.activeRequests.delete(requestId)
     }
   }
 
@@ -192,7 +226,9 @@ class WorkerClient {
   // ============================================================
 
   async _handleRequest(requestId, task) {
-    if (!requestId || !task) return
+    if (!requestId || !task) {
+      return
+    }
 
     this.currentLoad++
     log.info(`[${requestId}] Processing request: ${task.method} ${task.url} stream=${task.stream}`)
@@ -369,9 +405,17 @@ class WorkerClient {
 
           const encoding = res.headers['content-encoding']
           if (encoding === 'gzip') {
-            try { body = zlib.gunzipSync(raw).toString('utf8') } catch { body = raw.toString('utf8') }
+            try {
+              body = zlib.gunzipSync(raw).toString('utf8')
+            } catch {
+              body = raw.toString('utf8')
+            }
           } else if (encoding === 'deflate') {
-            try { body = zlib.inflateSync(raw).toString('utf8') } catch { body = raw.toString('utf8') }
+            try {
+              body = zlib.inflateSync(raw).toString('utf8')
+            } catch {
+              body = raw.toString('utf8')
+            }
           } else {
             body = raw.toString('utf8')
           }

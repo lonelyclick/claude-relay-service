@@ -605,7 +605,9 @@ class UserService {
   async getUserByEmail(email) {
     try {
       const userId = await redis.get(`${this.emailPrefix}${email.toLowerCase()}`)
-      if (!userId) return null
+      if (!userId) {
+        return null
+      }
       return this.getUserById(userId, false)
     } catch (error) {
       logger.error('❌ Error getting user by email:', error)
@@ -704,7 +706,9 @@ class UserService {
 
   // 🧹 清理用户返回对象（移除敏感字段）
   sanitizeUser(user) {
-    if (!user) return null
+    if (!user) {
+      return null
+    }
     const { passwordHash, ...safeUser } = user
     return safeUser
   }

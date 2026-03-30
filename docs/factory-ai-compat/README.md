@@ -72,7 +72,8 @@ Factory.ai 会扫描 messages 文本，检测 Claude Code 特定指纹返回 403
 
 | 被封锁的短语 | 来源 | CRS 替换为 |
 |-------------|------|-----------|
-| `You are Claude Code, Anthropic's official CLI for Claude` | Claude Code system prompt 身份声明 | `You are an AI coding assistant` |
+| `You are Claude Code, Anthropic's official CLI for Claude` | Claude Code (< 2.1.87) system prompt 身份声明 | `You are an AI coding assistant` |
+| `You are a Claude agent, built on Anthropic's Claude Agent SDK.` | Claude Code (2.1.87+) Claude Agent SDK 身份声明 | `You are an AI coding assistant.` |
 | `(user's private global instructions for all projects)` | CLAUDE.md 注入标记（带括号才触发） | `[user project-level config]` |
 
 **注意**：这些指纹在 system 字段和 messages 中都会被检测，CRS 会同时清理两处。

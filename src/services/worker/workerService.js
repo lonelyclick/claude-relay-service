@@ -48,13 +48,7 @@ class WorkerService {
    * 返回 { worker, token } — token 只在创建时返回
    */
   async createWorker(options = {}) {
-    const {
-      name = '',
-      type = 'remote',
-      maxConcurrency = 10,
-      region = '',
-      metadata = {}
-    } = options
+    const { name = '', type = 'remote', maxConcurrency = 10, region = '', metadata = {} } = options
 
     const id = uuidv4()
     const { token, tokenHash } = this.generateToken()
@@ -78,7 +72,9 @@ class WorkerService {
    */
   async getWorker(workerId) {
     const worker = await dal.workers.getWorker(workerId)
-    if (!worker) return null
+    if (!worker) {
+      return null
+    }
 
     // 补充在线状态
     const online = this.onlineWorkers.get(workerId)
@@ -156,7 +152,9 @@ class WorkerService {
    * 返回 worker 对象或 null
    */
   async authenticateByToken(token) {
-    if (!token || !token.startsWith(this.TOKEN_PREFIX)) return null
+    if (!token || !token.startsWith(this.TOKEN_PREFIX)) {
+      return null
+    }
     const tokenHash = this._hashToken(token)
     return dal.workers.getWorkerByTokenHash(tokenHash)
   }
@@ -172,7 +170,11 @@ class WorkerService {
     // 如果已有连接，先关闭旧的
     const existing = this.onlineWorkers.get(workerId)
     if (existing && existing.ws !== ws) {
-      try { existing.ws.close(4001, 'Replaced by new connection') } catch {}
+      try {
+        existing.ws.close(4001, 'Replaced by new connection')
+      } catch (_err) {
+        // ignore
+      }
     }
 
     this.onlineWorkers.set(workerId, {
@@ -184,9 +186,9 @@ class WorkerService {
     })
 
     // 更新 PG 状态
-    dal.workers.setWorkerOnline(workerId, ip).catch(err =>
-      logger.warn(`Failed to update worker online status: ${err.message}`)
-    )
+    dal.workers
+      .setWorkerOnline(workerId, ip)
+      .catch((err) => logger.warn(`Failed to update worker online status: ${err.message}`))
 
     logger.info(`🟢 Worker online: ${workerId} (${ip})`)
   }
@@ -200,16 +202,21 @@ class WorkerService {
       // 清理所有 pending requests
       for (const [reqId, pending] of online.pendingRequests) {
         clearTimeout(pending.timeout)
-        pending.reject(new Error('Worker disconnected'))
+        // 安全 reject：确保调用方已处理 rejection，避免 unhandledRejection
+        try {
+          pending.reject(new Error('Worker disconnected'))
+        } catch (err) {
+          logger.debug(`Pending request ${reqId} reject failed (already settled): ${err.message}`)
+        }
       }
       online.pendingRequests.clear()
       this.onlineWorkers.delete(workerId)
     }
 
     // 更新 PG 状态
-    dal.workers.setWorkerOffline(workerId).catch(err =>
-      logger.warn(`Failed to update worker offline status: ${err.message}`)
-    )
+    dal.workers
+      .setWorkerOffline(workerId)
+      .catch((err) => logger.warn(`Failed to update worker offline status: ${err.message}`))
 
     logger.info(`🔴 Worker offline: ${workerId}`)
   }
@@ -220,7 +227,11 @@ class WorkerService {
   disconnectWorker(workerId, reason = 'Disconnected by server') {
     const online = this.onlineWorkers.get(workerId)
     if (online) {
-      try { online.ws.close(4000, reason) } catch {}
+      try {
+        online.ws.close(4000, reason)
+      } catch (_err) {
+        // ignore
+      }
       this.registerOffline(workerId)
     }
   }
@@ -266,7 +277,9 @@ class WorkerService {
     let bestLoad = Infinity
 
     for (const [id, conn] of this.onlineWorkers) {
-      if (excludeIds.includes(id)) continue
+      if (excludeIds.includes(id)) {
+        continue
+      }
       if (conn.currentLoad < bestLoad) {
         bestLoad = conn.currentLoad
         bestId = id
@@ -278,15 +291,30 @@ class WorkerService {
 
   /**
    * 增减 Worker 负载计数
+   *
+   * 注意：currentLoad 应该等于 pendingRequests.size。
+   * 异常情况下如果计数漂移，心跳处理时会用 pendingRequests.size 覆盖。
    */
   incrLoad(workerId) {
     const online = this.onlineWorkers.get(workerId)
-    if (online) online.currentLoad++
+    if (online) {
+      online.currentLoad++
+      // 防御性检查：如果计数超过 pending 请求数，同步修正
+      if (online.currentLoad > online.pendingRequests.size + 10) {
+        // 允许 10 的误差窗口（防止正常抖动），超过则修正
+        logger.warn(
+          `Worker ${workerId} load counter drift detected: currentLoad=${online.currentLoad}, pendingRequests=${online.pendingRequests.size}, resetting`
+        )
+        online.currentLoad = online.pendingRequests.size
+      }
+    }
   }
 
   decrLoad(workerId) {
     const online = this.onlineWorkers.get(workerId)
-    if (online && online.currentLoad > 0) online.currentLoad--
+    if (online && online.currentLoad > 0) {
+      online.currentLoad--
+    }
   }
 }
 

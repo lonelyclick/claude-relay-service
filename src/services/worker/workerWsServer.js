@@ -10,10 +10,16 @@ const workerService = require('./workerService')
  * Worker 主动连接 Hub，Hub 分发任务。
  *
  * 协议：JSON 消息，type 字段区分消息类型。
+ *
+ * 心跳配置：
+ * - Worker 心跳间隔: 25s (worker/index.js: heartbeatInterval)
+ * - Hub 检测间隔: 30s (本文件: HEARTBEAT_INTERVAL)
+ * - Hub 超时阈值: 90s (本文件: HEARTBEAT_TIMEOUT, 3次检测未响应)
+ * - Worker 间隔需小于 Hub 检测间隔，确保 Hub 能稳定收到心跳
  */
 
-const HEARTBEAT_INTERVAL = 30000 // 30s
-const HEARTBEAT_TIMEOUT = 90000  // 3 次心跳未收到 → 断开
+const HEARTBEAT_INTERVAL = 30000 // 30s - Hub 每 30s 检测一次心跳
+const HEARTBEAT_TIMEOUT = 90000 // 90s - 3 次检测未收到心跳 → 断开 Worker
 
 class WorkerWsServer {
   constructor() {
@@ -52,7 +58,7 @@ class WorkerWsServer {
    * 处理 WebSocket upgrade
    */
   async _handleUpgrade(request, socket, head, query) {
-    const token = query.token
+    const { token } = query
     if (!token) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
       socket.destroy()
@@ -81,9 +87,10 @@ class WorkerWsServer {
    * 新 Worker 连接
    */
   _onConnection(ws, worker, request) {
-    const ip = request.headers['x-forwarded-for']?.split(',')[0]?.trim()
-      || request.socket.remoteAddress
-      || ''
+    const ip =
+      request.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+      request.socket.remoteAddress ||
+      ''
 
     // 注册在线
     workerService.registerOnline(worker.id, ws, ip)
@@ -151,9 +158,15 @@ class WorkerWsServer {
 
   /**
    * 心跳处理
+   *
+   * 以 Hub 端的 pendingRequests.size 为准，覆盖 Worker 上报的 currentLoad。
+   * 这样可以确保负载计数始终准确，不受 Worker 端计数器漂移影响。
    */
-  _handleHeartbeat(ws, workerId, msg) {
-    workerService.heartbeat(workerId, msg.data || {})
+  _handleHeartbeat(ws, workerId, _msg) {
+    const conn = workerService.getConnection(workerId)
+    // 使用 Hub 端实际的 pending 请求数量，而不是 Worker 上报的
+    const actualLoad = conn ? conn.pendingRequests.size : 0
+    workerService.heartbeat(workerId, { currentLoad: actualLoad })
     this._send(ws, { type: 'heartbeat_ack' })
   }
 
@@ -162,10 +175,14 @@ class WorkerWsServer {
    */
   _handleRequestMessage(workerId, msg) {
     const conn = workerService.getConnection(workerId)
-    if (!conn) return
+    if (!conn) {
+      return
+    }
 
     const requestId = msg.id
-    if (!requestId) return
+    if (!requestId) {
+      return
+    }
 
     const pending = conn.pendingRequests.get(requestId)
     if (!pending) {
@@ -184,12 +201,16 @@ class WorkerWsServer {
 
       case 'stream_start':
         // 流式开始：触发 onStreamStart 回调
-        if (pending.onStreamStart) pending.onStreamStart(msg.data)
+        if (pending.onStreamStart) {
+          pending.onStreamStart(msg.data)
+        }
         break
 
       case 'stream_data':
         // 流式数据：触发 onStreamData 回调
-        if (pending.onStreamData) pending.onStreamData(msg.data)
+        if (pending.onStreamData) {
+          pending.onStreamData(msg.data)
+        }
         break
 
       case 'stream_end':
@@ -197,7 +218,9 @@ class WorkerWsServer {
         clearTimeout(pending.timeout)
         conn.pendingRequests.delete(requestId)
         workerService.decrLoad(workerId)
-        if (pending.onStreamEnd) pending.onStreamEnd(msg.data)
+        if (pending.onStreamEnd) {
+          pending.onStreamEnd(msg.data)
+        }
         pending.resolve(msg.data)
         break
 
@@ -230,6 +253,12 @@ class WorkerWsServer {
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
+        // 通知 Worker 取消请求（中断 HTTP 请求）
+        this._send(conn.ws, {
+          type: 'cancel_request',
+          id: requestId,
+          data: { reason: 'timeout' }
+        })
         conn.pendingRequests.delete(requestId)
         workerService.decrLoad(workerId)
         reject(new Error(`Worker request timeout: ${requestId}`))
@@ -258,7 +287,8 @@ class WorkerWsServer {
    * 发送 JSON 消息到 WebSocket
    */
   _send(ws, msg) {
-    if (ws.readyState === 1) { // OPEN
+    if (ws.readyState === 1) {
+      // OPEN
       ws.send(JSON.stringify(msg))
     }
   }
@@ -268,7 +298,9 @@ class WorkerWsServer {
    */
   _startHeartbeatCheck() {
     this.heartbeatTimer = setInterval(() => {
-      if (!this.wss) return
+      if (!this.wss) {
+        return
+      }
 
       this.wss.clients.forEach((ws) => {
         if (ws._lastPong && Date.now() - ws._lastPong > HEARTBEAT_TIMEOUT) {

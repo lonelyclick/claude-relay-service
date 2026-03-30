@@ -219,7 +219,7 @@ class ServiceRatesService {
       'openai-responses': 'codex',
       openai: 'codex',
       azure: 'azure',
-      'azure-openai': 'azure',
+      'azure-openai': 'azure'
     }
 
     return mapping[accountType] || null

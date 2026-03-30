@@ -365,9 +365,7 @@ async function handleMessagesRequest(req, res) {
               `🎯 Force account detected via ${req.headers['x-force-account'] ? 'header' : 'query'}: ${headerAccountType}:${headerAccountId}`
             )
           } else {
-            logger.warn(
-              `⚠️ Invalid account type in x-force-account header: ${headerAccountType}`
-            )
+            logger.warn(`⚠️ Invalid account type in x-force-account header: ${headerAccountType}`)
           }
         } else {
           logger.warn(
@@ -1790,6 +1788,15 @@ router.post('/v1/messages/count_tokens', authenticateApiKey, async (req, res) =>
 
     // 🔍 claude-console 账户特殊处理：检查 count_tokens 端点是否可用
     if (accountType === 'claude-console') {
+      // Factory.ai 不支持 count_tokens 端点，直接返回 fallback
+      const account = await claudeConsoleAccountService.getAccount(accountId)
+      if (account?.apiUrl && account.apiUrl.includes('factory.ai')) {
+        logger.info(
+          `⏭️ count_tokens skipped for Factory.ai account ${accountId}, returning fallback response`
+        )
+        return { fallbackResponse: true }
+      }
+
       const isUnavailable = await claudeConsoleAccountService.isCountTokensUnavailable(accountId)
       if (isUnavailable) {
         logger.info(

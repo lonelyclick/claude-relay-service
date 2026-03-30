@@ -177,6 +177,22 @@ class ClaudeConsoleRelayService {
         modifiedRequestBody = this._processFactoryAiRequestBody(modifiedRequestBody, '')
       }
 
+
+      // 处理 -thinking 模型名后缀：去掉后缀，确保 thinking 参数已启用
+      if (modifiedRequestBody.model && modifiedRequestBody.model.endsWith('-thinking')) {
+        const baseModel = modifiedRequestBody.model.replace(/-thinking$/, '')
+        logger.info(`🧠 Stripping -thinking suffix: ${modifiedRequestBody.model} → ${baseModel}`)
+        modifiedRequestBody.model = baseModel
+        // 确保 thinking 参数已启用
+        if (!modifiedRequestBody.thinking || modifiedRequestBody.thinking.type !== 'enabled') {
+          modifiedRequestBody.thinking = {
+            type: 'enabled',
+            budget_tokens: modifiedRequestBody.thinking?.budget_tokens || 10000
+          }
+          logger.info(`🧠 Auto-enabled thinking with budget_tokens: ${modifiedRequestBody.thinking.budget_tokens}`)
+        }
+      }
+
       // 模型兼容性检查已经在调度器中完成，这里不需要再检查
 
       // 创建代理agent
@@ -235,7 +251,9 @@ class ClaudeConsoleRelayService {
         delete filteredHeaders['User-Agent']
       }
 
-      logger.info(`🔍 User-Agent selection: account.userAgent="${account.userAgent}", client ua="${clientHeaders?.['user-agent']}", final="${userAgent}"`)
+      logger.info(
+        `🔍 User-Agent selection: account.userAgent="${account.userAgent}", client ua="${clientHeaders?.['user-agent']}", final="${userAgent}"`
+      )
 
       // 准备请求配置
       const requestConfig = {
@@ -288,7 +306,9 @@ class ClaudeConsoleRelayService {
           const originalBeta = requestConfig.headers['anthropic-beta']
           requestConfig.headers['anthropic-beta'] = this._filterBetaForFactoryAi(originalBeta)
           if (requestConfig.headers['anthropic-beta'] !== originalBeta) {
-            logger.info(`🔧 Factory.ai: filtered anthropic-beta: "${originalBeta}" → "${requestConfig.headers['anthropic-beta']}"`)
+            logger.info(
+              `🔧 Factory.ai: filtered anthropic-beta: "${originalBeta}" → "${requestConfig.headers['anthropic-beta']}"`
+            )
           }
           if (!requestConfig.headers['anthropic-beta']) {
             delete requestConfig.headers['anthropic-beta']
@@ -297,11 +317,17 @@ class ClaudeConsoleRelayService {
         this._cleanHeadersForFactoryAi(requestConfig.headers, accountId)
       }
 
+      // [DEBUG] dump Factory.ai 完整请求（非 stream 路径）
+      if (isFactoryAi) {
+        logger.info(`🔍 [DEBUG-FAI-NS] url: ${requestConfig.url}`)
+        logger.info(`🔍 [DEBUG-FAI-NS] method: ${requestConfig.method}`)
+        logger.info(`🔍 [DEBUG-FAI-NS] headers: ${JSON.stringify(requestConfig.headers)}`)
+        logger.info(
+          `🔍 [DEBUG-FAI-NS] body: ${typeof requestConfig.data === 'string' ? requestConfig.data : JSON.stringify(requestConfig.data)}`
+        )
+      }
+
       // 发送请求
-      logger.debug(
-        '📤 Sending request to Claude Console API with headers:',
-        JSON.stringify(requestConfig.headers, null, 2)
-      )
       const response = await axios(requestConfig)
 
       // 📬 请求已发送成功，立即释放队列锁（无需等待响应处理完成）
@@ -694,6 +720,22 @@ class ClaudeConsoleRelayService {
         modifiedRequestBody = this._processFactoryAiRequestBody(modifiedRequestBody, '[Stream] ')
       }
 
+
+      // 处理 -thinking 模型名后缀：去掉后缀，确保 thinking 参数已启用
+      if (modifiedRequestBody.model && modifiedRequestBody.model.endsWith('-thinking')) {
+        const baseModel = modifiedRequestBody.model.replace(/-thinking$/, '')
+        logger.info(`🧠 Stripping -thinking suffix: ${modifiedRequestBody.model} → ${baseModel}`)
+        modifiedRequestBody.model = baseModel
+        // 确保 thinking 参数已启用
+        if (!modifiedRequestBody.thinking || modifiedRequestBody.thinking.type !== 'enabled') {
+          modifiedRequestBody.thinking = {
+            type: 'enabled',
+            budget_tokens: modifiedRequestBody.thinking?.budget_tokens || 10000
+          }
+          logger.info(`🧠 Auto-enabled thinking with budget_tokens: ${modifiedRequestBody.thinking.budget_tokens}`)
+        }
+      }
+
       // 模型兼容性检查已经在调度器中完成，这里不需要再检查
 
       // 创建代理agent
@@ -824,7 +866,9 @@ class ClaudeConsoleRelayService {
         delete filteredHeaders['User-Agent']
       }
 
-      logger.info(`🔍 User-Agent selection: account.userAgent="${account.userAgent}", client ua="${clientHeaders?.['user-agent']}", final="${userAgent}"`)
+      logger.info(
+        `🔍 User-Agent selection: account.userAgent="${account.userAgent}", client ua="${clientHeaders?.['user-agent']}", final="${userAgent}"`
+      )
 
       // 准备请求配置
       const requestConfig = {
@@ -873,13 +917,36 @@ class ClaudeConsoleRelayService {
           const originalBeta = requestConfig.headers['anthropic-beta']
           requestConfig.headers['anthropic-beta'] = this._filterBetaForFactoryAi(originalBeta)
           if (requestConfig.headers['anthropic-beta'] !== originalBeta) {
-            logger.info(`🔧 [Stream] Factory.ai: filtered anthropic-beta: "${originalBeta}" → "${requestConfig.headers['anthropic-beta']}"`)
+            logger.info(
+              `🔧 [Stream] Factory.ai: filtered anthropic-beta: "${originalBeta}" → "${requestConfig.headers['anthropic-beta']}"`
+            )
           }
           if (!requestConfig.headers['anthropic-beta']) {
             delete requestConfig.headers['anthropic-beta']
           }
         }
         this._cleanHeadersForFactoryAi(requestConfig.headers, accountId)
+      }
+
+      // [DEBUG] dump Factory.ai 完整请求到文件（绕过 logger 截断）
+      if (isFactoryAiStream) {
+        try {
+          const dump = {
+            ts: new Date().toISOString(),
+            path: 'stream',
+            url: requestConfig.url,
+            method: requestConfig.method,
+            headers: requestConfig.headers,
+            body:
+              typeof requestConfig.data === 'string'
+                ? JSON.parse(requestConfig.data)
+                : requestConfig.data
+          }
+          require('fs').appendFileSync('/tmp/factory-ai-debug.json', JSON.stringify(dump) + '\n')
+          logger.info('🔍 [DEBUG-FAI] stream request dumped to /tmp/factory-ai-debug.json')
+        } catch (_e) {
+          /* ignore */
+        }
       }
 
       // 发送请求
@@ -1444,8 +1511,8 @@ class ClaudeConsoleRelayService {
     if (typeof system === 'string') return system
     if (Array.isArray(system)) {
       return system
-        .filter(block => block.type === 'text' && block.text)
-        .map(block => block.text)
+        .filter((block) => block.type === 'text' && block.text)
+        .map((block) => block.text)
         .join('\n\n')
     }
     return ''
@@ -1475,10 +1542,15 @@ class ClaudeConsoleRelayService {
     const supportedBetas = new Set([
       // 暂无已确认支持的 beta（Factory.ai 的 thinking 等功能不需要 beta header）
     ])
-    const features = betaHeader.split(',').map(f => f.trim()).filter(Boolean)
-    const filtered = features.filter(feature => supportedBetas.has(feature))
+    const features = betaHeader
+      .split(',')
+      .map((f) => f.trim())
+      .filter(Boolean)
+    const filtered = features.filter((feature) => supportedBetas.has(feature))
     if (filtered.length !== features.length) {
-      logger.info(`🔧 Factory.ai beta whitelist: kept ${filtered.length}/${features.length} features`)
+      logger.info(
+        `🔧 Factory.ai beta whitelist: kept ${filtered.length}/${features.length} features`
+      )
     }
     return filtered.join(',')
   }
@@ -1489,7 +1561,7 @@ class ClaudeConsoleRelayService {
   _getFactorySessionId(accountId) {
     const entry = this._factorySessionMap.get(accountId)
     const now = Date.now()
-    if (entry && (now - entry.lastUsed) < this._FACTORY_SESSION_TTL) {
+    if (entry && now - entry.lastUsed < this._FACTORY_SESSION_TTL) {
       entry.lastUsed = now
       return entry.id
     }
@@ -1499,7 +1571,7 @@ class ClaudeConsoleRelayService {
     // 清理过期 entries（防止内存泄漏）
     if (this._factorySessionMap.size > 100) {
       for (const [key, val] of this._factorySessionMap) {
-        if ((now - val.lastUsed) >= this._FACTORY_SESSION_TTL) {
+        if (now - val.lastUsed >= this._FACTORY_SESSION_TTL) {
           this._factorySessionMap.delete(key)
         }
       }
@@ -1512,7 +1584,25 @@ class ClaudeConsoleRelayService {
    * 模拟 droid CLI 0.89.0 的请求 headers，确保 Factory.ai 无法区分来源
    */
   _cleanHeadersForFactoryAi(headers, accountId) {
-    // 1. 移除 Factory.ai 敏感的 headers
+    // 1. 认证处理：Factory.ai fk- key 使用 Authorization: Bearer，不转换为 x-api-key
+    const authHeader = headers['Authorization'] || headers['authorization']
+    logger.info(
+      `🔧 Factory.ai: Authorization header present: ${!!authHeader}, value: ${authHeader ? authHeader.substring(0, 20) + '...' : 'N/A'}`
+    )
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      // fk- key 走 Authorization: Bearer，保留不动，x-api-key 设为 placeholder（与 droid CLI 一致）
+      headers['x-api-key'] = 'placeholder'
+      logger.info(`🔧 Factory.ai: keeping Authorization Bearer, x-api-key set to placeholder`)
+    } else if (headers['x-api-key']) {
+      // sk-ant-* 格式已经在 x-api-key 中，保留不动
+      logger.info(`🔧 Factory.ai: keeping existing x-api-key`)
+    } else {
+      headers['x-api-key'] = 'placeholder'
+      logger.warn('🔧 Factory.ai: no Authorization or x-api-key found, using placeholder')
+    }
+
+    // 2. 移除 Factory.ai 敏感的 headers
     const keysToRemove = []
     for (const key of Object.keys(headers)) {
       const lk = key.toLowerCase()
@@ -1529,18 +1619,19 @@ class ClaudeConsoleRelayService {
       for (const key of keysToRemove) {
         delete headers[key]
       }
-      logger.info(`🔧 Factory.ai: removed ${keysToRemove.length} headers: ${keysToRemove.join(', ')}`)
+      logger.info(
+        `🔧 Factory.ai: removed ${keysToRemove.length} headers: ${keysToRemove.join(', ')}`
+      )
     }
 
-    // 2. 注入 droid CLI 伪装 headers
+    // 3. 注入 droid CLI 伪装 headers
     // User-Agent 强制设为 droid 格式（覆盖 account.userAgent 可能的旧值）
     headers['User-Agent'] = 'factory-cli/0.89.0'
     // x-client-version 是必须的，否则 Factory.ai 返回 400 "Unable to determine client version"
     headers['x-client-version'] = '0.89.0'
     headers['x-factory-client'] = 'cli'
     headers['x-api-provider'] = 'anthropic'
-    headers['x-api-key'] = 'placeholder'
-    // 注入 x-session-id（同一账户的连续请求保持不变，模拟 droid CLI 会话）
+    // ��入 x-session-id（同一账户的连续请求保持不变，模拟 droid CLI 会话）
     if (accountId) {
       headers['x-session-id'] = this._getFactorySessionId(accountId)
     }
@@ -1564,17 +1655,17 @@ class ClaudeConsoleRelayService {
   _mapToolsForFactoryAi(tools) {
     // Factory.ai 支持的 tool type 映射
     const FACTORY_TOOL_TYPE_MAP = {
-      'text_editor_20250429': 'text_editor_20250728',
-      'bash_20241022': 'bash_20250124'
+      text_editor_20250429: 'text_editor_20250728',
+      bash_20241022: 'bash_20250124'
     }
     // Factory.ai 对某些 tool type 要求固定的 name
     const FACTORY_TOOL_NAME_MAP = {
-      'text_editor_20250728': 'str_replace_based_edit_tool',
-      'bash_20250124': 'bash'
+      text_editor_20250728: 'str_replace_based_edit_tool',
+      bash_20250124: 'bash'
     }
 
     let mapped = false
-    const result = tools.map(tool => {
+    const result = tools.map((tool) => {
       if (!tool.type) return tool
 
       const newType = FACTORY_TOOL_TYPE_MAP[tool.type] || tool.type
@@ -1592,7 +1683,9 @@ class ClaudeConsoleRelayService {
     })
 
     if (mapped) {
-      logger.info(`🔧 Factory.ai: mapped tools: ${JSON.stringify(tools.map(t => t.type + ':' + t.name))} → ${JSON.stringify(result.map(t => t.type + ':' + t.name))}`)
+      logger.info(
+        `🔧 Factory.ai: mapped tools: ${JSON.stringify(tools.map((t) => t.type + ':' + t.name))} → ${JSON.stringify(result.map((t) => t.type + ':' + t.name))}`
+      )
     }
     return result
   }
@@ -1643,9 +1736,25 @@ class ClaudeConsoleRelayService {
     // 4. 清理 system 和 messages 中触发 Factory.ai 安全过滤的 Claude Code 指纹文本
     const fingerprints = [
       // Factory.ai 检测 Claude Code 身份声明（精确匹配完整短语）
-      [/You are Claude Code, Anthropic's official CLI for Claude/g, 'You are an AI coding assistant'],
+      // 旧版 Claude Code (< 2.1.87)
+      [
+        /You are Claude Code, Anthropic's official CLI for Claude/g,
+        'You are an AI coding assistant'
+      ],
+      // 新版 Claude Code (2.1.87+) — Claude Agent SDK 身份声明
+      [
+        /You are a Claude agent, built on Anthropic's Claude Agent SDK\./g,
+        'You are an AI coding assistant.'
+      ],
       // Factory.ai 检测 CLAUDE.md 注入标记（括号包裹的 "private global instructions for all projects"）
       [/\(user's private global instructions for all projects\)/g, '[user project-level config]'],
+      // Factory.ai 检测自己的 API Key 泄露（fk- 前缀 key）
+      [/fk-[A-Za-z0-9_-]{20,}/g, 'fk-***REDACTED***'],
+      // Factory.ai 内部域名/关键词（防止请求内容触发安全过滤）
+      [/api\.factory\.ai/g, 'api.vendor-ai.internal'],
+      [/factory-cli/g, 'vendor-cli'],
+      [/FactoryAI/g, 'VendorAI'],
+      [/Factory\.ai/g, 'Vendor.ai']
     ]
     const replaceText = (text) => {
       if (typeof text !== 'string') return { text, changed: false }
@@ -1664,10 +1773,13 @@ class ClaudeConsoleRelayService {
     // 4a. 清理 system blocks
     let cleaned = 0
     if (result.system && Array.isArray(result.system)) {
-      result.system = result.system.map(block => {
+      result.system = result.system.map((block) => {
         if (block.type === 'text' && typeof block.text === 'string') {
           const { text, changed } = replaceText(block.text)
-          if (changed) { cleaned++; return { ...block, text } }
+          if (changed) {
+            cleaned++
+            return { ...block, text }
+          }
         }
         return block
       })
@@ -1675,18 +1787,25 @@ class ClaudeConsoleRelayService {
 
     // 4b. 清理 messages
     if (result.messages && Array.isArray(result.messages)) {
-      result.messages = result.messages.map(msg => {
+      result.messages = result.messages.map((msg) => {
         if (typeof msg.content === 'string') {
           const { text, changed } = replaceText(msg.content)
-          if (changed) { cleaned++; return { ...msg, content: text } }
+          if (changed) {
+            cleaned++
+            return { ...msg, content: text }
+          }
           return msg
         }
         if (Array.isArray(msg.content)) {
           let msgChanged = false
-          const newContent = msg.content.map(item => {
+          const newContent = msg.content.map((item) => {
             if (item.type === 'text' && typeof item.text === 'string') {
               const { text, changed } = replaceText(item.text)
-              if (changed) { cleaned++; msgChanged = true; return { ...item, text } }
+              if (changed) {
+                cleaned++
+                msgChanged = true
+                return { ...item, text }
+              }
             }
             return item
           })
@@ -1713,16 +1832,16 @@ class ClaudeConsoleRelayService {
     ) {
       const original = result.thinking.budget_tokens
       result.thinking = { ...result.thinking, budget_tokens: 1024 }
-      logger.info(
-        `🔧 ${logPrefix}Factory.ai: thinking.budget_tokens ${original} → 1024 (minimum)`
-      )
+      logger.info(`🔧 ${logPrefix}Factory.ai: thinking.budget_tokens ${original} → 1024 (minimum)`)
     }
 
-    // 7. max_tokens 强制设为 128000（与 Droid 0.89.0 完全一致）
-    // Droid 使用 max_tokens: 128000，同时确保大于 budget_tokens
+    // 7. max_tokens 按模型上限设置（Droid 0.89.0 风格）
+    // Haiku 系列最大 64000，其余模型（Sonnet/Opus）最大 128000
     {
       const original = result.max_tokens
-      result.max_tokens = 128000
+      const isHaiku = result.model && result.model.includes('haiku')
+      const maxLimit = isHaiku ? 64000 : 128000
+      result.max_tokens = maxLimit
       // 仍需确保 max_tokens > budget_tokens
       if (
         result.thinking &&
@@ -1738,7 +1857,9 @@ class ClaudeConsoleRelayService {
 
     // 8. 删除 temperature（Droid 0.89.0 不发送此字段）
     if (result.temperature !== undefined) {
-      logger.info(`🔧 ${logPrefix}Factory.ai: removed temperature=${result.temperature} (Droid doesn't send it)`)
+      logger.info(
+        `🔧 ${logPrefix}Factory.ai: removed temperature=${result.temperature} (Droid doesn't send it)`
+      )
       delete result.temperature
     }
 
@@ -1881,7 +2002,9 @@ class ClaudeConsoleRelayService {
       } else {
         const decryptedKey = claudeConsoleAccountService._decryptSensitiveData(account.apiKey)
         requestOptions.authorization = `Bearer ${decryptedKey}`
-        logger.info(`🧪 Using Bearer auth, key prefix=${decryptedKey ? decryptedKey.substring(0, 10) : 'null'}`)
+        logger.info(
+          `🧪 Using Bearer auth, key prefix=${decryptedKey ? decryptedKey.substring(0, 10) : 'null'}`
+        )
       }
 
       await sendStreamTestRequest(requestOptions)

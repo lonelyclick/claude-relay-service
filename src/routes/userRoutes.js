@@ -122,7 +122,9 @@ router.post('/login', async (req, res) => {
       authResult = await ldapService.authenticateUserCredentials(validatedUsername, password)
 
       if (!authResult.success) {
-        logger.info(`🚫 Failed LDAP login attempt for user: ${validatedUsername} from IP: ${clientIp}`)
+        logger.info(
+          `🚫 Failed LDAP login attempt for user: ${validatedUsername} from IP: ${clientIp}`
+        )
         return res.status(401).json({
           error: 'Authentication failed',
           message: authResult.message
@@ -133,7 +135,9 @@ router.post('/login', async (req, res) => {
       authResult = await userService.authenticateLocal(validatedUsername, password)
 
       if (!authResult) {
-        logger.info(`🚫 Failed local login attempt for user: ${validatedUsername} from IP: ${clientIp}`)
+        logger.info(
+          `🚫 Failed local login attempt for user: ${validatedUsername} from IP: ${clientIp}`
+        )
         return res.status(401).json({
           error: 'Authentication failed',
           message: 'Invalid username or password'
@@ -629,7 +633,8 @@ router.get('/cost-details', authenticateUser, async (req, res) => {
     const client = redis.getClientSafe()
 
     // 获取时区偏移
-    const tzOffset = (config.system?.timezoneOffset ?? parseInt(process.env.TIMEZONE_OFFSET) ?? 0) * 3600000
+    const tzOffset =
+      (config.system?.timezoneOffset ?? parseInt(process.env.TIMEZONE_OFFSET) ?? 0) * 3600000
 
     const result = []
     for (let i = 0; i < days; i++) {

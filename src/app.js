@@ -40,6 +40,7 @@ const {
   requestSizeLimit
 } = require('./middleware/auth')
 const { browserFallbackMiddleware } = require('./middleware/browserFallback')
+const { modelMappingMiddleware } = require('./middleware/modelMapping')
 
 class Application {
   constructor() {
@@ -249,6 +250,9 @@ class Application {
       )
       this.app.use(express.urlencoded({ extended: true, limit: '100mb' }))
       this.app.use(securityMiddleware)
+
+      // 🔄 全局模型映射（POST 请求的 body.model 自动替换）
+      this.app.use(modelMappingMiddleware)
 
       // 🎯 信任代理
       if (config.server.trustProxy) {

@@ -1,14 +1,25 @@
 # Cloudflare Pages 部署指南
 
-## 前后端分离架构
+## 双模式部署架构
 
+### 模式 1：本地部署（已有）
+```
+┌──────────────────────────────────────┐
+│  ncu 服务器                          │
+│  域名: token.yohomobile.dev          │
+│  ├─ 后端 API（端口 3300）            │
+│  └─ 前端 SPA（/admin-next/）         │
+└──────────────────────────────────────┘
+```
+
+### 模式 2：Cloudflare Pages（新增）
 ```
 ┌──────────────────────────────────────┐
 │  Cloudflare Pages (全球 CDN)         │
 │  域名: token.yohomobile.com          │
 │  内容: Vue 3 SPA 管理前端            │
 └──────────────┬───────────────────────┘
-               │ HTTPS 跨域请求
+               │ HTTPS 跨域请求（CORS）
                ▼
 ┌──────────────────────────────────────┐
 │  ncu 服务器                          │
@@ -17,6 +28,10 @@
 │  内容: Express API 后端服务          │
 └──────────────────────────────────────┘
 ```
+
+**两种模式共存**，互不影响：
+- `token.yohomobile.dev/admin-next/` → 本地部署，同源访问
+- `token.yohomobile.com` → Cloudflare Pages，跨域访问（CDN 加速）
 
 ## Cloudflare Pages 项目配置
 

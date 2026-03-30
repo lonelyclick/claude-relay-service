@@ -175,8 +175,8 @@ async function sendStreamTestRequest(options) {
       'Content-Type': requestConfig.headers['Content-Type'],
       'anthropic-version': requestConfig.headers['anthropic-version'],
       'User-Agent': requestConfig.headers['User-Agent'],
-      'authorization': requestConfig.headers['authorization'] ? 'Bearer ***' : 'none',
-      'Authorization': requestConfig.headers['Authorization'] ? 'Bearer ***' : 'none'
+      authorization: requestConfig.headers['authorization'] ? 'Bearer ***' : 'none',
+      Authorization: requestConfig.headers['Authorization'] ? 'Bearer ***' : 'none'
     })
     const response = await axios(requestConfig)
     logger.info(`🧪 Test response status: ${response.status}`)
@@ -193,7 +193,9 @@ async function sendStreamTestRequest(options) {
         })
         response.data.on('end', () => {
           const errorData = Buffer.concat(chunks).toString()
-          logger.info(`🧪 Test error response (${response.status}), data length: ${errorData.length}`)
+          logger.info(
+            `🧪 Test error response (${response.status}), data length: ${errorData.length}`
+          )
           if (errorData.length > 0) {
             logger.info(`🧪 Error response body:`, errorData.substring(0, 500))
           } else {
@@ -222,7 +224,7 @@ async function sendStreamTestRequest(options) {
     return new Promise((resolve) => {
       let buffer = ''
       let chunkCount = 0
-      let eventTypes = new Set()
+      const eventTypes = new Set()
 
       response.data.on('data', (chunk) => {
         chunkCount++
@@ -246,7 +248,10 @@ async function sendStreamTestRequest(options) {
 
             // 打印完整的数据结构用于调试
             if (data.type === 'content_block_delta') {
-              logger.info(`🧪 content_block_delta full data:`, JSON.stringify(data).substring(0, 200))
+              logger.info(
+                `🧪 content_block_delta full data:`,
+                JSON.stringify(data).substring(0, 200)
+              )
             }
 
             logger.info(`🧪 Stream event type=${data.type}`)
@@ -274,7 +279,9 @@ async function sendStreamTestRequest(options) {
       })
 
       response.data.on('end', () => {
-        logger.info(`🧪 Stream ended. Received ${chunkCount} chunks, event types: [${Array.from(eventTypes).join(', ')}]`)
+        logger.info(
+          `🧪 Stream ended. Received ${chunkCount} chunks, event types: [${Array.from(eventTypes).join(', ')}]`
+        )
         if (!responseStream.destroyed && !responseStream.writableEnded) {
           endTest(true)
         }
