@@ -276,16 +276,29 @@ class ClaudeConsoleRelayService {
         logger.debug('[DEBUG] No beta header to add')
       }
 
-      // Factory.ai: 过滤不支持的 anthropic-beta 特性
-      if (isFactoryAi && requestConfig.headers['anthropic-beta']) {
-        const originalBeta = requestConfig.headers['anthropic-beta']
-        requestConfig.headers['anthropic-beta'] = this._filterBetaForFactoryAi(originalBeta)
-        if (requestConfig.headers['anthropic-beta'] !== originalBeta) {
-          logger.info(`🔧 Factory.ai: filtered anthropic-beta: "${originalBeta}" → "${requestConfig.headers['anthropic-beta']}"`)
+      // Factory.ai: 过滤 headers（beta + 多余 headers）
+      if (isFactoryAi) {
+        if (requestConfig.headers['anthropic-beta']) {
+          const originalBeta = requestConfig.headers['anthropic-beta']
+          requestConfig.headers['anthropic-beta'] = this._filterBetaForFactoryAi(originalBeta)
+          if (requestConfig.headers['anthropic-beta'] !== originalBeta) {
+            logger.info(`🔧 Factory.ai: filtered anthropic-beta: "${originalBeta}" → "${requestConfig.headers['anthropic-beta']}"`)
+          }
+          if (!requestConfig.headers['anthropic-beta']) {
+            delete requestConfig.headers['anthropic-beta']
+          }
         }
-        if (!requestConfig.headers['anthropic-beta']) {
-          delete requestConfig.headers['anthropic-beta']
+        this._cleanHeadersForFactoryAi(requestConfig.headers)
+        // 调试：打印发往 Factory.ai 的最终 headers 和 body 关键字段
+        logger.info(`🔍 Factory.ai FINAL headers: ${JSON.stringify(requestConfig.headers)}`)
+        const bodyKeys = Object.keys(requestConfig.data || {})
+        const bodyDebug = {}
+        for (const k of bodyKeys) {
+          if (k === 'messages') bodyDebug[k] = `[${requestConfig.data[k]?.length || 0} items]`
+          else if (k === 'tools') bodyDebug[k] = `[${requestConfig.data[k]?.length || 0} tools]`
+          else bodyDebug[k] = requestConfig.data[k]
         }
+        logger.info(`🔍 Factory.ai FINAL body keys: ${JSON.stringify(bodyDebug)}`)
       }
 
       // 发送请求
@@ -863,16 +876,29 @@ class ClaudeConsoleRelayService {
         requestConfig.headers['anthropic-beta'] = requestOptions.betaHeader
       }
 
-      // Factory.ai: 过滤不支持的 anthropic-beta 特性
-      if (isFactoryAiStream && requestConfig.headers['anthropic-beta']) {
-        const originalBeta = requestConfig.headers['anthropic-beta']
-        requestConfig.headers['anthropic-beta'] = this._filterBetaForFactoryAi(originalBeta)
-        if (requestConfig.headers['anthropic-beta'] !== originalBeta) {
-          logger.info(`🔧 [Stream] Factory.ai: filtered anthropic-beta: "${originalBeta}" → "${requestConfig.headers['anthropic-beta']}"`)
+      // Factory.ai: 过滤 headers（beta + 多余 headers）
+      if (isFactoryAiStream) {
+        if (requestConfig.headers['anthropic-beta']) {
+          const originalBeta = requestConfig.headers['anthropic-beta']
+          requestConfig.headers['anthropic-beta'] = this._filterBetaForFactoryAi(originalBeta)
+          if (requestConfig.headers['anthropic-beta'] !== originalBeta) {
+            logger.info(`🔧 [Stream] Factory.ai: filtered anthropic-beta: "${originalBeta}" → "${requestConfig.headers['anthropic-beta']}"`)
+          }
+          if (!requestConfig.headers['anthropic-beta']) {
+            delete requestConfig.headers['anthropic-beta']
+          }
         }
-        if (!requestConfig.headers['anthropic-beta']) {
-          delete requestConfig.headers['anthropic-beta']
+        this._cleanHeadersForFactoryAi(requestConfig.headers)
+        // 调试：打印发往 Factory.ai 的最终 headers 和 body 关键字段
+        logger.info(`🔍 [Stream] Factory.ai FINAL headers: ${JSON.stringify(requestConfig.headers)}`)
+        const bodyKeys = Object.keys(requestConfig.data || {})
+        const bodyDebug = {}
+        for (const k of bodyKeys) {
+          if (k === 'messages') bodyDebug[k] = `[${requestConfig.data[k]?.length || 0} items]`
+          else if (k === 'tools') bodyDebug[k] = `[${requestConfig.data[k]?.length || 0} tools]`
+          else bodyDebug[k] = requestConfig.data[k]
         }
+        logger.info(`🔍 [Stream] Factory.ai FINAL body keys: ${JSON.stringify(bodyDebug)}`)
       }
 
       // 发送请求
@@ -1459,19 +1485,48 @@ class ClaudeConsoleRelayService {
 
   /**
    * 过滤 anthropic-beta header 中不被 Factory.ai 支持的特性
-   * Factory.ai 可能不支持某些 beta 特性（如 interleaved-thinking 旧版本）
+   * 使用白名单模式：只保留 Factory.ai 已知支持的 beta 特性
+   * 未知的 beta 特性会导致 Factory.ai 返回 403 Forbidden
    */
   _filterBetaForFactoryAi(betaHeader) {
     if (!betaHeader) return ''
-    // Factory.ai 已知不支持的 beta 特性前缀
-    const unsupportedPrefixes = [
-      'interleaved-thinking-2025-05-14' // 旧版，Factory.ai 可能需要更新版本或不支持
-    ]
+    // 白名单：Factory.ai 已知支持的 beta 特性
+    const supportedBetas = new Set([
+      // 暂无已确认支持的 beta（Factory.ai 的 thinking 等功能不需要 beta header）
+    ])
     const features = betaHeader.split(',').map(f => f.trim()).filter(Boolean)
-    const filtered = features.filter(feature => {
-      return !unsupportedPrefixes.some(prefix => feature === prefix)
-    })
+    const filtered = features.filter(feature => supportedBetas.has(feature))
+    if (filtered.length !== features.length) {
+      logger.info(`🔧 Factory.ai beta whitelist: kept ${filtered.length}/${features.length} features`)
+    }
     return filtered.join(',')
+  }
+
+  /**
+   * 清理 Factory.ai 不需要的 headers（就地修改）
+   * Factory.ai 对未知 headers 敏感，可能返回 403
+   */
+  _cleanHeadersForFactoryAi(headers) {
+    const keysToRemove = []
+    for (const key of Object.keys(headers)) {
+      const lk = key.toLowerCase()
+      // 移除 x-stainless-*, anthropic-dangerous-*, sec-fetch-*, x-app, accept-language 等
+      if (
+        lk.startsWith('x-stainless-') ||
+        lk.startsWith('anthropic-dangerous-') ||
+        lk.startsWith('sec-fetch-') ||
+        lk === 'x-app' ||
+        lk === 'accept-language'
+      ) {
+        keysToRemove.push(key)
+      }
+    }
+    if (keysToRemove.length > 0) {
+      for (const key of keysToRemove) {
+        delete headers[key]
+      }
+      logger.info(`🔧 Factory.ai: removed ${keysToRemove.length} unsupported headers: ${keysToRemove.join(', ')}`)
+    }
   }
 
   /**
@@ -1580,6 +1635,21 @@ class ClaudeConsoleRelayService {
       result.thinking = { ...result.thinking, budget_tokens: 1024 }
       logger.info(
         `🔧 ${logPrefix}Factory.ai: thinking.budget_tokens ${original} → 1024 (minimum)`
+      )
+    }
+
+    // 7. max_tokens 必须大于 thinking.budget_tokens（Factory.ai 严格检查）
+    if (
+      result.thinking &&
+      result.thinking.type === 'enabled' &&
+      typeof result.thinking.budget_tokens === 'number' &&
+      typeof result.max_tokens === 'number' &&
+      result.max_tokens <= result.thinking.budget_tokens
+    ) {
+      const original = result.max_tokens
+      result.max_tokens = result.thinking.budget_tokens + 1024
+      logger.info(
+        `🔧 ${logPrefix}Factory.ai: max_tokens ${original} → ${result.max_tokens} (must be > budget_tokens ${result.thinking.budget_tokens})`
       )
     }
 
