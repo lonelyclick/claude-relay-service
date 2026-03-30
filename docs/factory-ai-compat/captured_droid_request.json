@@ -1,0 +1,96 @@
+{
+  "_comment": "Droid 0.89.0 LLM 请求抓包数据（2026-03-30），通过 capture_proxy.mjs 获取。已脱敏+精简。",
+  "method": "POST",
+  "url": "/api/llm/a/v1/messages",
+  "headers": {
+    "accept": "application/json",
+    "authorization": "Bearer fk-***REDACTED***",
+    "content-type": "application/json",
+    "user-agent": "factory-cli/0.89.0",
+    "x-client-version": "0.89.0",
+    "x-factory-client": "cli",
+    "x-stainless-arch": "x64",
+    "x-stainless-lang": "js",
+    "x-stainless-os": "Linux",
+    "x-stainless-package-version": "0.70.1",
+    "x-stainless-retry-count": "0",
+    "x-stainless-runtime": "node",
+    "x-stainless-runtime-version": "v24.3.0",
+    "x-stainless-timeout": "600",
+    "anthropic-version": "2023-06-01",
+    "x-api-key": "placeholder",
+    "x-api-provider": "anthropic",
+    "x-assistant-message-id": "45e3f6ae-a3f6-492d-bedb-ebcd0a0261ac",
+    "x-session-id": "8bd3057f-6c46-4c43-942a-2a33afbb05e8",
+    "connection": "keep-alive",
+    "accept-encoding": "gzip, deflate, br, zstd",
+    "content-length": "55576"
+  },
+  "body": {
+    "model": "claude-opus-4-6",
+    "max_tokens": 128000,
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "<system-reminder>\n\nUser system info (linux 6.14.0-37-generic)\nModel: Claude Opus 4.6\nToday's date: 2026-03-30\n\n# The commands below were executed at the start of all sessions...\n... (环境信息，约 2000 字符) ...\n\n</system-reminder>",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          },
+          {
+            "type": "text",
+            "text": "<system-reminder>IMPORTANT: TodoWrite was not called yet...</system-reminder>"
+          },
+          {
+            "type": "text",
+            "text": "say ok",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {"name": "Read", "description": "Read the contents of a file..."},
+      {"name": "LS", "description": "List the contents of a directory..."},
+      {"name": "Execute", "description": "Execute a shell command..."},
+      {"name": "Edit", "description": "Edit the contents of a file..."},
+      {"name": "Grep", "description": "High-performance file content search using ripgrep..."},
+      {"name": "Glob", "description": "Advanced file path search using glob patterns..."},
+      {"name": "Create", "description": "Creates a new file on the file system..."},
+      {"name": "ExitSpecMode", "description": "Exit spec mode after crafting implementation plan..."},
+      {"name": "WebSearch", "description": "Performs a web search..."},
+      {"name": "TodoWrite", "description": "Use this tool to draft and maintain a structured todo list..."},
+      {"name": "FetchUrl", "description": "Scrapes content from URLs..."},
+      {"name": "GenerateDroid", "description": "Generate a custom droid configuration..."},
+      {"name": "Skill", "description": "Execute a skill within the main conversation..."},
+      {"name": "Task", "description": "Launch a new subagent to handle complex tasks..."}
+    ],
+    "_tools_note": "原始数据包含 14 个完整的 tool schema（约 50KB），此处精简为 name+description 摘要",
+    "system": [
+      {
+        "type": "text",
+        "text": "You are Droid, an AI software engineering agent built by Factory."
+      },
+      {
+        "type": "text",
+        "text": "You are running in non-interactive Exec Mode where you must fully complete and verify the user's request without further input.\nGuidelines:\n- Never prompt the user...\n... (约 5000 字符的 exec mode 系统指令) ...",
+        "cache_control": {
+          "type": "ephemeral"
+        }
+      }
+    ],
+    "thinking": {
+      "type": "adaptive"
+    },
+    "output_config": {
+      "effort": "high"
+    },
+    "stream": true
+  },
+  "timestamp": "2026-03-30T03:07:03.430Z"
+}

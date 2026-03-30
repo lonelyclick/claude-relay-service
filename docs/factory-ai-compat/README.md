@@ -98,9 +98,35 @@ Claude Code CLI
 
 ## Droid CLI 请求格式参考
 
-通过 HTTPS 代理抓包获得（droid 0.89.0，2026-03-30）：
+通过 HTTPS 代理抓包获得（droid 0.89.0，2026-03-30）。
+
+完整抓包数据见 `captured_droid_request.json`（已脱敏+精简 tools schema）。
+抓包工具见 `capture_proxy.mjs`。
+
+### 抓包方法
+
+```bash
+# 1. 生成自签证书
+openssl req -x509 -newkey rsa:2048 -keyout proxy_key.pem -out proxy_cert.pem \
+  -days 30 -nodes -subj '/CN=localhost'
+
+# 2. 启动 HTTPS 拦截代理
+node docs/factory-ai-compat/capture_proxy.mjs
+
+# 3. 另一终端，通过代理运行 droid
+FACTORY_API_BASE_URL=https://localhost:18765 \
+FACTORY_API_KEY=fk-... \
+NODE_TLS_REJECT_UNAUTHORIZED=0 \
+droid exec "say ok"
+```
+
+**关键发现**：
+- `FACTORY_API_BASE_URL` 环境变量可重定向 droid 的 API 请求目标
+- droid 二进制位于 `~/.local/bin/droid`（Bun 编译），配置目录为 `~/.factory/`
+- 请求完整 dump 自动保存到 `/tmp/droid_request_*.json`
 
 ### Headers
+
 ```
 user-agent: factory-cli/0.89.0
 anthropic-version: 2023-06-01
@@ -108,8 +134,8 @@ x-factory-client: cli
 x-client-version: 0.89.0
 x-api-provider: anthropic
 x-api-key: placeholder
-x-session-id: <uuid>
-x-assistant-message-id: <uuid>
+x-session-id: 8bd3057f-6c46-4c43-942a-2a33afbb05e8
+x-assistant-message-id: 45e3f6ae-a3f6-492d-bedb-ebcd0a0261ac
 x-stainless-lang: js
 x-stainless-os: Linux
 x-stainless-arch: x64
@@ -121,21 +147,49 @@ x-stainless-timeout: 600
 ```
 
 ### Body
+
 ```json
 {
   "model": "claude-opus-4-6",
   "max_tokens": 128000,
   "system": [
     {"type": "text", "text": "You are Droid, an AI software engineering agent built by Factory."},
-    {"type": "text", "text": "...(exec mode instructions)...", "cache_control": {"type": "ephemeral"}}
+    {"type": "text", "text": "You are running in non-interactive Exec Mode...", "cache_control": {"type": "ephemeral"}}
   ],
-  "messages": [...],
-  "tools": [14 tools, {name, description, input_schema} format],
+  "messages": [{"role": "user", "content": [3 blocks: system-reminder + TodoWrite reminder + user input]}],
+  "tools": [
+    "Read", "LS", "Execute", "Edit", "Grep", "Glob", "Create",
+    "ExitSpecMode", "WebSearch", "TodoWrite", "FetchUrl",
+    "GenerateDroid", "Skill", "Task"
+  ],
   "thinking": {"type": "adaptive"},
   "output_config": {"effort": "high"},
   "stream": true
 }
 ```
+
+**注意**：Droid 不发送 `temperature`、`metadata`、`context_management` 字段。
+
+### Droid 的 14 个 Tools
+
+| Tool | 对应 Claude Code |
+|------|-----------------|
+| Read | Read |
+| LS | Glob/ls |
+| Execute | Bash |
+| Edit | Edit |
+| Grep | Grep |
+| Glob | Glob |
+| Create | Write |
+| ExitSpecMode | ExitPlanMode |
+| WebSearch | WebSearch |
+| TodoWrite | TodoWrite |
+| FetchUrl | WebFetch |
+| GenerateDroid | (无对应) |
+| Skill | Skill |
+| Task | Task |
+
+所有 tools 使用标准 `{name, description, input_schema}` 格式，无特殊 `type` 字段。
 
 ## 已知限制
 
@@ -144,24 +198,33 @@ x-stainless-timeout: 600
 3. **指纹过滤是精确匹配** — 如果 Claude Code 更新了这些短语的措辞，需要同步更新 CRS 的 fingerprints 数组。
 4. **Droid 版本号可能过期** — 当 Factory.ai 更新 droid 到新版本后，`x-client-version` 等可能需要同步更新。
 
-## 测试
+## 工具和测试
 
-本目录下包含测试脚本：
+本目录下包含的文件：
 
+### 抓包工具
+- `capture_proxy.mjs` — HTTPS 拦截代理，用于抓取 droid CLI 的完整请求
+- `captured_droid_request.json` — droid 0.89.0 的抓包数据（已脱敏+精简）
+
+### 测试脚本
 - `test_api_capabilities.mjs` — Factory.ai API 能力探测（各字段支持情况）
 - `test_claude_code_compat.mjs` — 模拟 Claude Code 请求的端到端兼容测试
 - `test_fingerprint_filter.mjs` — 指纹过滤规则验证
 
-运行方式：
+### 运行方式
+
 ```bash
 # 需要设置环境变量
 export FACTORY_AI_API_KEY="fk-..."
 export FACTORY_AI_BASE_URL="https://api.factory.ai/api/llm/a"
 
-# 运行单个测试
+# 运行测试
 node docs/factory-ai-compat/test_api_capabilities.mjs
 node docs/factory-ai-compat/test_claude_code_compat.mjs
 node docs/factory-ai-compat/test_fingerprint_filter.mjs
+
+# 抓包（需要先生成证书）
+node docs/factory-ai-compat/capture_proxy.mjs
 ```
 
 ## 相关提交
