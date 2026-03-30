@@ -69,6 +69,14 @@ class OpenAIResponsesRelayService {
       ? crypto.createHash('sha256').update(sessionId).digest('hex')
       : null
 
+    // 设置客户端断开监听器（声明在 try 块外，以便 catch 块访问）
+    const handleClientDisconnect = () => {
+      logger.info('🔌 Client disconnected, aborting OpenAI-Responses request')
+      if (abortController && !abortController.signal.aborted) {
+        abortController.abort()
+      }
+    }
+
     try {
       // 获取完整的账户信息（包含解密的 API Key）
       const fullAccount = await openaiResponsesAccountService.getAccount(account.id)
@@ -78,14 +86,6 @@ class OpenAIResponsesRelayService {
 
       // 创建 AbortController 用于取消请求
       abortController = new AbortController()
-
-      // 设置客户端断开监听器
-      const handleClientDisconnect = () => {
-        logger.info('🔌 Client disconnected, aborting OpenAI-Responses request')
-        if (abortController && !abortController.signal.aborted) {
-          abortController.abort()
-        }
-      }
 
       // 监听客户端断开事件
       req.once('close', handleClientDisconnect)
@@ -349,11 +349,19 @@ class OpenAIResponsesRelayService {
       }
 
       // 处理非流式响应
-      return this._handleNormalResponse(response, res, account, apiKeyData, req.body?.model)
+      return this._handleNormalResponse(response, res, account, apiKeyData, req.body?.model, req)
     } catch (error) {
       // 清理 AbortController
       if (abortController && !abortController.signal.aborted) {
         abortController.abort()
+      }
+
+      // 🧹 清理事件监听器（防止内存泄漏）
+      if (req) {
+        req.removeListener('close', handleClientDisconnect)
+      }
+      if (res) {
+        res.removeListener('close', handleClientDisconnect)
       }
 
       // 安全地记录错误，避免循环引用
@@ -709,7 +717,7 @@ class OpenAIResponsesRelayService {
   }
 
   // 处理非流式响应
-  async _handleNormalResponse(response, res, account, apiKeyData, requestedModel) {
+  async _handleNormalResponse(response, res, account, apiKeyData, requestedModel, req) {
     const responseData = response.data
 
     // 提取 usage 数据和实际 model

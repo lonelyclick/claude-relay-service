@@ -42,6 +42,14 @@ class ClaudeConsoleRelayService {
     let queueLockAcquired = false
     let queueRequestId = null
 
+    // 设置客户端断开监听器（声明在 try 块外，以便 finally 块访问）
+    const handleClientDisconnect = () => {
+      logger.info('🔌 Client disconnected, aborting Claude Console request')
+      if (abortController && !abortController.signal.aborted) {
+        abortController.abort()
+      }
+    }
+
     try {
       // 📬 用户消息队列处理：如果是用户消息请求，需要获取队列锁
       if (userMessageQueueService.isUserMessageRequest(requestBody)) {
@@ -177,7 +185,6 @@ class ClaudeConsoleRelayService {
         modifiedRequestBody = this._processFactoryAiRequestBody(modifiedRequestBody, '')
       }
 
-
       // 处理 -thinking 模型名后缀：去掉后缀，确保 thinking 参数已启用
       if (modifiedRequestBody.model && modifiedRequestBody.model.endsWith('-thinking')) {
         const baseModel = modifiedRequestBody.model.replace(/-thinking$/, '')
@@ -189,7 +196,9 @@ class ClaudeConsoleRelayService {
             type: 'enabled',
             budget_tokens: modifiedRequestBody.thinking?.budget_tokens || 10000
           }
-          logger.info(`🧠 Auto-enabled thinking with budget_tokens: ${modifiedRequestBody.thinking.budget_tokens}`)
+          logger.info(
+            `🧠 Auto-enabled thinking with budget_tokens: ${modifiedRequestBody.thinking.budget_tokens}`
+          )
         }
       }
 
@@ -200,14 +209,6 @@ class ClaudeConsoleRelayService {
 
       // 创建AbortController用于取消请求
       abortController = new AbortController()
-
-      // 设置客户端断开监听器
-      const handleClientDisconnect = () => {
-        logger.info('🔌 Client disconnected, aborting Claude Console Claude request')
-        if (abortController && !abortController.signal.aborted) {
-          abortController.abort()
-        }
-      }
 
       // 监听客户端断开事件
       if (clientRequest) {
@@ -547,6 +548,14 @@ class ClaudeConsoleRelayService {
           )
         }
       }
+
+      // 🧹 清理事件监听器（防止内存泄漏）
+      if (clientRequest) {
+        clientRequest.removeListener('close', handleClientDisconnect)
+      }
+      if (clientResponse) {
+        clientResponse.removeListener('close', handleClientDisconnect)
+      }
     }
   }
 
@@ -720,7 +729,6 @@ class ClaudeConsoleRelayService {
         modifiedRequestBody = this._processFactoryAiRequestBody(modifiedRequestBody, '[Stream] ')
       }
 
-
       // 处理 -thinking 模型名后缀：去掉后缀，确保 thinking 参数已启用
       if (modifiedRequestBody.model && modifiedRequestBody.model.endsWith('-thinking')) {
         const baseModel = modifiedRequestBody.model.replace(/-thinking$/, '')
@@ -732,7 +740,9 @@ class ClaudeConsoleRelayService {
             type: 'enabled',
             budget_tokens: modifiedRequestBody.thinking?.budget_tokens || 10000
           }
-          logger.info(`🧠 Auto-enabled thinking with budget_tokens: ${modifiedRequestBody.thinking.budget_tokens}`)
+          logger.info(
+            `🧠 Auto-enabled thinking with budget_tokens: ${modifiedRequestBody.thinking.budget_tokens}`
+          )
         }
       }
 
@@ -942,7 +952,7 @@ class ClaudeConsoleRelayService {
                 ? JSON.parse(requestConfig.data)
                 : requestConfig.data
           }
-          require('fs').appendFileSync('/tmp/factory-ai-debug.json', JSON.stringify(dump) + '\n')
+          require('fs').appendFileSync('/tmp/factory-ai-debug.json', `${JSON.stringify(dump)}\n`)
           logger.info('🔍 [DEBUG-FAI] stream request dumped to /tmp/factory-ai-debug.json')
         } catch (_e) {
           /* ignore */
@@ -1507,8 +1517,12 @@ class ClaudeConsoleRelayService {
 
   // 🔧 将 system 字段（字符串或 content block 数组）转为纯文本
   _systemToText(system) {
-    if (!system) return ''
-    if (typeof system === 'string') return system
+    if (!system) {
+      return ''
+    }
+    if (typeof system === 'string') {
+      return system
+    }
     if (Array.isArray(system)) {
       return system
         .filter((block) => block.type === 'text' && block.text)
@@ -1537,7 +1551,9 @@ class ClaudeConsoleRelayService {
    * 未知的 beta 特性会导致 Factory.ai 返回 403 Forbidden
    */
   _filterBetaForFactoryAi(betaHeader) {
-    if (!betaHeader) return ''
+    if (!betaHeader) {
+      return ''
+    }
     // 白名单：Factory.ai 已知支持的 beta 特性
     const supportedBetas = new Set([
       // 暂无已确认支持的 beta（Factory.ai 的 thinking 等功能不需要 beta header）
@@ -1587,7 +1603,7 @@ class ClaudeConsoleRelayService {
     // 1. 认证处理：Factory.ai fk- key 使用 Authorization: Bearer，不转换为 x-api-key
     const authHeader = headers['Authorization'] || headers['authorization']
     logger.info(
-      `🔧 Factory.ai: Authorization header present: ${!!authHeader}, value: ${authHeader ? authHeader.substring(0, 20) + '...' : 'N/A'}`
+      `🔧 Factory.ai: Authorization header present: ${!!authHeader}, value: ${authHeader ? `${authHeader.substring(0, 20)}...` : 'N/A'}`
     )
 
     if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -1638,14 +1654,30 @@ class ClaudeConsoleRelayService {
     // 注入 x-assistant-message-id（每个请求独立的随机 UUID）
     headers['x-assistant-message-id'] = crypto.randomUUID()
     // 注入 x-stainless-* headers（droid 原生就发送这些）
-    if (!headers['x-stainless-lang']) headers['x-stainless-lang'] = 'js'
-    if (!headers['x-stainless-os']) headers['x-stainless-os'] = 'Linux'
-    if (!headers['x-stainless-arch']) headers['x-stainless-arch'] = 'x64'
-    if (!headers['x-stainless-runtime']) headers['x-stainless-runtime'] = 'node'
-    if (!headers['x-stainless-runtime-version']) headers['x-stainless-runtime-version'] = 'v24.3.0'
-    if (!headers['x-stainless-package-version']) headers['x-stainless-package-version'] = '0.70.1'
-    if (!headers['x-stainless-retry-count']) headers['x-stainless-retry-count'] = '0'
-    if (!headers['x-stainless-timeout']) headers['x-stainless-timeout'] = '600'
+    if (!headers['x-stainless-lang']) {
+      headers['x-stainless-lang'] = 'js'
+    }
+    if (!headers['x-stainless-os']) {
+      headers['x-stainless-os'] = 'Linux'
+    }
+    if (!headers['x-stainless-arch']) {
+      headers['x-stainless-arch'] = 'x64'
+    }
+    if (!headers['x-stainless-runtime']) {
+      headers['x-stainless-runtime'] = 'node'
+    }
+    if (!headers['x-stainless-runtime-version']) {
+      headers['x-stainless-runtime-version'] = 'v24.3.0'
+    }
+    if (!headers['x-stainless-package-version']) {
+      headers['x-stainless-package-version'] = '0.70.1'
+    }
+    if (!headers['x-stainless-retry-count']) {
+      headers['x-stainless-retry-count'] = '0'
+    }
+    if (!headers['x-stainless-timeout']) {
+      headers['x-stainless-timeout'] = '600'
+    }
   }
 
   /**
@@ -1666,7 +1698,9 @@ class ClaudeConsoleRelayService {
 
     let mapped = false
     const result = tools.map((tool) => {
-      if (!tool.type) return tool
+      if (!tool.type) {
+        return tool
+      }
 
       const newType = FACTORY_TOOL_TYPE_MAP[tool.type] || tool.type
       const expectedName = FACTORY_TOOL_NAME_MAP[newType]
@@ -1684,7 +1718,7 @@ class ClaudeConsoleRelayService {
 
     if (mapped) {
       logger.info(
-        `🔧 Factory.ai: mapped tools: ${JSON.stringify(tools.map((t) => t.type + ':' + t.name))} → ${JSON.stringify(result.map((t) => t.type + ':' + t.name))}`
+        `🔧 Factory.ai: mapped tools: ${JSON.stringify(tools.map((t) => `${t.type}:${t.name}`))} → ${JSON.stringify(result.map((t) => `${t.type}:${t.name}`))}`
       )
     }
     return result
@@ -1757,7 +1791,9 @@ class ClaudeConsoleRelayService {
       [/Factory\.ai/g, 'Vendor.ai']
     ]
     const replaceText = (text) => {
-      if (typeof text !== 'string') return { text, changed: false }
+      if (typeof text !== 'string') {
+        return { text, changed: false }
+      }
       let modified = text
       let changed = false
       for (const [pattern, replacement] of fingerprints) {

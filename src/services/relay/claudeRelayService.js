@@ -195,9 +195,13 @@ class ClaudeRelayService {
   // Anthropic 对未开启 Extra Usage 的账户请求长上下文模型时返回此错误
   // 这不是真正的限流，不应标记账户为 rate limited
   _isExtraUsageRequired429(statusCode, body) {
-    if (statusCode !== 429) return false
+    if (statusCode !== 429) {
+      return false
+    }
     const message = this._extractErrorMessage(body)
-    if (!message) return false
+    if (!message) {
+      return false
+    }
     return message.toLowerCase().includes('extra usage')
   }
 
@@ -411,6 +415,14 @@ class ClaudeRelayService {
     let selectedAccountId = null
     let bodyStoreIdNonStream = null // 🧹 在 try 块外声明，以便 finally 清理
 
+    // 设置客户端断开监听器（声明在 try 块外，以便 finally 块访问）
+    const handleClientDisconnect = () => {
+      logger.info('🔌 Client disconnected, aborting upstream request')
+      if (upstreamRequest && !upstreamRequest.destroyed) {
+        upstreamRequest.destroy()
+      }
+    }
+
     try {
       // 调试日志：查看API Key数据
       logger.info('🔍 API Key data received:', {
@@ -577,14 +589,6 @@ class ClaudeRelayService {
 
       // 获取代理配置
       const proxyAgent = await this._getProxyAgent(accountId)
-
-      // 设置客户端断开监听器
-      const handleClientDisconnect = () => {
-        logger.info('🔌 Client disconnected, aborting upstream request')
-        if (upstreamRequest && !upstreamRequest.destroyed) {
-          upstreamRequest.destroy()
-        }
-      }
 
       // 监听客户端断开事件
       if (clientRequest) {
@@ -967,6 +971,13 @@ class ClaudeRelayService {
       )
       throw error
     } finally {
+      // 🧹 清理事件监听器（防止内存泄漏）
+      if (clientRequest) {
+        clientRequest.removeListener('close', handleClientDisconnect)
+      }
+      if (clientResponse) {
+        clientResponse.removeListener('close', handleClientDisconnect)
+      }
       // 🧹 清理 bodyStore
       if (bodyStoreIdNonStream !== null) {
         this.bodyStore.delete(bodyStoreIdNonStream)
@@ -1633,14 +1644,20 @@ class ClaudeRelayService {
       }
       const fullUrl = `https://${url.hostname}${requestPath}${url.search || ''}`
 
-      logger.info(`🔌 [Worker] Routing non-stream request to remote worker ${routing.workerId} for account ${accountId}`)
+      logger.info(
+        `🔌 [Worker] Routing non-stream request to remote worker ${routing.workerId} for account ${accountId}`
+      )
 
-      const result = await remoteWorkerProxy.sendRequest(routing.workerId, {
-        url: fullUrl,
-        method: 'POST',
-        headers,
-        body: bodyString
-      }, config.requestTimeout || 600000)
+      const result = await remoteWorkerProxy.sendRequest(
+        routing.workerId,
+        {
+          url: fullUrl,
+          method: 'POST',
+          headers,
+          body: bodyString
+        },
+        config.requestTimeout || 600000
+      )
 
       // 远程 Worker 返回的响应格式与本地一致：{ statusCode, headers, body }
       let responseBody = result.body || ''
@@ -2088,83 +2105,104 @@ class ClaudeRelayService {
       const url = new URL(this.claudeApiUrl)
       const fullUrl = `https://${url.hostname}${url.pathname}${url.search || ''}`
 
-      logger.info(`🔌 [Worker] Routing stream request to remote worker ${routing.workerId} for account ${accountId}`)
+      logger.info(
+        `🔌 [Worker] Routing stream request to remote worker ${routing.workerId} for account ${accountId}`
+      )
 
-      return remoteWorkerProxy.sendStreamRequest(routing.workerId, {
-        url: fullUrl,
-        method: 'POST',
-        headers,
-        body: bodyString
-      }, {
-        onResponseStart: async (statusCode, resHeaders) => {
-          // 触发队列锁提前释放
-          if (onResponseStart) onResponseStart()
+      return remoteWorkerProxy.sendStreamRequest(
+        routing.workerId,
+        {
+          url: fullUrl,
+          method: 'POST',
+          headers,
+          body: bodyString
+        },
+        {
+          onResponseStart: async (statusCode, resHeaders) => {
+            // 触发队列锁提前释放
+            if (onResponseStart) {
+              onResponseStart()
+            }
 
-          if (statusCode !== 200) {
-            logger.warn(`🔌 [Worker] Stream response status: ${statusCode} from worker ${routing.workerId}`)
-            // 标记账户状态（与本地路径一致）
-            try {
-              if (statusCode === 401) {
-                await upstreamErrorHelper.markTempUnavailable(accountId, accountType, 401).catch(() => {})
-              } else if (statusCode === 403) {
-                await upstreamErrorHelper.markTempUnavailable(accountId, accountType, 403).catch(() => {})
-              } else if (statusCode === 429) {
-                await unifiedClaudeScheduler.markAccountRateLimited(accountId, accountType, null, null).catch(() => {})
-              } else if (statusCode === 529) {
-                await upstreamErrorHelper.markTempUnavailable(accountId, accountType, 529).catch(() => {})
+            if (statusCode !== 200) {
+              logger.warn(
+                `🔌 [Worker] Stream response status: ${statusCode} from worker ${routing.workerId}`
+              )
+              // 标记账户状态（与本地路径一致）
+              try {
+                if (statusCode === 401) {
+                  await upstreamErrorHelper
+                    .markTempUnavailable(accountId, accountType, 401)
+                    .catch(() => {})
+                } else if (statusCode === 403) {
+                  await upstreamErrorHelper
+                    .markTempUnavailable(accountId, accountType, 403)
+                    .catch(() => {})
+                } else if (statusCode === 429) {
+                  await unifiedClaudeScheduler
+                    .markAccountRateLimited(accountId, accountType, null, null)
+                    .catch(() => {})
+                } else if (statusCode === 529) {
+                  await upstreamErrorHelper
+                    .markTempUnavailable(accountId, accountType, 529)
+                    .catch(() => {})
+                }
+              } catch (markErr) {
+                logger.warn(`🔌 [Worker] Failed to mark account status: ${markErr.message}`)
               }
-            } catch (markErr) {
-              logger.warn(`🔌 [Worker] Failed to mark account status: ${markErr.message}`)
             }
-          }
 
-          // 写入响应头到客户端（只转发安全的头部，避免 transfer-encoding 冲突）
-          if (responseStream && !responseStream.headersSent) {
-            const safeHeaders = {
-              'Content-Type': resHeaders['content-type'] || 'text/event-stream',
-              'Cache-Control': 'no-cache',
-              'Connection': 'keep-alive',
-              'X-Accel-Buffering': 'no'
+            // 写入响应头到客户端（只转发安全的头部，避免 transfer-encoding 冲突）
+            if (responseStream && !responseStream.headersSent) {
+              const safeHeaders = {
+                'Content-Type': resHeaders['content-type'] || 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                Connection: 'keep-alive',
+                'X-Accel-Buffering': 'no'
+              }
+              // 透传 Anthropic 特有的响应头
+              for (const key of Object.keys(resHeaders)) {
+                if (key.startsWith('x-') || key.startsWith('anthropic-') || key === 'request-id') {
+                  safeHeaders[key] = resHeaders[key]
+                }
+              }
+              responseStream.writeHead(statusCode, safeHeaders)
             }
-            // 透传 Anthropic 特有的响应头
-            for (const key of Object.keys(resHeaders)) {
-              if (key.startsWith('x-') || key.startsWith('anthropic-') || key === 'request-id') {
-                safeHeaders[key] = resHeaders[key]
+          },
+          onData: (chunk) => {
+            // 直接转发数据块到客户端
+            if (responseStream && !responseStream.destroyed) {
+              // 应用 tool name 还原和 stream transformer
+              if (toolNameStreamTransformer) {
+                const data = typeof chunk === 'string' ? chunk : chunk.toString()
+                responseStream.write(toolNameStreamTransformer(data))
+              } else {
+                responseStream.write(chunk)
               }
             }
-            responseStream.writeHead(statusCode, safeHeaders)
-          }
-        },
-        onData: (chunk) => {
-          // 直接转发数据块到客户端
-          if (responseStream && !responseStream.destroyed) {
-            // 应用 tool name 还原和 stream transformer
-            if (toolNameStreamTransformer) {
-              const data = typeof chunk === 'string' ? chunk : chunk.toString()
-              responseStream.write(toolNameStreamTransformer(data))
-            } else {
-              responseStream.write(chunk)
+          },
+          onEnd: (summary) => {
+            // 流结束，关闭客户端连接
+            if (responseStream && !responseStream.destroyed) {
+              responseStream.end()
+            }
+            // 提取 usage 数据
+            if (usageCallback && summary?.usage) {
+              usageCallback(summary.usage)
+            }
+          },
+          onError: (err) => {
+            logger.error(`🔌 [Worker] Stream error from worker ${routing.workerId}: ${err.message}`)
+            if (responseStream && !responseStream.destroyed && !responseStream.headersSent) {
+              responseStream.writeHead(502, { 'Content-Type': 'application/json' })
+              responseStream.end(
+                JSON.stringify({ error: 'Worker stream failed', message: err.message })
+              )
             }
           }
         },
-        onEnd: (summary) => {
-          // 流结束，关闭客户端连接
-          if (responseStream && !responseStream.destroyed) {
-            responseStream.end()
-          }
-          // 提取 usage 数据
-          if (usageCallback && summary?.usage) {
-            usageCallback(summary.usage)
-          }
-        },
-        onError: (err) => {
-          logger.error(`🔌 [Worker] Stream error from worker ${routing.workerId}: ${err.message}`)
-          if (responseStream && !responseStream.destroyed && !responseStream.headersSent) {
-            responseStream.writeHead(502, { 'Content-Type': 'application/json' })
-            responseStream.end(JSON.stringify({ error: 'Worker stream failed', message: err.message }))
-          }
-        }
-      }, config.requestTimeout || 600000)
+        config.requestTimeout || 600000
+      )
     }
 
     return new Promise((resolve, reject) => {

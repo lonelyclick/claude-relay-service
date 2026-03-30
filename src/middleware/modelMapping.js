@@ -5,19 +5,19 @@
 
 const MODEL_MAPPING = {
   // 'claude-opus-4-6': 'claude-opus-4-6-thinking', // 已移至 relay service 的 -thinking 后缀处理
-  'claude-haiku-4-5-20251001': 'claude-sonnet-4-6',
-};
+  'claude-haiku-4-5-20251001': 'claude-sonnet-4-6'
+}
 
 function modelMappingMiddleware(req, res, next) {
   if (req.method === 'POST' && req.body && req.body.model) {
-    const originalModel = req.body.model;
-    const mappedModel = MODEL_MAPPING[originalModel];
+    const originalModel = req.body.model
+    const mappedModel = MODEL_MAPPING[originalModel]
     if (mappedModel) {
-      req.body.model = mappedModel;
-      console.log(`[ModelMapping] ${originalModel} -> ${mappedModel}`);
+      req.body.model = mappedModel
+      console.log(`[ModelMapping] ${originalModel} -> ${mappedModel}`)
     }
   }
-  next();
+  next()
 }
 
-module.exports = { modelMappingMiddleware, MODEL_MAPPING };
+module.exports = { modelMappingMiddleware, MODEL_MAPPING }

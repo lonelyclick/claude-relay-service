@@ -27,6 +27,14 @@ class CcrRelayService {
     let queueLockAcquired = false
     let queueRequestId = null
 
+    // 设置客户端断开监听器（声明在 try 块外，以便 finally 块访问）
+    const handleClientDisconnect = () => {
+      logger.info('🔌 Client disconnected, aborting CCR request')
+      if (abortController && !abortController.signal.aborted) {
+        abortController.abort()
+      }
+    }
+
     try {
       // 📬 用户消息队列处理
       if (userMessageQueueService.isUserMessageRequest(requestBody)) {
@@ -127,14 +135,6 @@ class CcrRelayService {
 
       // 创建AbortController用于取消请求
       abortController = new AbortController()
-
-      // 设置客户端断开监听器
-      const handleClientDisconnect = () => {
-        logger.info('🔌 Client disconnected, aborting CCR request')
-        if (abortController && !abortController.signal.aborted) {
-          abortController.abort()
-        }
-      }
 
       // 监听客户端断开事件
       if (clientRequest) {
@@ -352,6 +352,13 @@ class CcrRelayService {
 
       throw error
     } finally {
+      // 🧹 清理事件监听器（防止内存泄漏）
+      if (clientRequest) {
+        clientRequest.removeListener('close', handleClientDisconnect)
+      }
+      if (clientResponse) {
+        clientResponse.removeListener('close', handleClientDisconnect)
+      }
       // 📬 释放用户消息队列锁（兜底，正常情况下已在请求发送后提前释放）
       if (queueLockAcquired && queueRequestId && accountId) {
         try {
