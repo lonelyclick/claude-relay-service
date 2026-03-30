@@ -100,7 +100,6 @@ class WorkerClient {
       log.warn(`WebSocket closed: code=${code} reason=${reason}`)
       this._stopHeartbeat()
       // 中断所有进行中的 HTTP 请求（避免资源泄漏）
-      const activeCount = this.activeRequests.size
       for (const [reqId, entry] of this.activeRequests) {
         log.warn(`[${reqId}] Aborting HTTP request due to WS disconnect`)
         try {
@@ -110,9 +109,8 @@ class WorkerClient {
         }
       }
       this.activeRequests.clear()
-      // 同步调整 currentLoad：中断的请求最终会执行 finally 块 decrement，
-      // 但这里先减去，避免重连期间计数虚高
-      this.currentLoad = Math.max(0, this.currentLoad - activeCount)
+      // 注意：不手动调整 currentLoad，让请求的 finally 块自然减计数
+      // 重连后会在 auth_ok 中重置 currentLoad = 0，确保计数准确
       if (!this.isShuttingDown) {
         this._scheduleReconnect()
       }
@@ -156,6 +154,8 @@ class WorkerClient {
       case 'auth_ok':
         this.workerId = msg.data?.workerId
         this.workerName = msg.data?.name
+        // 重置 currentLoad 为 0（避免重连后计数不一致）
+        this.currentLoad = 0
         log.info(`Authenticated as: ${this.workerName} (${this.workerId})`)
         this._startHeartbeat()
         break
@@ -190,6 +190,8 @@ class WorkerClient {
       } catch (_err) {
         // ignore
       }
+      // 标记为已取消，避免后续处理
+      entry.cancelled = true
       this.activeRequests.delete(requestId)
     }
   }
@@ -231,6 +233,7 @@ class WorkerClient {
     }
 
     this.currentLoad++
+    let loadDecremented = false // 防止重复减计数
     log.info(`[${requestId}] Processing request: ${task.method} ${task.url} stream=${task.stream}`)
 
     try {
@@ -247,7 +250,11 @@ class WorkerClient {
         data: { error: err.message, statusCode: 500 }
       })
     } finally {
-      this.currentLoad--
+      // 防御性检查：避免在 WebSocket 断开后重复减计数
+      if (!loadDecremented && this.currentLoad > 0) {
+        this.currentLoad--
+        loadDecremented = true
+      }
     }
   }
 
@@ -294,6 +301,14 @@ class WorkerClient {
       }
 
       const req = transport.request(options, (res) => {
+        // 检查是否已被取消
+        const entry = this.activeRequests.get(requestId)
+        if (entry?.cancelled) {
+          log.debug(`[${requestId}] Request already cancelled, ignoring response`)
+          resolve()
+          return
+        }
+
         // stream_start：通知 Hub 响应头
         this._send({
           type: 'stream_start',
@@ -305,6 +320,11 @@ class WorkerClient {
         })
 
         res.on('data', (chunk) => {
+          // 检查是否已被取消（避免发送无用数据）
+          const entry = this.activeRequests.get(requestId)
+          if (entry?.cancelled) {
+            return
+          }
           // stream_data：逐块发送
           this._send({
             type: 'stream_data',
