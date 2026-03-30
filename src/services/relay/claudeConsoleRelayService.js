@@ -839,11 +839,6 @@ class ClaudeConsoleRelayService {
       // Factory.ai 检测（用于后续 header 处理和调试）
       const isFactoryAiStream = account.apiUrl && account.apiUrl.includes('api.factory.ai')
 
-      // 临时调试：Factory.ai 请求头
-      if (isFactoryAiStream) {
-        logger.info(`🔍 [DEBUG] Factory.ai stream headers: ${JSON.stringify(requestConfig.headers)}`)
-      }
-
       if (proxyAgent) {
         requestConfig.httpAgent = proxyAgent
         requestConfig.httpsAgent = proxyAgent
@@ -1581,6 +1576,7 @@ class ClaudeConsoleRelayService {
 
     // 3. 移除不支持的字段
     delete result.metadata
+    delete result.context_management
 
     // 4. 移除 messages 中的 cache_control
     if (result.messages && Array.isArray(result.messages)) {
