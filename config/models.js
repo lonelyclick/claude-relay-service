@@ -64,7 +64,6 @@ const PLATFORM_TEST_MODELS = {
   'gemini-api': GEMINI_MODELS,
   'openai-responses': OPENAI_MODELS,
   'azure-openai': [],
-  droid: CLAUDE_MODELS,
   ccr: CLAUDE_MODELS
 }
 

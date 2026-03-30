@@ -5,7 +5,6 @@ const claudeConsoleAccountService = require('../../services/account/claudeConsol
 const bedrockAccountService = require('../../services/account/bedrockAccountService')
 const ccrAccountService = require('../../services/account/ccrAccountService')
 const geminiAccountService = require('../../services/account/geminiAccountService')
-const droidAccountService = require('../../services/account/droidAccountService')
 const openaiResponsesAccountService = require('../../services/account/openaiResponsesAccountService')
 const redis = require('../../models/redis')
 const { authenticateAdmin } = require('../../middleware/auth')
@@ -36,7 +35,6 @@ router.get('/dashboard', authenticateAdmin, async (req, res) => {
       openaiAccounts,
       ccrAccounts,
       openaiResponsesAccounts,
-      droidAccounts,
       todayStats,
       systemAverages,
       realtimeMetrics
@@ -48,7 +46,6 @@ router.get('/dashboard', authenticateAdmin, async (req, res) => {
       redis.getAllOpenAIAccounts(),
       ccrAccountService.getAllAccounts(),
       openaiResponsesAccountService.getAllAccounts(true),
-      droidAccountService.getAllAccounts(),
       redis.getTodayStats(),
       redis.getSystemAverages(),
       redis.getRealtimeSystemMetrics()
@@ -111,28 +108,6 @@ router.get('/dashboard', authenticateAdmin, async (req, res) => {
         }
       }
       return { normal, abnormal, paused, rateLimited }
-    }
-
-    // Droid 账户统计（特殊逻辑）
-    let normalDroidAccounts = 0,
-      abnormalDroidAccounts = 0,
-      pausedDroidAccounts = 0,
-      rateLimitedDroidAccounts = 0
-    for (const acc of droidAccounts) {
-      const isActive = normalizeBoolean(acc.isActive)
-      const isBlocked = acc.status === 'blocked' || acc.status === 'unauthorized'
-      const isSchedulable = normalizeBoolean(acc.schedulable)
-      const isRateLimited = isRateLimitedFlag(acc.rateLimitStatus)
-
-      if (!isActive || isBlocked) {
-        abnormalDroidAccounts++
-      } else if (!isSchedulable) {
-        pausedDroidAccounts++
-      } else if (isRateLimited) {
-        rateLimitedDroidAccounts++
-      } else {
-        normalDroidAccounts++
-      }
     }
 
     // 计算使用统计
@@ -214,8 +189,7 @@ router.get('/dashboard', authenticateAdmin, async (req, res) => {
           bedrockStats.abnormal +
           openaiStats.abnormal +
           openaiResponsesStats.abnormal +
-          ccrStats.abnormal +
-          abnormalDroidAccounts,
+          ccrStats.abnormal,
         pausedAccounts:
           claudeStats.paused +
           claudeConsoleStats.paused +
@@ -223,8 +197,7 @@ router.get('/dashboard', authenticateAdmin, async (req, res) => {
           bedrockStats.paused +
           openaiStats.paused +
           openaiResponsesStats.paused +
-          ccrStats.paused +
-          pausedDroidAccounts,
+          ccrStats.paused,
         rateLimitedAccounts:
           claudeStats.rateLimited +
           claudeConsoleStats.rateLimited +
@@ -232,8 +205,7 @@ router.get('/dashboard', authenticateAdmin, async (req, res) => {
           bedrockStats.rateLimited +
           openaiStats.rateLimited +
           openaiResponsesStats.rateLimited +
-          ccrStats.rateLimited +
-          rateLimitedDroidAccounts,
+          ccrStats.rateLimited,
         // 各平台详细统计
         accountsByPlatform: {
           claude: {
@@ -285,13 +257,6 @@ router.get('/dashboard', authenticateAdmin, async (req, res) => {
             paused: openaiResponsesStats.paused,
             rateLimited: openaiResponsesStats.rateLimited
           },
-          droid: {
-            total: droidAccounts.length,
-            normal: normalDroidAccounts,
-            abnormal: abnormalDroidAccounts,
-            paused: pausedDroidAccounts,
-            rateLimited: rateLimitedDroidAccounts
-          }
         },
         // 保留旧字段以兼容
         activeAccounts:
@@ -301,8 +266,7 @@ router.get('/dashboard', authenticateAdmin, async (req, res) => {
           bedrockStats.normal +
           openaiStats.normal +
           openaiResponsesStats.normal +
-          ccrStats.normal +
-          normalDroidAccounts,
+          ccrStats.normal,
         totalClaudeAccounts: claudeAccounts.length + claudeConsoleAccounts.length,
         activeClaudeAccounts: claudeStats.normal + claudeConsoleStats.normal,
         rateLimitedClaudeAccounts: claudeStats.rateLimited + claudeConsoleStats.rateLimited,
@@ -340,7 +304,6 @@ router.get('/dashboard', authenticateAdmin, async (req, res) => {
         redisConnected: redis.isConnected,
         claudeAccountsHealthy: claudeStats.normal + claudeConsoleStats.normal > 0,
         geminiAccountsHealthy: geminiStats.normal > 0,
-        droidAccountsHealthy: normalDroidAccounts > 0,
         uptime: process.uptime()
       },
       systemTimezone: config.system.timezoneOffset || 8

@@ -711,8 +711,7 @@ const availableServicesText = computed(() => {
   const serviceNames = {
     claude: 'Claude',
     gemini: 'Gemini',
-    openai: 'OpenAI',
-    droid: 'Droid'
+    openai: 'OpenAI'
   }
   return permissions.map((s) => serviceNames[s] || s).join(', ')
 })

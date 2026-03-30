@@ -83,8 +83,8 @@ class AccountGroupService {
       }
 
       // 验证平台类型
-      if (!['claude', 'gemini', 'openai', 'droid'].includes(platform)) {
-        throw new Error('平台类型必须是 claude、gemini、openai 或 droid')
+      if (!['claude', 'gemini', 'openai'].includes(platform)) {
+        throw new Error('平台类型必须是 claude、gemini 或 openai')
       }
 
       const client = redis.getClientSafe()
@@ -381,8 +381,7 @@ class AccountGroupService {
           keyData &&
           (keyData.claudeAccountId === groupKey ||
             keyData.geminiAccountId === groupKey ||
-            keyData.openaiAccountId === groupKey ||
-            keyData.droidAccountId === groupKey)
+            keyData.openaiAccountId === groupKey)
         ) {
           boundApiKeys.push({
             id: keyId,
@@ -495,7 +494,7 @@ class AccountGroupService {
         await client.del(`account_groups_reverse:${platform}:${accountId}`)
       } else {
         // 如果没有指定平台，清理所有可能的平台
-        const platforms = ['claude', 'gemini', 'openai', 'droid']
+        const platforms = ['claude', 'gemini', 'openai']
         const pipeline = client.pipeline()
         for (const p of platforms) {
           pipeline.del(`account_groups_reverse:${p}:${accountId}`)

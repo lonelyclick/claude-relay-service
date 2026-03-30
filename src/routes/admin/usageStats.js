@@ -7,7 +7,6 @@ const geminiAccountService = require('../../services/account/geminiAccountServic
 const geminiApiAccountService = require('../../services/account/geminiApiAccountService')
 const openaiAccountService = require('../../services/account/openaiAccountService')
 const openaiResponsesAccountService = require('../../services/account/openaiResponsesAccountService')
-const droidAccountService = require('../../services/account/droidAccountService')
 const bedrockAccountService = require('../../services/account/bedrockAccountService')
 const redis = require('../../models/redis')
 const { authenticateAdmin } = require('../../middleware/auth')
@@ -112,7 +111,6 @@ const accountTypeNames = {
   'openai-responses': 'OpenAI Responses',
   gemini: 'Gemini',
   'gemini-api': 'Gemini API',
-  droid: 'Droid',
   bedrock: 'AWS Bedrock',
   unknown: '未知渠道'
 }
@@ -125,7 +123,6 @@ const resolveAccountByPlatform = async (accountId, platform) => {
     'gemini-api': geminiApiAccountService,
     openai: openaiAccountService,
     'openai-responses': openaiResponsesAccountService,
-    droid: droidAccountService,
     ccr: ccrAccountService,
     bedrock: bedrockAccountService
   }
@@ -251,7 +248,6 @@ router.get('/accounts/:accountId/usage-history', authenticateAdmin, async (req, 
       'openai-responses',
       'gemini',
       'gemini-api',
-      'droid',
       'bedrock'
     ]
     if (!allowedPlatforms.includes(platform)) {
@@ -265,7 +261,6 @@ router.get('/accounts/:accountId/usage-history', authenticateAdmin, async (req, 
       openai: 'openai',
       'openai-responses': 'openai-responses',
       'gemini-api': 'gemini-api',
-      droid: 'droid',
       bedrock: 'bedrock'
     }
 
@@ -276,7 +271,6 @@ router.get('/accounts/:accountId/usage-history', authenticateAdmin, async (req, 
       'openai-responses': 'gpt-4o-mini-2024-07-18',
       gemini: 'gemini-1.5-flash',
       'gemini-api': 'gemini-2.0-flash',
-      droid: 'unknown',
       bedrock: 'us.anthropic.claude-3-5-sonnet-20241022-v2:0'
     }
 
@@ -305,9 +299,6 @@ router.get('/accounts/:accountId/usage-history', authenticateAdmin, async (req, 
           accountData = await geminiApiAccountService.getAccount(accountId)
           break
         }
-        case 'droid':
-          accountData = await droidAccountService.getAccount(accountId)
-          break
         case 'bedrock': {
           const result = await bedrockAccountService.getAccount(accountId)
           accountData = result?.success ? result.data : null
@@ -1235,7 +1226,7 @@ router.get('/account-usage-trend', authenticateAdmin, async (req, res) => {
   try {
     const { granularity = 'day', group = 'claude', days = 7, startDate, endDate } = req.query
 
-    const allowedGroups = ['claude', 'openai', 'gemini', 'droid', 'bedrock']
+    const allowedGroups = ['claude', 'openai', 'gemini', 'bedrock']
     if (!allowedGroups.includes(group)) {
       return res.status(400).json({
         success: false,
@@ -1247,7 +1238,6 @@ router.get('/account-usage-trend', authenticateAdmin, async (req, res) => {
       claude: 'Claude账户',
       openai: 'OpenAI账户',
       gemini: 'Gemini账户',
-      droid: 'Droid账户',
       bedrock: 'Bedrock账户'
     }
 
@@ -1331,17 +1321,6 @@ router.get('/account-usage-trend', authenticateAdmin, async (req, res) => {
           }
         })
       ]
-    } else if (group === 'droid') {
-      const droidAccounts = await droidAccountService.getAllAccounts()
-      accounts = droidAccounts.map((account) => {
-        const id = String(account.id || '')
-        const shortId = id ? id.slice(0, 8) : '未知'
-        return {
-          id,
-          name: account.name || account.ownerEmail || account.ownerName || `Droid账号 ${shortId}`,
-          platform: 'droid'
-        }
-      })
     } else if (group === 'bedrock') {
       const result = await bedrockAccountService.getAllAccounts()
       const bedrockAccounts = result?.success ? result.data : []
@@ -2728,7 +2707,6 @@ router.get('/api-keys/:keyId/usage-records', authenticateAdmin, async (req, res)
       { type: 'openai-responses', getter: (id) => openaiResponsesAccountService.getAccount(id) },
       { type: 'gemini', getter: (id) => geminiAccountService.getAccount(id) },
       { type: 'gemini-api', getter: (id) => geminiApiAccountService.getAccount(id) },
-      { type: 'droid', getter: (id) => droidAccountService.getAccount(id) }
     ]
 
     const accountCache = new Map()

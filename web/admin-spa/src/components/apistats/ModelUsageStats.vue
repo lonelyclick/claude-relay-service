@@ -117,7 +117,6 @@ const getServiceFromModel = (model) => {
     return 'claude'
   if (m.includes('gpt') || m.includes('o1') || m.includes('o3') || m.includes('o4')) return 'codex'
   if (m.includes('gemini')) return 'gemini'
-  if (m.includes('droid') || m.includes('factory')) return 'droid'
   if (m.includes('bedrock') || m.includes('amazon')) return 'bedrock'
   if (m.includes('azure')) return 'azure'
   return 'claude'

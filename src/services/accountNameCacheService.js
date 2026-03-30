@@ -55,7 +55,6 @@ class AccountNameCacheService {
       const openaiAccountService = require('./account/openaiAccountService')
       const azureOpenaiAccountService = require('./account/azureOpenaiAccountService')
       const bedrockAccountService = require('./account/bedrockAccountService')
-      const droidAccountService = require('./account/droidAccountService')
       const ccrAccountService = require('./account/ccrAccountService')
       const accountGroupService = require('./accountGroupService')
 
@@ -83,7 +82,6 @@ class AccountNameCacheService {
         openaiResponsesAccountService?.getAllAccounts() || Promise.resolve([]),
         azureOpenaiAccountService.getAllAccounts(),
         bedrockAccountService.getAllAccounts(),
-        droidAccountService.getAllAccounts(),
         ccrAccountService.getAllAccounts(),
         accountGroupService.getAllGroups()
       ])
@@ -97,9 +95,8 @@ class AccountNameCacheService {
       const openaiResponsesAccounts = results[5].status === 'fulfilled' ? results[5].value : []
       const azureOpenaiAccounts = results[6].status === 'fulfilled' ? results[6].value : []
       const bedrockResult = results[7].status === 'fulfilled' ? results[7].value : { accounts: [] }
-      const droidAccounts = results[8].status === 'fulfilled' ? results[8].value : []
-      const ccrAccounts = results[9].status === 'fulfilled' ? results[9].value : []
-      const groups = results[10].status === 'fulfilled' ? results[10].value : []
+      const ccrAccounts = results[8].status === 'fulfilled' ? results[8].value : []
+      const groups = results[9].status === 'fulfilled' ? results[9].value : []
 
       // Bedrock 返回格式特殊处理
       const bedrockAccounts = Array.isArray(bedrockResult)
@@ -131,7 +128,6 @@ class AccountNameCacheService {
       addAccounts(openaiResponsesAccounts, 'openai-responses', 'responses:')
       addAccounts(azureOpenaiAccounts, 'azure-openai')
       addAccounts(bedrockAccounts, 'bedrock')
-      addAccounts(droidAccounts, 'droid')
       addAccounts(ccrAccounts, 'ccr')
 
       // 填充账户组缓存
@@ -218,7 +214,6 @@ class AccountNameCacheService {
       { field: 'openaiAccountId', platform: 'OpenAI' },
       { field: 'azureOpenaiAccountId', platform: 'Azure OpenAI' },
       { field: 'bedrockAccountId', platform: 'Bedrock' },
-      { field: 'droidAccountId', platform: 'Droid' },
       { field: 'ccrAccountId', platform: 'CCR' }
     ]
 

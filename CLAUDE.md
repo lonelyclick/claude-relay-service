@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 项目概述
 
 Claude Relay Service — 多平台 AI API 中转服务，作为客户端与上游 AI API 之间的中间件。
-支持 Claude (官方/Console)、Gemini、OpenAI Responses、AWS Bedrock、Azure OpenAI、Droid、CCR 等账户类型。
+支持 Claude (官方/Console)、Gemini、OpenAI Responses、AWS Bedrock、Azure OpenAI、CCR 等账户类型。
 核心能力：多账户管理、API Key 认证、统一调度、代理配置、限流、成本统计。
 
 ## 架构原则
@@ -45,7 +45,7 @@ src/
 │   ├── admin/           # 管理后台路由（24个子文件）
 │   ├── geminiRoutes.js, standardGeminiRoutes.js
 │   ├── openaiRoutes.js, openaiClaudeRoutes.js, openaiGeminiRoutes.js
-│   ├── azureOpenaiRoutes.js, droidRoutes.js
+│   ├── azureOpenaiRoutes.js
 │   ├── userRoutes.js, webhook.js, unified.js, apiStats.js, web.js
 ├── middleware/           # auth.js(认证/权限/限流), browserFallback.js
 ├── handlers/             # geminiHandlers.js

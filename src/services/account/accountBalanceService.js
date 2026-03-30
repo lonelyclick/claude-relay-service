@@ -29,7 +29,6 @@ class AccountBalanceService {
       'openai-responses',
       'azure_openai',
       'bedrock',
-      'droid',
       'ccr'
     ]
   }
@@ -217,7 +216,6 @@ class AccountBalanceService {
       'openai-responses': require('./openaiResponsesAccountService'),
       azure_openai: require('./azureOpenaiAccountService'),
       bedrock: require('./bedrockAccountService'),
-      droid: require('./droidAccountService'),
       ccr: require('./ccrAccountService')
     }
 
@@ -229,7 +227,7 @@ class AccountBalanceService {
     const result = await service.getAccount(accountId)
 
     // 处理不同服务返回格式的差异
-    // Bedrock/CCR/Droid 等服务返回 { success, data } 格式
+    // Bedrock/CCR 等服务返回 { success, data } 格式
     if (result && typeof result === 'object' && 'success' in result && 'data' in result) {
       return result.success ? result.data : null
     }
@@ -251,7 +249,6 @@ class AccountBalanceService {
       'openai-responses': require('./openaiResponsesAccountService'),
       azure_openai: require('./azureOpenaiAccountService'),
       bedrock: require('./bedrockAccountService'),
-      droid: require('./droidAccountService'),
       ccr: require('./ccrAccountService')
     }
 

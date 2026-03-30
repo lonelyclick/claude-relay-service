@@ -355,7 +355,6 @@ const platformDisplayName = computed(() => {
     'openai-responses': 'OpenAI Responses',
     gemini: 'Gemini',
     'gemini-api': 'Gemini API',
-    droid: 'Droid',
     unknown: '未知渠道'
   }
   const key = accountInfo.platform || platform.value || 'unknown'

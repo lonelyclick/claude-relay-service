@@ -363,7 +363,6 @@ const platformLabelMap = {
   'openai-responses': 'OpenAI Responses',
   gemini: 'Gemini',
   'gemini-api': 'Gemini API',
-  droid: 'Droid',
   bedrock: 'Claude AWS Bedrock'
 }
 

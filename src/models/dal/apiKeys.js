@@ -22,7 +22,6 @@ const FIELD_MAP = {
   openaiAccountId: 'openai_account_id',
   azureOpenaiAccountId: 'azure_openai_account_id',
   bedrockAccountId: 'bedrock_account_id',
-  droidAccountId: 'droid_account_id',
   tokenLimit: 'token_limit',
   dailyCostLimit: 'daily_cost_limit',
   totalCostLimit: 'total_cost_limit',

@@ -348,10 +348,6 @@
                 <input v-model="form.permissions" class="mr-2" type="radio" value="openai" />
                 <span class="text-sm text-gray-700">仅 OpenAI</span>
               </label>
-              <label class="flex cursor-pointer items-center">
-                <input v-model="form.permissions" class="mr-2" type="radio" value="droid" />
-                <span class="text-sm text-gray-700">仅 Droid</span>
-              </label>
             </div>
           </div>
 
@@ -439,21 +435,6 @@
                   :special-options="accountSpecialOptions"
                 />
               </div>
-              <div>
-                <label class="mb-1 block text-sm font-medium text-gray-600 dark:text-gray-400"
-                  >Droid 专属账号</label
-                >
-                <AccountSelector
-                  v-model="droidAccountSelectorValue"
-                  :accounts="localAccounts.droid"
-                  default-option-text="请选择Droid账号"
-                  :disabled="!isServiceSelectable('droid')"
-                  :groups="localAccounts.droidGroups"
-                  placeholder="请选择Droid账号"
-                  platform="droid"
-                  :special-options="accountSpecialOptions"
-                />
-              </div>
             </div>
           </div>
 
@@ -501,11 +482,9 @@ const props = defineProps({
       openai: [],
       openaiResponses: [],
       bedrock: [],
-      droid: [],
       claudeGroups: [],
       geminiGroups: [],
-      openaiGroups: [],
-      droidGroups: []
+      openaiGroups: []
     })
   }
 })
@@ -520,11 +499,9 @@ const localAccounts = ref({
   gemini: [],
   openai: [],
   bedrock: [],
-  droid: [],
   claudeGroups: [],
   geminiGroups: [],
-  openaiGroups: [],
-  droidGroups: []
+  openaiGroups: []
 })
 
 // 标签相关
@@ -555,7 +532,6 @@ const form = reactive({
   geminiAccountId: '',
   openaiAccountId: '',
   bedrockAccountId: '',
-  droidAccountId: '',
   tags: [],
   isActive: null // null表示不修改
 })
@@ -583,8 +559,6 @@ const claudeAccountSelectorValue = createAccountSelectorModel('claudeAccountId')
 const geminiAccountSelectorValue = createAccountSelectorModel('geminiAccountId')
 const openaiAccountSelectorValue = createAccountSelectorModel('openaiAccountId')
 const bedrockAccountSelectorValue = createAccountSelectorModel('bedrockAccountId')
-const droidAccountSelectorValue = createAccountSelectorModel('droidAccountId')
-
 const isServiceSelectable = (service) => {
   if (!form.permissions) return true
   if (form.permissions === 'all') return true
@@ -626,7 +600,6 @@ const refreshAccounts = async () => {
       openaiData,
       openaiResponsesData,
       bedrockData,
-      droidData,
       groupsData
     ] = await Promise.all([
       httpApis.getClaudeAccountsApi(),
@@ -636,7 +609,6 @@ const refreshAccounts = async () => {
       httpApis.getOpenAIAccountsApi(),
       httpApis.getOpenAIResponsesAccountsApi(),
       httpApis.getBedrockAccountsApi(),
-      httpApis.getDroidAccountsApi(),
       httpApis.getAccountGroupsApi()
     ])
 
@@ -721,21 +693,12 @@ const refreshAccounts = async () => {
       }))
     }
 
-    if (droidData.success) {
-      localAccounts.value.droid = (droidData.data || []).map((account) => ({
-        ...account,
-        platform: 'droid',
-        isDedicated: account.accountType === 'dedicated'
-      }))
-    }
-
     // 处理分组数据
     if (groupsData.success) {
       const allGroups = groupsData.data || []
       localAccounts.value.claudeGroups = allGroups.filter((g) => g.platform === 'claude')
       localAccounts.value.geminiGroups = allGroups.filter((g) => g.platform === 'gemini')
       localAccounts.value.openaiGroups = allGroups.filter((g) => g.platform === 'openai')
-      localAccounts.value.droidGroups = allGroups.filter((g) => g.platform === 'droid')
     }
 
     showToast('账号列表已刷新', 'success')
@@ -829,14 +792,6 @@ const batchUpdateApiKeys = async () => {
       }
     }
 
-    if (form.droidAccountId !== '') {
-      if (form.droidAccountId === 'SHARED_POOL') {
-        updates.droidAccountId = null
-      } else {
-        updates.droidAccountId = form.droidAccountId
-      }
-    }
-
     // 激活状态
     if (form.isActive !== null) {
       updates.isActive = form.isActive
@@ -917,14 +872,9 @@ onMounted(async () => {
       gemini: geminiAccounts,
       openai: openaiAccounts,
       bedrock: props.accounts.bedrock || [],
-      droid: (props.accounts.droid || []).map((account) => ({
-        ...account,
-        platform: account.platform || 'droid'
-      })),
       claudeGroups: props.accounts.claudeGroups || [],
       geminiGroups: props.accounts.geminiGroups || [],
-      openaiGroups: props.accounts.openaiGroups || [],
-      droidGroups: props.accounts.droidGroups || []
+      openaiGroups: props.accounts.openaiGroups || []
     }
   }
 })

@@ -179,46 +179,70 @@ class UnifiedClaudeScheduler {
     forcedAccount = null
   ) {
     try {
-      // 🔒 如果有强制绑定的账户（全局会话绑定），仅 claude-official 类型受影响
+      // 🔒 如果有强制绑定的账户（通过 x-force-account header 或全局会话���定）
       if (forcedAccount && forcedAccount.accountId && forcedAccount.accountType) {
-        // ⚠️ 只有 claude-official 类型账户受全局会话绑定限制
-        // 其他类型（bedrock, ccr, claude-console等）忽略绑定，走正常调度
-        if (forcedAccount.accountType !== 'claude-official') {
-          logger.info(
-            `🔗 Session binding ignored for non-official account type: ${forcedAccount.accountType}, proceeding with normal scheduling`
-          )
-          // 不使用 forcedAccount，继续走下面的正常调度逻辑
-        } else {
-          // claude-official 类型需要检查可用性并强制使用
-          logger.info(
-            `🔗 Forced session binding detected: ${forcedAccount.accountId} (${forcedAccount.accountType})`
-          )
+        const { accountId, accountType } = forcedAccount
 
-          const isAvailable = await this._isAccountAvailableForSessionBinding(
-            forcedAccount.accountId,
-            forcedAccount.accountType,
-            requestedModel
-          )
+        // 检查账户是否存在于 Redis 中
+        let accountExists = false
+        let isActive = false
 
-          if (isAvailable) {
-            logger.info(
-              `✅ Using forced session binding account: ${forcedAccount.accountId} (${forcedAccount.accountType})`
-            )
-            return {
-              accountId: forcedAccount.accountId,
-              accountType: forcedAccount.accountType
-            }
-          } else {
-            // 绑定账户不可用，抛出特定错误（不 fallback）
-            logger.warn(
-              `❌ Forced session binding account unavailable: ${forcedAccount.accountId} (${forcedAccount.accountType})`
-            )
-            const error = new Error('Session binding account unavailable')
-            error.code = 'SESSION_BINDING_ACCOUNT_UNAVAILABLE'
-            error.accountId = forcedAccount.accountId
-            error.accountType = forcedAccount.accountType
-            throw error
+        switch (accountType) {
+          case 'claude-official': {
+            const account = await redis.getClaudeAccount(accountId)
+            accountExists = !!account
+            isActive = account?.isActive === 'true'
+            break
           }
+          case 'claude-console': {
+            logger.info(`🔍 [Force Account] Checking claude-console account: ${accountId}`)
+            const account = await claudeConsoleAccountService.getAccount(accountId)
+            accountExists = !!account
+            isActive = account?.isActive === true
+            logger.info(`🔍 [Force Account] claude-console account check result: exists=${accountExists}, isActive=${isActive}, account=${JSON.stringify(account ? {id: account.id, name: account.name, status: account.status, isActive: account.isActive} : null)}`)
+            break
+          }
+          case 'bedrock': {
+            const result = await bedrockAccountService.getAccount(accountId)
+            accountExists = result?.success
+            isActive = result?.data?.isActive === true
+            break
+          }
+          case 'ccr': {
+            const account = await redis.getCcrAccount(accountId)
+            accountExists = !!account
+            isActive = account?.isActive === 'true'
+            break
+          }
+          default:
+            logger.warn(`⚠️ Unknown account type in forced account: ${accountType}`)
+        }
+
+        if (!accountExists) {
+          logger.warn(`❌ Forced account not found: ${accountType}:${accountId}`)
+          const error = new Error('Forced account not found')
+          error.code = 'FORCED_ACCOUNT_NOT_FOUND'
+          error.accountId
+          error.accountType
+          throw error
+        }
+
+        if (!isActive) {
+          logger.warn(`❌ Forced account not active: ${accountType}:${accountId}`)
+          const error = new Error('Forced account not active')
+          error.code = 'FORCED_ACCOUNT_NOT_ACTIVE'
+          error.accountId
+          error.accountType
+          throw error
+        }
+
+        // ✅ 强制使用指定的账户（跳过 schedulable 检查）
+        logger.info(
+          `🎯 Using forced account via header: ${accountType}:${accountId} (schedulable check bypassed)`
+        )
+        return {
+          accountId: accountId,
+          accountType: accountType
         }
       }
 

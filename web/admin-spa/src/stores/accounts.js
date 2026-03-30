@@ -14,8 +14,7 @@ const PLATFORM_CONFIG = {
   'openai-responses': {
     endpoint: 'openai-responses-accounts',
     stateKey: 'openaiResponsesAccounts'
-  },
-  droid: { endpoint: 'droid-accounts', stateKey: 'droidAccounts' }
+  }
 }
 
 export const useAccountsStore = defineStore('accounts', () => {
@@ -26,7 +25,6 @@ export const useAccountsStore = defineStore('accounts', () => {
   const openaiAccounts = ref([])
   const azureOpenaiAccounts = ref([])
   const openaiResponsesAccounts = ref([])
-  const droidAccounts = ref([])
   const loading = ref(false)
   const error = ref(null)
   const sortBy = ref('')
@@ -40,8 +38,7 @@ export const useAccountsStore = defineStore('accounts', () => {
     geminiAccounts,
     openaiAccounts,
     azureOpenaiAccounts,
-    openaiResponsesAccounts,
-    droidAccounts
+    openaiResponsesAccounts
   }
 
   // 通用获取账户
@@ -74,8 +71,6 @@ export const useAccountsStore = defineStore('accounts', () => {
     fetchAccounts(httpApis.getAzureOpenAIAccountsApi, azureOpenaiAccounts)
   const fetchOpenAIResponsesAccounts = () =>
     fetchAccounts(httpApis.getOpenAIResponsesAccountsApi, openaiResponsesAccounts)
-  const fetchDroidAccounts = () => fetchAccounts(httpApis.getDroidAccountsApi, droidAccounts)
-
   const fetchAllAccounts = async () => {
     loading.value = true
     await Promise.all([
@@ -85,8 +80,7 @@ export const useAccountsStore = defineStore('accounts', () => {
       fetchGeminiAccounts(),
       fetchOpenAIAccounts(),
       fetchAzureOpenAIAccounts(),
-      fetchOpenAIResponsesAccounts(),
-      fetchDroidAccounts()
+      fetchOpenAIResponsesAccounts()
     ])
     loading.value = false
   }
@@ -102,8 +96,6 @@ export const useAccountsStore = defineStore('accounts', () => {
     mutateAccount(httpApis.createGeminiAccountApi, fetchGeminiAccounts, data)
   const createOpenAIAccount = (data) =>
     mutateAccount(httpApis.createOpenAIAccountApi, fetchOpenAIAccounts, data)
-  const createDroidAccount = (data) =>
-    mutateAccount(httpApis.createDroidAccountApi, fetchDroidAccounts, data)
   const createAzureOpenAIAccount = (data) =>
     mutateAccount(httpApis.createAzureOpenAIAccountApi, fetchAzureOpenAIAccounts, data)
   const createOpenAIResponsesAccount = (data) =>
@@ -128,8 +120,6 @@ export const useAccountsStore = defineStore('accounts', () => {
     mutateAccount(httpApis.updateOpenAIResponsesAccountApi, fetchOpenAIResponsesAccounts, id, data)
   const updateGeminiApiAccount = (id, data) =>
     mutateAccount(httpApis.updateGeminiApiAccountApi, fetchGeminiAccounts, id, data)
-  const updateDroidAccount = (id, data) =>
-    mutateAccount(httpApis.updateDroidAccountApi, fetchDroidAccounts, id, data)
 
   // 切换账户状态
   const toggleAccount = async (platform, id) => {
@@ -163,8 +153,7 @@ export const useAccountsStore = defineStore('accounts', () => {
         gemini: fetchGeminiAccounts,
         openai: fetchOpenAIAccounts,
         azure_openai: fetchAzureOpenAIAccounts,
-        'openai-responses': fetchOpenAIResponsesAccounts,
-        droid: fetchDroidAccounts
+        'openai-responses': fetchOpenAIResponsesAccounts
       }
       await fetchMap[platform]()
     } else {
@@ -245,14 +234,6 @@ export const useAccountsStore = defineStore('accounts', () => {
     return res.success ? res.data : null
   }
 
-  const generateDroidAuthUrl = async (proxyConfig) => {
-    const res = await httpApis.generateDroidAuthUrlApi(proxyConfig)
-    if (!res.success) error.value = res.message
-    return res.success ? res.data : null
-  }
-
-  const exchangeDroidCode = (data) => httpApis.exchangeDroidCodeApi(data)
-
   const sortAccounts = (field) => {
     if (sortBy.value === field) {
       sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
@@ -270,7 +251,6 @@ export const useAccountsStore = defineStore('accounts', () => {
     openaiAccounts.value = []
     azureOpenaiAccounts.value = []
     openaiResponsesAccounts.value = []
-    droidAccounts.value = []
     loading.value = false
     error.value = null
     sortBy.value = ''
@@ -285,7 +265,6 @@ export const useAccountsStore = defineStore('accounts', () => {
     openaiAccounts,
     azureOpenaiAccounts,
     openaiResponsesAccounts,
-    droidAccounts,
     loading,
     error,
     sortBy,
@@ -297,15 +276,12 @@ export const useAccountsStore = defineStore('accounts', () => {
     fetchOpenAIAccounts,
     fetchAzureOpenAIAccounts,
     fetchOpenAIResponsesAccounts,
-    fetchDroidAccounts,
     fetchAllAccounts,
     createClaudeAccount,
     createClaudeConsoleAccount,
     createBedrockAccount,
     createGeminiAccount,
     createOpenAIAccount,
-    createDroidAccount,
-    updateDroidAccount,
     createAzureOpenAIAccount,
     createOpenAIResponsesAccount,
     createGeminiApiAccount,
@@ -330,8 +306,6 @@ export const useAccountsStore = defineStore('accounts', () => {
     exchangeGeminiCode,
     generateOpenAIAuthUrl,
     exchangeOpenAICode,
-    generateDroidAuthUrl,
-    exchangeDroidCode,
     sortAccounts,
     reset
   }

@@ -831,8 +831,7 @@ let accountUsageTrendChartInstance = null
 const accountGroupOptions = [
   { value: 'claude', label: 'Claude' },
   { value: 'openai', label: 'OpenAI' },
-  { value: 'gemini', label: 'Gemini' },
-  { value: 'droid', label: 'Droid' }
+  { value: 'gemini', label: 'Gemini' }
 ]
 
 const accountTrendUpdating = ref(false)
@@ -857,7 +856,6 @@ const getBalancePlatformLabel = (platform) => {
     'openai-responses': 'OpenAI Responses',
     azure_openai: 'Azure OpenAI',
     bedrock: 'Bedrock',
-    droid: 'Droid',
     ccr: 'CCR'
   }
   return map[platform] || platform

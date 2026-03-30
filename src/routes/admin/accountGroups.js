@@ -4,7 +4,6 @@ const claudeAccountService = require('../../services/account/claudeAccountServic
 const claudeConsoleAccountService = require('../../services/account/claudeConsoleAccountService')
 const geminiAccountService = require('../../services/account/geminiAccountService')
 const openaiAccountService = require('../../services/account/openaiAccountService')
-const droidAccountService = require('../../services/account/droidAccountService')
 const { authenticateAdmin } = require('../../middleware/auth')
 const logger = require('../../utils/logger')
 
@@ -103,9 +102,6 @@ router.get('/:groupId/members', authenticateAdmin, async (req, res) => {
       // 根据分组平台优先查找对应账户
       let account = null
       switch (group.platform) {
-        case 'droid':
-          account = await droidAccountService.getAccount(memberId)
-          break
         case 'gemini':
           account = await geminiAccountService.getAccount(memberId)
           break
@@ -133,9 +129,6 @@ router.get('/:groupId/members', authenticateAdmin, async (req, res) => {
       }
       if (!account) {
         account = await openaiAccountService.getAccount(memberId)
-      }
-      if (!account && group.platform !== 'droid') {
-        account = await droidAccountService.getAccount(memberId)
       }
 
       if (account) {

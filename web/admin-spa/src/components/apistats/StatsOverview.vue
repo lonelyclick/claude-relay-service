@@ -362,7 +362,6 @@ const formatPermissions = (permissions) => {
     claude: 'Claude',
     gemini: 'Gemini',
     codex: 'Codex',
-    droid: 'Droid',
     bedrock: 'Bedrock',
     azure: 'Azure',
     ccr: 'CCR'

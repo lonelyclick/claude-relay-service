@@ -13,14 +13,12 @@ const {
 const ClaudeCodeValidator = require('./clients/claudeCodeValidator')
 const GeminiCliValidator = require('./clients/geminiCliValidator')
 const CodexCliValidator = require('./clients/codexCliValidator')
-const DroidCliValidator = require('./clients/droidCliValidator')
 
 // 客户端ID到验证器的映射表
 const VALIDATOR_MAP = {
   [CLIENT_IDS.CLAUDE_CODE]: ClaudeCodeValidator,
   [CLIENT_IDS.GEMINI_CLI]: GeminiCliValidator,
-  [CLIENT_IDS.CODEX_CLI]: CodexCliValidator,
-  [CLIENT_IDS.DROID_CLI]: DroidCliValidator
+  [CLIENT_IDS.CODEX_CLI]: CodexCliValidator
 }
 
 /**

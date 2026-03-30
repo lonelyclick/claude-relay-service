@@ -9,7 +9,7 @@ const config = require('../../../config/config')
 const router = express.Router()
 
 // 有效的权限值列表
-const VALID_PERMISSIONS = ['claude', 'gemini', 'openai', 'droid']
+const VALID_PERMISSIONS = ['claude', 'gemini', 'openai']
 
 /**
  * 验证权限数组格式
@@ -875,7 +875,6 @@ router.get('/accounts/binding-counts', authenticateAdmin, async (req, res) => {
       openaiAccountId: {},
       azureOpenaiAccountId: {},
       bedrockAccountId: {},
-      droidAccountId: {},
       ccrAccountId: {}
     }
 
@@ -916,12 +915,6 @@ router.get('/accounts/binding-counts', authenticateAdmin, async (req, res) => {
       if (key.bedrockAccountId) {
         const id = key.bedrockAccountId
         bindingCounts.bedrockAccountId[id] = (bindingCounts.bedrockAccountId[id] || 0) + 1
-      }
-
-      // Droid 账户
-      if (key.droidAccountId) {
-        const id = key.droidAccountId
-        bindingCounts.droidAccountId[id] = (bindingCounts.droidAccountId[id] || 0) + 1
       }
 
       // CCR 账户
@@ -1473,7 +1466,6 @@ router.post('/api-keys', authenticateAdmin, async (req, res) => {
       geminiAccountId,
       openaiAccountId,
       bedrockAccountId,
-      droidAccountId,
       permissions,
       concurrencyLimit,
       rateLimitWindow,
@@ -1652,7 +1644,6 @@ router.post('/api-keys', authenticateAdmin, async (req, res) => {
       geminiAccountId,
       openaiAccountId,
       bedrockAccountId,
-      droidAccountId,
       permissions,
       concurrencyLimit,
       rateLimitWindow,
@@ -1703,7 +1694,6 @@ router.post('/api-keys/batch', authenticateAdmin, async (req, res) => {
       geminiAccountId,
       openaiAccountId,
       bedrockAccountId,
-      droidAccountId,
       permissions,
       concurrencyLimit,
       rateLimitWindow,
@@ -1768,7 +1758,6 @@ router.post('/api-keys/batch', authenticateAdmin, async (req, res) => {
           geminiAccountId,
           openaiAccountId,
           bedrockAccountId,
-          droidAccountId,
           permissions,
           concurrencyLimit,
           rateLimitWindow,
@@ -1968,10 +1957,6 @@ router.put('/api-keys/batch', authenticateAdmin, async (req, res) => {
         if (updates.bedrockAccountId !== undefined) {
           finalUpdates.bedrockAccountId = updates.bedrockAccountId
         }
-        if (updates.droidAccountId !== undefined) {
-          finalUpdates.droidAccountId = updates.droidAccountId || ''
-        }
-
         // 处理标签操作
         if (updates.tags !== undefined) {
           if (updates.tagOperation) {
@@ -2073,7 +2058,6 @@ router.put('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
       geminiAccountId,
       openaiAccountId,
       bedrockAccountId,
-      droidAccountId,
       permissions,
       enableModelRestriction,
       restrictedModels,
@@ -2166,11 +2150,6 @@ router.put('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
     if (bedrockAccountId !== undefined) {
       // 空字符串表示解绑，null或空字符串都设置为空字符串
       updates.bedrockAccountId = bedrockAccountId || ''
-    }
-
-    if (droidAccountId !== undefined) {
-      // 空字符串表示解绑，null或空字符串都设置为空字符串
-      updates.droidAccountId = droidAccountId || ''
     }
 
     if (permissions !== undefined) {

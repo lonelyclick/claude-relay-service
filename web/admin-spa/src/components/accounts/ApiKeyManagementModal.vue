@@ -397,7 +397,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { showToast } from '@/utils/tools'
-import { getDroidAccountByIdApi, updateDroidAccountApi } from '@/utils/http_apis'
+// API imports removed - component is deprecated
 import ConfirmModal from '@/components/common/ConfirmModal.vue'
 
 const props = defineProps({
@@ -518,7 +518,9 @@ const errorKeysCount = computed(() => {
 const loadApiKeys = async () => {
   loading.value = true
   try {
-    const response = await getDroidAccountByIdApi(props.accountId)
+    const response = await (() => {
+      throw new Error('Provider removed')
+    })(props.accountId)
     const account = response.data
 
     // 解析 apiKeys
@@ -613,7 +615,9 @@ const deleteApiKey = async (apiKey) => {
       apiKeyUpdateMode: 'delete'
     }
 
-    await updateDroidAccountApi(props.accountId, updateData)
+    await (() => {
+      throw new Error('Provider removed')
+    })(props.accountId, updateData)
 
     showToast('API Key 已删除', 'success')
     await loadApiKeys()
@@ -654,7 +658,9 @@ const resetApiKeyStatus = async (apiKey) => {
       apiKeyUpdateMode: 'update'
     }
 
-    await updateDroidAccountApi(props.accountId, updateData)
+    await (() => {
+      throw new Error('Provider removed')
+    })(props.accountId, updateData)
 
     showToast('API Key 状态已重置', 'success')
     await loadApiKeys()
@@ -695,7 +701,9 @@ const deleteAllErrorKeys = async () => {
       apiKeyUpdateMode: 'delete'
     }
 
-    await updateDroidAccountApi(props.accountId, updateData)
+    await (() => {
+      throw new Error('Provider removed')
+    })(props.accountId, updateData)
 
     showToast(`成功删除 ${errorKeys.length} 个异常 API Key`, 'success')
     await loadApiKeys()
@@ -742,7 +750,9 @@ const deleteAllKeys = async () => {
       apiKeyUpdateMode: 'delete'
     }
 
-    await updateDroidAccountApi(props.accountId, updateData)
+    await (() => {
+      throw new Error('Provider removed')
+    })(props.accountId, updateData)
 
     showToast(`成功删除所有 ${keysToDelete.length} 个 API Key`, 'success')
     await loadApiKeys()

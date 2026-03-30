@@ -523,16 +523,6 @@
                 />
                 <span class="text-sm text-gray-700 dark:text-gray-300">OpenAI</span>
               </label>
-              <label class="flex cursor-pointer items-center">
-                <input
-                  v-model="form.permissions"
-                  class="mr-2 rounded text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
-                  type="checkbox"
-                  value="droid"
-                  @change="updatePermissions"
-                />
-                <span class="text-sm text-gray-700 dark:text-gray-300">Droid</span>
-              </label>
             </div>
             <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
               不选择任何服务表示允许访问全部服务
@@ -616,20 +606,6 @@
                   :groups="[]"
                   placeholder="请选择Bedrock账号"
                   platform="bedrock"
-                />
-              </div>
-              <div>
-                <label class="mb-1 block text-sm font-medium text-gray-600 dark:text-gray-400"
-                  >Droid 专属账号</label
-                >
-                <AccountSelector
-                  v-model="form.droidAccountId"
-                  :accounts="localAccounts.droid"
-                  default-option-text="使用共享账号池"
-                  :disabled="form.permissions.length > 0 && !form.permissions.includes('droid')"
-                  :groups="localAccounts.droidGroups"
-                  placeholder="请选择Droid账号"
-                  platform="droid"
                 />
               </div>
             </div>
@@ -833,11 +809,9 @@ const props = defineProps({
       gemini: [],
       openai: [],
       bedrock: [],
-      droid: [],
       claudeGroups: [],
       geminiGroups: [],
       openaiGroups: [],
-      droidGroups: [],
       openaiResponses: []
     })
   }
@@ -889,11 +863,9 @@ const localAccounts = ref({
   gemini: [],
   openai: [],
   bedrock: [],
-  droid: [],
   claudeGroups: [],
   geminiGroups: [],
-  openaiGroups: [],
-  droidGroups: []
+  openaiGroups: []
 })
 
 // 支持的客户端列表
@@ -917,7 +889,6 @@ const availableServices = [
   { key: 'claude', label: 'Claude' },
   { key: 'gemini', label: 'Gemini' },
   { key: 'codex', label: 'Codex' },
-  { key: 'droid', label: 'Droid' },
   { key: 'bedrock', label: 'Bedrock' },
   { key: 'azure', label: 'Azure' },
   { key: 'ccr', label: 'CCR' }
@@ -942,7 +913,6 @@ const form = reactive({
   geminiAccountId: '',
   openaiAccountId: '',
   bedrockAccountId: '',
-  droidAccountId: '',
   enableModelRestriction: false,
   restrictedModels: [],
   modelInput: '',
@@ -1117,12 +1087,6 @@ const updateApiKey = async () => {
       data.bedrockAccountId = null
     }
 
-    if (form.droidAccountId) {
-      data.droidAccountId = form.droidAccountId
-    } else {
-      data.droidAccountId = null
-    }
-
     // 模型限制 - 始终提交这些字段
     data.enableModelRestriction = form.enableModelRestriction
     data.restrictedModels = form.restrictedModels
@@ -1166,7 +1130,6 @@ const refreshAccounts = async () => {
       openaiData,
       openaiResponsesData,
       bedrockData,
-      droidData,
       groupsData
     ] = await Promise.all([
       httpApis.getClaudeAccountsApi(),
@@ -1176,7 +1139,6 @@ const refreshAccounts = async () => {
       httpApis.getOpenAIAccountsApi(),
       httpApis.getOpenAIResponsesAccountsApi(),
       httpApis.getBedrockAccountsApi(),
-      httpApis.getDroidAccountsApi(),
       httpApis.getAccountGroupsApi()
     ])
 
@@ -1262,21 +1224,12 @@ const refreshAccounts = async () => {
       }))
     }
 
-    if (droidData.success) {
-      localAccounts.value.droid = (droidData.data || []).map((account) => ({
-        ...account,
-        platform: 'droid',
-        isDedicated: account.accountType === 'dedicated'
-      }))
-    }
-
     // 处理分组数据
     if (groupsData.success) {
       const allGroups = groupsData.data || []
       localAccounts.value.claudeGroups = allGroups.filter((g) => g.platform === 'claude')
       localAccounts.value.geminiGroups = allGroups.filter((g) => g.platform === 'gemini')
       localAccounts.value.openaiGroups = allGroups.filter((g) => g.platform === 'openai')
-      localAccounts.value.droidGroups = allGroups.filter((g) => g.platform === 'droid')
     }
 
     showToast('账号列表已刷新', 'success')
@@ -1360,14 +1313,9 @@ onMounted(async () => {
       gemini: geminiAccounts,
       openai: openaiAccounts,
       bedrock: props.accounts.bedrock || [],
-      droid: (props.accounts.droid || []).map((account) => ({
-        ...account,
-        platform: account.platform || 'droid'
-      })),
       claudeGroups: props.accounts.claudeGroups || [],
       geminiGroups: props.accounts.geminiGroups || [],
-      openaiGroups: props.accounts.openaiGroups || [],
-      droidGroups: props.accounts.droidGroups || []
+      openaiGroups: props.accounts.openaiGroups || []
     }
   }
 
@@ -1397,7 +1345,7 @@ onMounted(async () => {
   form.weeklyResetHour = props.apiKey.weeklyResetHour || 0
   // 处理权限数据，兼容旧格式（字符串）和新格式（数组）
   // 有效的权限值
-  const VALID_PERMS = ['claude', 'gemini', 'openai', 'droid']
+  const VALID_PERMS = ['claude', 'gemini', 'openai']
   let perms = props.apiKey.permissions
   // 如果是字符串，尝试 JSON.parse（Redis 可能返回 "[]" 或 "[\"gemini\"]"）
   if (typeof perms === 'string') {
@@ -1439,7 +1387,6 @@ onMounted(async () => {
   form.openaiAccountId = props.apiKey.openaiAccountId || ''
 
   form.bedrockAccountId = props.apiKey.bedrockAccountId || ''
-  form.droidAccountId = props.apiKey.droidAccountId || ''
   form.restrictedModels = props.apiKey.restrictedModels || []
   form.allowedClients = props.apiKey.allowedClients || []
   form.tags = props.apiKey.tags || []

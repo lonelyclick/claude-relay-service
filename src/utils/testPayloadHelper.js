@@ -138,6 +138,15 @@ async function sendStreamTestRequest(options) {
 
   sendSSE('test_start', { message: 'Test started' })
 
+  // 🔍 打印请求 headers 用于调试
+  logger.info('🧪 About to send request with headers:', {
+    'Content-Type': 'application/json',
+    'anthropic-version': '2023-06-01',
+    'User-Agent': 'claude-cli/2.0.52 (external, cli)',
+    ...(authorization ? { Authorization: 'Bearer ***' } : {}),
+    ...extraHeaders
+  })
+
   const requestConfig = {
     method: 'POST',
     url: apiUrl,
@@ -146,7 +155,7 @@ async function sendStreamTestRequest(options) {
       'Content-Type': 'application/json',
       'anthropic-version': '2023-06-01',
       'User-Agent': 'claude-cli/2.0.52 (external, cli)',
-      ...(authorization ? { authorization } : {}),
+      ...(authorization ? { Authorization: authorization } : {}),
       ...extraHeaders
     },
     timeout,
@@ -161,16 +170,35 @@ async function sendStreamTestRequest(options) {
   }
 
   try {
+    logger.info(`🧪 Sending test request to: ${requestConfig.url}`)
+    logger.info(`🧪 Request headers:`, {
+      'Content-Type': requestConfig.headers['Content-Type'],
+      'anthropic-version': requestConfig.headers['anthropic-version'],
+      'User-Agent': requestConfig.headers['User-Agent'],
+      'authorization': requestConfig.headers['authorization'] ? 'Bearer ***' : 'none',
+      'Authorization': requestConfig.headers['Authorization'] ? 'Bearer ***' : 'none'
+    })
     const response = await axios(requestConfig)
-    logger.debug(`🌊 Test response status: ${response.status}`)
+    logger.info(`🧪 Test response status: ${response.status}`)
+    logger.info(`🧪 Response headers:`, response.headers)
 
     // 处理非200响应
     if (response.status !== 200) {
       return new Promise((resolve) => {
         const chunks = []
-        response.data.on('data', (chunk) => chunks.push(chunk))
+        response.data.on('data', (chunk) => {
+          chunks.push(chunk)
+          // 立即打印收到的数据
+          logger.info(`🧪 Received error chunk: ${chunk.toString().substring(0, 200)}`)
+        })
         response.data.on('end', () => {
           const errorData = Buffer.concat(chunks).toString()
+          logger.info(`🧪 Test error response (${response.status}), data length: ${errorData.length}`)
+          if (errorData.length > 0) {
+            logger.info(`🧪 Error response body:`, errorData.substring(0, 500))
+          } else {
+            logger.info(`🧪 Error response body is EMPTY!`)
+          }
           let errorMsg = `API Error: ${response.status}`
           try {
             const json = JSON.parse(errorData)
@@ -193,9 +221,13 @@ async function sendStreamTestRequest(options) {
     // 处理成功的流式响应
     return new Promise((resolve) => {
       let buffer = ''
+      let chunkCount = 0
+      let eventTypes = new Set()
 
       response.data.on('data', (chunk) => {
-        buffer += chunk.toString()
+        chunkCount++
+        const chunkStr = chunk.toString()
+        buffer += chunkStr
         const lines = buffer.split('\n')
         buffer = lines.pop() || ''
 
@@ -210,24 +242,39 @@ async function sendStreamTestRequest(options) {
 
           try {
             const data = JSON.parse(jsonStr)
+            eventTypes.add(data.type)
+
+            // 打印完整的数据结构用于调试
+            if (data.type === 'content_block_delta') {
+              logger.info(`🧪 content_block_delta full data:`, JSON.stringify(data).substring(0, 200))
+            }
+
+            logger.info(`🧪 Stream event type=${data.type}`)
 
             if (data.type === 'content_block_delta' && data.delta?.text) {
+              logger.info(`🧪 Sending content: ${data.delta.text.substring(0, 50)}`)
               sendSSE('content', { text: data.delta.text })
             }
-            if (data.type === 'message_stop') {
+            if (data.type === 'text_delta' && data.delta?.text) {
+              // Factory.ai 可能使用 text_delta 而不是 content_block_delta
+              logger.info(`🧪 Sending content (text_delta): ${data.delta.text.substring(0, 50)}`)
+              sendSSE('content', { text: data.delta.text })
+            }
+            if (data.type === 'message_delta' || data.type === 'message_stop') {
               sendSSE('message_stop')
             }
             if (data.type === 'error' || data.error) {
               const errMsg = data.error?.message || data.message || data.error || 'Unknown error'
               sendSSE('error', { error: errMsg })
             }
-          } catch {
-            // ignore parse errors
+          } catch (e) {
+            logger.info(`🧪 Failed to parse stream line: ${jsonStr.substring(0, 100)}`)
           }
         }
       })
 
       response.data.on('end', () => {
+        logger.info(`🧪 Stream ended. Received ${chunkCount} chunks, event types: [${Array.from(eventTypes).join(', ')}]`)
         if (!responseStream.destroyed && !responseStream.writableEnded) {
           endTest(true)
         }

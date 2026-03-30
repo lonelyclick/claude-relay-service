@@ -5,7 +5,7 @@ const logger = require('../../utils/logger')
  * Accounts DAL — 统一账户数据访问层
  *
  * 所有平台（claude, claude-console, bedrock, gemini, gemini-api,
- * openai, openai-responses, azure-openai, droid, ccr）统一存储在 accounts 表。
+ * openai, openai-responses, azure-openai, ccr）统一存储在 accounts 表。
  *
  * Redis → PG 字段映射策略：
  * - 公共字段 → 对应列

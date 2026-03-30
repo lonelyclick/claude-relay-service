@@ -157,10 +157,62 @@ class ClaudeConsoleRelayService {
         }
       }
 
+      // 🔧 检测是否为 Factory.ai API，它不支持 system/metadata/cache_control 字段
+      const isFactoryAi = account.apiUrl && account.apiUrl.includes('api.factory.ai')
+
       // 创建修改后的请求体
-      const modifiedRequestBody = {
+      let modifiedRequestBody = {
         ...requestBody,
         model: mappedModel
+      }
+
+      // Factory.ai 特殊处理
+      if (isFactoryAi) {
+        // Factory.ai 模型名映射（4.6 系列去日期，4.5 及以下保留日期）
+        const mappedFactoryModel = this._mapModelForFactoryAi(modifiedRequestBody.model)
+        if (mappedFactoryModel !== modifiedRequestBody.model) {
+          logger.info(`🔧 Factory.ai: model mapping: ${modifiedRequestBody.model} → ${mappedFactoryModel}`)
+          modifiedRequestBody.model = mappedFactoryModel
+        }
+        // 将 system 字段转为 messages 头部，而不是直接删除（保留 system prompt 效果）
+        if (modifiedRequestBody.system) {
+          const systemContent = this._systemToText(modifiedRequestBody.system)
+          if (systemContent) {
+            const systemMessages = [
+              { role: 'user', content: `[System Instructions]\n${systemContent}` },
+              { role: 'assistant', content: 'Understood. I will follow these instructions.' }
+            ]
+            modifiedRequestBody.messages = [
+              ...systemMessages,
+              ...(modifiedRequestBody.messages || [])
+            ]
+            logger.info(`🔧 Factory.ai: converted system prompt to messages (${systemContent.length} chars)`)
+          }
+          delete modifiedRequestBody.system
+        }
+        // 移除 metadata 字段
+        delete modifiedRequestBody.metadata
+        // 移除 messages 中的 cache_control
+        if (modifiedRequestBody.messages && Array.isArray(modifiedRequestBody.messages)) {
+          modifiedRequestBody.messages = modifiedRequestBody.messages.map(msg => {
+            if (msg.content && Array.isArray(msg.content)) {
+              return {
+                ...msg,
+                content: msg.content.map(item => {
+                  const newItem = { ...item }
+                  delete newItem.cache_control
+                  return newItem
+                })
+              }
+            }
+            return msg
+          })
+        }
+        // 映射 tools 类型版本（Factory.ai 支持的版本与 Claude Code 发送的不同）
+        if (modifiedRequestBody.tools && Array.isArray(modifiedRequestBody.tools)) {
+          modifiedRequestBody.tools = this._mapToolsForFactoryAi(modifiedRequestBody.tools)
+        }
+        logger.info('🔧 Factory.ai detected: processed request body fields')
       }
 
       // 模型兼容性检查已经在调度器中完成，这里不需要再检查
@@ -215,6 +267,14 @@ class ClaudeConsoleRelayService {
         clientHeaders?.['User-Agent'] ||
         this.defaultUserAgent
 
+      // 如果账户配置了自定义 userAgent，从 filteredHeaders 中移除 user-agent 以防覆盖
+      if (account.userAgent) {
+        delete filteredHeaders['user-agent']
+        delete filteredHeaders['User-Agent']
+      }
+
+      logger.info(`🔍 User-Agent selection: account.userAgent="${account.userAgent}", client ua="${clientHeaders?.['user-agent']}", final="${userAgent}"`)
+
       // 准备请求配置
       const requestConfig = {
         method: 'POST',
@@ -258,6 +318,18 @@ class ClaudeConsoleRelayService {
         requestConfig.headers['anthropic-beta'] = options.betaHeader
       } else {
         logger.debug('[DEBUG] No beta header to add')
+      }
+
+      // Factory.ai: 过滤不支持的 anthropic-beta 特性
+      if (isFactoryAi && requestConfig.headers['anthropic-beta']) {
+        const originalBeta = requestConfig.headers['anthropic-beta']
+        requestConfig.headers['anthropic-beta'] = this._filterBetaForFactoryAi(originalBeta)
+        if (requestConfig.headers['anthropic-beta'] !== originalBeta) {
+          logger.info(`🔧 Factory.ai: filtered anthropic-beta: "${originalBeta}" → "${requestConfig.headers['anthropic-beta']}"`)
+        }
+        if (!requestConfig.headers['anthropic-beta']) {
+          delete requestConfig.headers['anthropic-beta']
+        }
       }
 
       // 发送请求
@@ -643,10 +715,62 @@ class ClaudeConsoleRelayService {
         }
       }
 
+      // 🔧 检测是否为 Factory.ai API，它不支持 system/metadata/cache_control 字段
+      const isFactoryAi = account.apiUrl && account.apiUrl.includes('api.factory.ai')
+
       // 创建修改后的请求体
-      const modifiedRequestBody = {
+      let modifiedRequestBody = {
         ...requestBody,
         model: mappedModel
+      }
+
+      // Factory.ai 特殊处理
+      if (isFactoryAi) {
+        // Factory.ai 模型名映射（4.6 系列去日期，4.5 及以下保留日期）
+        const mappedFactoryModel = this._mapModelForFactoryAi(modifiedRequestBody.model)
+        if (mappedFactoryModel !== modifiedRequestBody.model) {
+          logger.info(`🔧 [Stream] Factory.ai: model mapping: ${modifiedRequestBody.model} → ${mappedFactoryModel}`)
+          modifiedRequestBody.model = mappedFactoryModel
+        }
+        // 将 system 字段转为 messages 头部，而不是直接删除（保留 system prompt 效果）
+        if (modifiedRequestBody.system) {
+          const systemContent = this._systemToText(modifiedRequestBody.system)
+          if (systemContent) {
+            const systemMessages = [
+              { role: 'user', content: `[System Instructions]\n${systemContent}` },
+              { role: 'assistant', content: 'Understood. I will follow these instructions.' }
+            ]
+            modifiedRequestBody.messages = [
+              ...systemMessages,
+              ...(modifiedRequestBody.messages || [])
+            ]
+            logger.info(`🔧 [Stream] Factory.ai: converted system prompt to messages (${systemContent.length} chars)`)
+          }
+          delete modifiedRequestBody.system
+        }
+        // 移除 metadata 字段
+        delete modifiedRequestBody.metadata
+        // 移除 messages 中的 cache_control
+        if (modifiedRequestBody.messages && Array.isArray(modifiedRequestBody.messages)) {
+          modifiedRequestBody.messages = modifiedRequestBody.messages.map(msg => {
+            if (msg.content && Array.isArray(msg.content)) {
+              return {
+                ...msg,
+                content: msg.content.map(item => {
+                  const newItem = { ...item }
+                  delete newItem.cache_control
+                  return newItem
+                })
+              }
+            }
+            return msg
+          })
+        }
+        // 映射 tools 类型版本（Factory.ai 支持的版本与 Claude Code 发送的不同）
+        if (modifiedRequestBody.tools && Array.isArray(modifiedRequestBody.tools)) {
+          modifiedRequestBody.tools = this._mapToolsForFactoryAi(modifiedRequestBody.tools)
+        }
+        logger.info('🔧 [Stream] Factory.ai detected: processed request body fields')
       }
 
       // 模型兼容性检查已经在调度器中完成，这里不需要再检查
@@ -773,6 +897,14 @@ class ClaudeConsoleRelayService {
         clientHeaders?.['User-Agent'] ||
         this.defaultUserAgent
 
+      // 如果账户配置了自定义 userAgent，从 filteredHeaders 中移除 user-agent 以防覆盖
+      if (account.userAgent) {
+        delete filteredHeaders['user-agent']
+        delete filteredHeaders['User-Agent']
+      }
+
+      logger.info(`🔍 User-Agent selection: account.userAgent="${account.userAgent}", client ua="${clientHeaders?.['user-agent']}", final="${userAgent}"`)
+
       // 准备请求配置
       const requestConfig = {
         method: 'POST',
@@ -787,6 +919,14 @@ class ClaudeConsoleRelayService {
         timeout: config.requestTimeout || 600000,
         responseType: 'stream',
         validateStatus: () => true // 接受所有状态码
+      }
+
+      // Factory.ai 检测（用于后续 header 处理和调试）
+      const isFactoryAiStream = account.apiUrl && account.apiUrl.includes('api.factory.ai')
+
+      // 临时调试：Factory.ai 请求头
+      if (isFactoryAiStream) {
+        logger.info(`🔍 [DEBUG] Factory.ai stream headers: ${JSON.stringify(requestConfig.headers)}`)
       }
 
       if (proxyAgent) {
@@ -809,6 +949,18 @@ class ClaudeConsoleRelayService {
       // 添加beta header如果需要
       if (requestOptions.betaHeader) {
         requestConfig.headers['anthropic-beta'] = requestOptions.betaHeader
+      }
+
+      // Factory.ai: 过滤不支持的 anthropic-beta 特性
+      if (isFactoryAiStream && requestConfig.headers['anthropic-beta']) {
+        const originalBeta = requestConfig.headers['anthropic-beta']
+        requestConfig.headers['anthropic-beta'] = this._filterBetaForFactoryAi(originalBeta)
+        if (requestConfig.headers['anthropic-beta'] !== originalBeta) {
+          logger.info(`🔧 [Stream] Factory.ai: filtered anthropic-beta: "${originalBeta}" → "${requestConfig.headers['anthropic-beta']}"`)
+        }
+        if (!requestConfig.headers['anthropic-beta']) {
+          delete requestConfig.headers['anthropic-beta']
+        }
       }
 
       // 发送请求
@@ -1367,6 +1519,89 @@ class ClaudeConsoleRelayService {
     })
   }
 
+  // 🔧 将 system 字段（字符串或 content block 数组）转为纯文本
+  _systemToText(system) {
+    if (!system) return ''
+    if (typeof system === 'string') return system
+    if (Array.isArray(system)) {
+      return system
+        .filter(block => block.type === 'text' && block.text)
+        .map(block => block.text)
+        .join('\n\n')
+    }
+    return ''
+  }
+
+  /**
+   * Factory.ai 模型名映射
+   * 规律：4.6 系列不带日期后缀，4.5 及以下必须带日期后缀
+   */
+  _mapModelForFactoryAi(model) {
+    // 4.6 系列：去掉日期后缀（如 claude-sonnet-4-6-20260320 → claude-sonnet-4-6）
+    if (/^claude-(opus|sonnet)-4-6-\d{8}$/.test(model)) {
+      return model.replace(/-\d{8}$/, '')
+    }
+    // 其他模型保持原样（如 claude-haiku-4-5-20251001 需要保留日期后缀）
+    return model
+  }
+
+  /**
+   * 过滤 anthropic-beta header 中不被 Factory.ai 支持的特性
+   * Factory.ai 可能不支持某些 beta 特性（如 interleaved-thinking 旧版本）
+   */
+  _filterBetaForFactoryAi(betaHeader) {
+    if (!betaHeader) return ''
+    // Factory.ai 已知不支持的 beta 特性前缀
+    const unsupportedPrefixes = [
+      'interleaved-thinking-2025-05-14' // 旧版，Factory.ai 可能需要更新版本或不支持
+    ]
+    const features = betaHeader.split(',').map(f => f.trim()).filter(Boolean)
+    const filtered = features.filter(feature => {
+      return !unsupportedPrefixes.some(prefix => feature === prefix)
+    })
+    return filtered.join(',')
+  }
+
+  /**
+   * 映射 tools 类型版本以兼容 Factory.ai
+   * Factory.ai 支持的 tool type 版本与 Claude Code 发送的不同
+   */
+  _mapToolsForFactoryAi(tools) {
+    // Factory.ai 支持的 tool type 映射
+    const FACTORY_TOOL_TYPE_MAP = {
+      'text_editor_20250429': 'text_editor_20250728',
+      'bash_20241022': 'bash_20250124'
+    }
+    // Factory.ai 对某些 tool type 要求固定的 name
+    const FACTORY_TOOL_NAME_MAP = {
+      'text_editor_20250728': 'str_replace_based_edit_tool',
+      'bash_20250124': 'bash'
+    }
+
+    let mapped = false
+    const result = tools.map(tool => {
+      if (!tool.type) return tool
+
+      const newType = FACTORY_TOOL_TYPE_MAP[tool.type] || tool.type
+      const expectedName = FACTORY_TOOL_NAME_MAP[newType]
+
+      if (newType !== tool.type || (expectedName && tool.name !== expectedName)) {
+        mapped = true
+        const newTool = { ...tool, type: newType }
+        if (expectedName) {
+          newTool.name = expectedName
+        }
+        return newTool
+      }
+      return tool
+    })
+
+    if (mapped) {
+      logger.info(`🔧 Factory.ai: mapped tools: ${JSON.stringify(tools.map(t => t.type + ':' + t.name))} → ${JSON.stringify(result.map(t => t.type + ':' + t.name))}`)
+    }
+    return result
+  }
+
   // 🔧 过滤客户端请求头
   _filterClientHeaders(clientHeaders) {
     // 使用统一的 headerFilter 工具类（白名单模式）
@@ -1473,7 +1708,17 @@ class ClaudeConsoleRelayService {
       const apiUrl = cleanUrl.endsWith('/v1/messages')
         ? cleanUrl
         : `${cleanUrl}/v1/messages?beta=true`
-      const payload = createClaudeTestPayload(model, { stream: true })
+
+      // 🔧 检测是否为 Factory.ai API，它不支持 system/metadata/cache_control 字段
+      const isFactoryAi = apiUrl.includes('api.factory.ai')
+      const payload = isFactoryAi
+        ? {
+            model,
+            max_tokens: 100,
+            stream: true,
+            messages: [{ role: 'user', content: 'Hi' }]
+          }
+        : createClaudeTestPayload(model, { stream: true })
 
       const extraHeaders = account.userAgent ? { 'User-Agent': account.userAgent } : {}
       const requestOptions = {
@@ -1484,10 +1729,15 @@ class ClaudeConsoleRelayService {
         extraHeaders
       }
 
+      logger.info(`🧪 Test request config: apiUrl=${apiUrl}, userAgent=${account.userAgent}`)
+
       if (account.apiKey && account.apiKey.startsWith('sk-ant-')) {
         requestOptions.extraHeaders['x-api-key'] = account.apiKey
+        logger.info(`🧪 Using x-api-key auth`)
       } else {
-        requestOptions.authorization = `Bearer ${account.apiKey}`
+        const decryptedKey = claudeConsoleAccountService._decryptSensitiveData(account.apiKey)
+        requestOptions.authorization = `Bearer ${decryptedKey}`
+        logger.info(`🧪 Using Bearer auth, key prefix=${decryptedKey ? decryptedKey.substring(0, 10) : 'null'}`)
       }
 
       await sendStreamTestRequest(requestOptions)

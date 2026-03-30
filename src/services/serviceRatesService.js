@@ -24,7 +24,6 @@ class ServiceRatesService {
         claude: 1.0, // 基准：1 USD = 1 CC额度
         codex: 1.0,
         gemini: 1.0,
-        droid: 1.0,
         bedrock: 1.0,
         azure: 1.0,
         ccr: 1.0
@@ -184,11 +183,6 @@ class ServiceRatesService {
       return 'gemini'
     }
 
-    // Droid 系列
-    if (modelLower.includes('droid') || modelLower.includes('factory')) {
-      return 'droid'
-    }
-
     // Bedrock 系列（通常带有 aws 或特定前缀）
     if (
       modelLower.includes('bedrock') ||
@@ -226,7 +220,6 @@ class ServiceRatesService {
       openai: 'codex',
       azure: 'azure',
       'azure-openai': 'azure',
-      droid: 'droid'
     }
 
     return mapping[accountType] || null

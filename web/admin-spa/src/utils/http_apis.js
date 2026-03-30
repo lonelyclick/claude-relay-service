@@ -190,19 +190,6 @@ export const createAzureOpenAIAccountApi = (data) =>
 export const updateAzureOpenAIAccountApi = (id, data) =>
   request({ url: `/admin/azure-openai-accounts/${id}`, method: 'PUT', data })
 
-// Droid 账户
-export const getDroidAccountsApi = () => request({ url: '/admin/droid-accounts', method: 'GET' })
-export const createDroidAccountApi = (data) =>
-  request({ url: '/admin/droid-accounts', method: 'POST', data })
-export const updateDroidAccountApi = (id, data) =>
-  request({ url: `/admin/droid-accounts/${id}`, method: 'PUT', data })
-export const generateDroidAuthUrlApi = (data) =>
-  request({ url: '/admin/droid-accounts/generate-auth-url', method: 'POST', data })
-export const exchangeDroidCodeApi = (data) =>
-  request({ url: '/admin/droid-accounts/exchange-code', method: 'POST', data })
-export const getDroidAccountByIdApi = (id) =>
-  request({ url: `/admin/droid-accounts/${id}`, method: 'GET' })
-
 // CCR 账户
 export const getCcrAccountsApi = () => request({ url: '/admin/ccr-accounts', method: 'GET' })
 export const createCcrAccountApi = (data) =>

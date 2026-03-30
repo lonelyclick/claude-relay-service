@@ -11,8 +11,7 @@
  * 6. OpenAI 账户 (openai:account:*)
  * 7. OpenAI Responses 账户 (openai_responses_account:*)
  * 8. Azure OpenAI 账户 (azure_openai:account:*)
- * 9. Droid 账户 (droid:account:*)
- * 10. CCR 账户 (ccr_account:*)
+ * 9. CCR 账户 (ccr_account:*)
  * 11. API Keys (apikey:*)
  * 12. Users (user:*)
  * 13. Account Groups (account_group:*)
@@ -70,7 +69,6 @@ const ACCOUNT_PLATFORMS = [
   { pattern: 'openai:account:*', platform: 'openai', index: 'openai:account:index', type: 'hash' },
   { pattern: 'openai_responses_account:*', platform: 'openai-responses', index: 'openai_responses_account:index', type: 'hash' },
   { pattern: 'azure_openai:account:*', platform: 'azure-openai', index: 'azure_openai:account:index', type: 'hash' },
-  { pattern: 'droid:account:*', platform: 'droid', index: 'droid:account:index', type: 'hash' },
   { pattern: 'ccr_account:*', platform: 'ccr', index: 'ccr_account:index', type: 'hash' }
 ]
 

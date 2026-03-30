@@ -337,6 +337,45 @@ async function handleMessagesRequest(req, res) {
         // 配置服务出错时不阻断请求
       }
 
+      // 🎯 支持通过 header 或 query 参数强制指定账户
+      // Header 格式: x-force-account: <accountType>:<accountId>
+      // Query 格式: ?force_account=<accountType>:<accountId>
+      // 例如: x-force-account: claude-console:7f949f82-df37-4dcd-81dd-7a9fe6456af8
+      // Cloudflare 可能会过滤某些自定义 header，所以提供 query 参数作为备选方案
+      const forceAccountHeader = req.headers['x-force-account'] || req.query.force_account
+      if (forceAccountHeader && typeof forceAccountHeader === 'string') {
+        const parts = forceAccountHeader.split(':')
+        if (parts.length === 2) {
+          const [headerAccountType, headerAccountId] = parts
+          // 验证账户类型是否有效
+          const validAccountTypes = new Set([
+            'claude-official',
+            'claude-console',
+            'bedrock',
+            'ccr',
+            'gemini-api',
+            'openai-responses'
+          ])
+          if (validAccountTypes.has(headerAccountType)) {
+            forcedAccount = {
+              accountId: headerAccountId,
+              accountType: headerAccountType
+            }
+            logger.api(
+              `🎯 Force account detected via ${req.headers['x-force-account'] ? 'header' : 'query'}: ${headerAccountType}:${headerAccountId}`
+            )
+          } else {
+            logger.warn(
+              `⚠️ Invalid account type in x-force-account header: ${headerAccountType}`
+            )
+          }
+        } else {
+          logger.warn(
+            `⚠️ Invalid x-force-account header format: ${forceAccountHeader} (expected: type:id)`
+          )
+        }
+      }
+
       // 使用统一调度选择账号（传递请求的模型）
       const requestedModel = req.body.model
       let accountId
@@ -1009,6 +1048,33 @@ async function handleMessagesRequest(req, res) {
         }
       } catch (error) {
         logger.error('❌ Error in global session binding check (non-stream):', error)
+      }
+
+      // 🎯 支持通过 header 强制指定账户（非流式）
+      // 格式: x-force-account: <accountType>:<accountId>
+      const forceAccountHeaderNonStream = req.headers['x-force-account']
+      if (forceAccountHeaderNonStream && typeof forceAccountHeaderNonStream === 'string') {
+        const parts = forceAccountHeaderNonStream.split(':')
+        if (parts.length === 2) {
+          const [headerAccountType, headerAccountId] = parts
+          const validAccountTypes = new Set([
+            'claude-official',
+            'claude-console',
+            'bedrock',
+            'ccr',
+            'gemini-api',
+            'openai-responses'
+          ])
+          if (validAccountTypes.has(headerAccountType)) {
+            forcedAccountNonStream = {
+              accountId: headerAccountId,
+              accountType: headerAccountType
+            }
+            logger.api(
+              `🎯 Force account header detected (non-stream): ${headerAccountType}:${headerAccountId}`
+            )
+          }
+        }
       }
 
       // 使用统一调度选择账号（传递请求的模型）

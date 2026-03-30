@@ -527,51 +527,6 @@ requires_openai_auth = true
 
 > ⚠️ 在通过 Nginx 反向代理 CRS 服务并使用 Codex CLI 时，需要在 http 块中添加 underscores_in_headers on;。因为 Nginx 默认会移除带下划线的请求头（如 session_id），一旦该头被丢弃，多账号环境下的粘性会话功能将失效。
 
-**Droid CLI 配置：**
-
-Droid CLI 读取 `~/.factory/config.json`。可以在该文件中添加自定义模型以指向本服务的新端点：
-
-```json
-{
-  "custom_models": [
-    {
-      "model_display_name": "Opus 4.5 [crs]",
-      "model": "claude-opus-4-5-20251101",
-      "base_url": "http://127.0.0.1:3000/droid/claude",
-      "api_key": "后台创建的API密钥",
-      "provider": "anthropic",
-      "max_tokens": 64000
-    },
-    {
-      "model_display_name": "GPT5-Codex [crs]",
-      "model": "gpt-5-codex",
-      "base_url": "http://127.0.0.1:3000/droid/openai",
-      "api_key": "后台创建的API密钥",
-      "provider": "openai",
-      "max_tokens": 16384
-    },
-    {
-      "model_display_name": "Gemini-3-Pro [crs]",
-      "model": "gemini-3-pro-preview",
-      "base_url": "http://127.0.0.1:3000/droid/comm/v1/",
-      "api_key": "后台创建的API密钥",
-      "provider": "generic-chat-completion-api",
-      "max_tokens": 65535
-    },
-    {
-      "model_display_name": "GLM-4.6 [crs]",
-      "model": "glm-4.6",
-      "base_url": "http://127.0.0.1:3000/droid/comm/v1/",
-      "api_key": "后台创建的API密钥",
-      "provider": "generic-chat-completion-api",
-      "max_tokens": 202800
-    }
-  ]
-}
-```
-
-> 💡 将示例中的 `http://127.0.0.1:3000` 替换为你的服务域名或公网地址，并写入后台生成的 API 密钥（cr_ 开头）。
-
 ### 5. 第三方工具API接入
 
 本服务支持多种API端点格式，方便接入不同的第三方工具（如Cherry Studio等）。
@@ -643,10 +598,8 @@ gpt-5                      # Codex使用固定模型ID
 - 根据不同的路由前缀自动识别账号类型
 - `/claude/` - 使用Claude账号池
 - `/antigravity/api/` - 使用Antigravity账号池（推荐用于Claude Code）
-- `/droid/claude/` - 使用Droid类型Claude账号池（只建议api调用或Droid Cli中使用）
 - `/gemini/` - 使用Gemini账号池
 - `/openai/` - 使用Codex账号（只支持Openai-Response格式）
-- `/droid/openai/` - 使用Droid类型OpenAI兼容账号池（只建议api调用或Droid Cli中使用）
 - 支持所有标准API端点（messages、models等）
 
 **重要说明：**

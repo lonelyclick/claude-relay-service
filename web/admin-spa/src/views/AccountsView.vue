@@ -649,26 +649,6 @@
                       >
                     </div>
                     <div
-                      v-else-if="account.platform === 'droid'"
-                      class="flex items-center gap-1.5 rounded-lg border border-cyan-200 bg-gradient-to-r from-cyan-100 to-sky-100 px-2.5 py-1 dark:border-cyan-700 dark:from-cyan-900/20 dark:to-sky-900/20"
-                    >
-                      <i class="fas fa-robot text-xs text-cyan-700 dark:text-cyan-400" />
-                      <span class="text-xs font-semibold text-cyan-800 dark:text-cyan-300"
-                        >Droid</span
-                      >
-                      <span class="mx-1 h-4 w-px bg-cyan-300 dark:bg-cyan-600" />
-                      <span class="text-xs font-medium text-cyan-700 dark:text-cyan-300">
-                        {{ getDroidAuthType(account) }}
-                      </span>
-                      <span
-                        v-if="isDroidApiKeyMode(account)"
-                        :class="getDroidApiKeyBadgeClasses(account)"
-                      >
-                        <i class="fas fa-key text-[9px]" />
-                        <span>x{{ getDroidApiKeyCount(account) }}</span>
-                      </span>
-                    </div>
-                    <div
                       v-else-if="account.platform === 'gemini-api'"
                       class="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-gradient-to-r from-amber-100 to-yellow-100 px-2.5 py-1 dark:border-amber-700 dark:from-amber-900/20 dark:to-yellow-900/20"
                     >
@@ -1234,7 +1214,6 @@
                       account.platform === 'openai-responses' ||
                       account.platform === 'azure_openai' ||
                       account.platform === 'ccr' ||
-                      account.platform === 'droid' ||
                       account.platform === 'gemini-api'
                     "
                     class="flex items-center gap-2"
@@ -1456,9 +1435,7 @@
                           ? 'bg-gradient-to-br from-gray-600 to-gray-700'
                           : account.platform === 'ccr'
                             ? 'bg-gradient-to-br from-teal-500 to-emerald-600'
-                            : account.platform === 'droid'
-                              ? 'bg-gradient-to-br from-cyan-500 to-sky-600'
-                              : 'bg-gradient-to-br from-blue-500 to-blue-600'
+                            : 'bg-gradient-to-br from-blue-500 to-blue-600'
                 ]"
               >
                 <i
@@ -1474,9 +1451,7 @@
                             ? 'fas fa-openai'
                             : account.platform === 'ccr'
                               ? 'fas fa-code-branch'
-                              : account.platform === 'droid'
-                                ? 'fas fa-robot'
-                                : 'fas fa-robot'
+                              : 'fas fa-robot'
                   ]"
                 />
               </div>
@@ -2347,7 +2322,6 @@ const TEMP_UNAVAILABLE_ACCOUNT_TYPE_ALIASES = {
   openai: ['openai'],
   'openai-responses': ['openai-responses'],
   ccr: ['ccr'],
-  droid: ['droid'],
   azure_openai: ['azure-openai'],
   'azure-openai': ['azure-openai']
 }
@@ -2393,7 +2367,6 @@ const supportedUsagePlatforms = [
   'openai',
   'openai-responses',
   'gemini',
-  'droid',
   'gemini-api',
   'bedrock'
 ]
@@ -2468,12 +2441,6 @@ const platformHierarchy = [
       { value: 'gemini', label: 'Gemini OAuth', icon: 'fab fa-google' },
       { value: 'gemini-api', label: 'Gemini API', icon: 'fa-key' }
     ]
-  },
-  {
-    value: 'group-droid',
-    label: 'Droid（全部）',
-    icon: 'fa-robot',
-    children: [{ value: 'droid', label: 'Droid', icon: 'fa-robot' }]
   }
 ]
 
@@ -2481,8 +2448,7 @@ const platformHierarchy = [
 const platformGroupMap = {
   'group-claude': ['claude', 'claude-console', 'bedrock', 'ccr'],
   'group-openai': ['openai', 'openai-responses', 'azure_openai'],
-  'group-gemini': ['gemini', 'gemini-api'],
-  'group-droid': ['droid']
+  'group-gemini': ['gemini', 'gemini-api']
 }
 
 // 平台请求处理器
@@ -2495,7 +2461,6 @@ const platformRequestHandlers = {
   azure_openai: () => httpApis.getAzureOpenAIAccountsApi(),
   'openai-responses': () => httpApis.getOpenAIResponsesAccountsApi(),
   ccr: () => httpApis.getCcrAccountsApi(),
-  droid: () => httpApis.getDroidAccountsApi(),
   'gemini-api': () => httpApis.getGeminiApiAccountsApi()
 }
 
@@ -2539,7 +2504,7 @@ const groupOptions = computed(() => {
   accountGroups.value.forEach((group) => {
     options.push({
       value: group.id,
-      label: `${group.name} (${group.platform === 'claude' ? 'Claude' : group.platform === 'gemini' ? 'Gemini' : group.platform === 'openai' ? 'OpenAI' : 'Droid'})`,
+      label: `${group.name} (${group.platform === 'claude' ? 'Claude' : group.platform === 'gemini' ? 'Gemini' : 'OpenAI'})`,
       icon:
         group.platform === 'claude'
           ? 'fa-brain'
@@ -2633,7 +2598,6 @@ const showResetButton = (account) => {
     'gemini',
     'gemini-api',
     'ccr',
-    'droid',
     'bedrock',
     'azure-openai',
     'azure_openai'
@@ -2748,7 +2712,6 @@ const supportedTestPlatforms = [
   'gemini-api',
   'openai-responses',
   'azure-openai',
-  'droid',
   'ccr'
 ]
 
@@ -2936,8 +2899,7 @@ const accountStats = computed(() => {
     { value: 'azure_openai', label: 'Azure OpenAI' },
     { value: 'bedrock', label: 'Bedrock' },
     { value: 'openai-responses', label: 'OpenAI-Responses' },
-    { value: 'ccr', label: 'CCR' },
-    { value: 'droid', label: 'Droid' }
+    { value: 'ccr', label: 'CCR' }
   ]
 
   return platforms
@@ -3405,14 +3367,6 @@ const loadAccounts = async (forceReload = false) => {
         }
         case 'ccr': {
           const items = list.map((acc) => ({ ...acc, platform: 'ccr', boundApiKeysCount: 0 }))
-          allAccounts.push(...items)
-          break
-        }
-        case 'droid': {
-          const items = list.map((acc) => {
-            const boundApiKeysCount = counts.droidAccountId?.[acc.id] || acc.boundApiKeysCount || 0
-            return { ...acc, platform: 'droid', boundApiKeysCount }
-          })
           allAccounts.push(...items)
           break
         }
@@ -3985,8 +3939,6 @@ const resolveAccountDeleteEndpoint = (account) => {
       return `/admin/ccr-accounts/${account.id}`
     case 'gemini':
       return `/admin/gemini-accounts/${account.id}`
-    case 'droid':
-      return `/admin/droid-accounts/${account.id}`
     case 'gemini-api':
       return `/admin/gemini-api-accounts/${account.id}`
     default:
@@ -4132,7 +4084,6 @@ const RESET_STATUS_ENDPOINT_MAP = {
   claude: (id) => `/admin/claude-accounts/${id}/reset-status`,
   'claude-console': (id) => `/admin/claude-console-accounts/${id}/reset-status`,
   ccr: (id) => `/admin/ccr-accounts/${id}/reset-status`,
-  droid: (id) => `/admin/droid-accounts/${id}/reset-status`,
   'gemini-api': (id) => `/admin/gemini-api-accounts/${id}/reset-status`,
   gemini: (id) => `/admin/gemini-accounts/${id}/reset-status`,
   bedrock: (id) => `/admin/bedrock-accounts/${id}/reset-status`,
@@ -4150,7 +4101,6 @@ const TOGGLE_SCHEDULABLE_ENDPOINT_MAP = {
   'azure-openai': (id) => `/admin/azure-openai-accounts/${id}/toggle-schedulable`,
   'openai-responses': (id) => `/admin/openai-responses-accounts/${id}/toggle-schedulable`,
   ccr: (id) => `/admin/ccr-accounts/${id}/toggle-schedulable`,
-  droid: (id) => `/admin/droid-accounts/${id}/toggle-schedulable`,
   'gemini-api': (id) => `/admin/gemini-api-accounts/${id}/toggle-schedulable`
 }
 
@@ -4264,116 +4214,6 @@ const getGeminiAuthType = () => {
 const getOpenAIAuthType = () => {
   // OpenAI 统一显示 OAuth
   return 'OAuth'
-}
-
-// 获取 Droid 账号的认证方式
-const getDroidAuthType = (account) => {
-  if (!account || typeof account !== 'object') {
-    return 'OAuth'
-  }
-
-  const apiKeyModeFlag =
-    account.isApiKeyMode ?? account.is_api_key_mode ?? account.apiKeyMode ?? account.api_key_mode
-
-  if (
-    apiKeyModeFlag === true ||
-    apiKeyModeFlag === 'true' ||
-    apiKeyModeFlag === 1 ||
-    apiKeyModeFlag === '1'
-  ) {
-    return 'API Key'
-  }
-
-  const methodCandidate =
-    account.authenticationMethod ||
-    account.authMethod ||
-    account.authentication_mode ||
-    account.authenticationMode ||
-    account.authentication_method ||
-    account.auth_type ||
-    account.authType ||
-    account.authentication_type ||
-    account.authenticationType ||
-    account.droidAuthType ||
-    account.droidAuthenticationMethod ||
-    account.method ||
-    account.auth ||
-    ''
-
-  if (typeof methodCandidate === 'string') {
-    const normalized = methodCandidate.trim().toLowerCase()
-    const compacted = normalized.replace(/[\s_-]/g, '')
-
-    if (compacted === 'apikey') {
-      return 'API Key'
-    }
-  }
-
-  return 'OAuth'
-}
-
-// 判断是否为 API Key 模式的 Droid 账号
-const isDroidApiKeyMode = (account) => getDroidAuthType(account) === 'API Key'
-
-// 获取 Droid 账号的 API Key 数量
-const getDroidApiKeyCount = (account) => {
-  if (!account || typeof account !== 'object') {
-    return 0
-  }
-
-  // 优先使用 apiKeys 数组来计算正常状态的 API Keys
-  if (Array.isArray(account.apiKeys)) {
-    // 只计算状态不是 'error' 的 API Keys
-    return account.apiKeys.filter((apiKey) => apiKey.status !== 'error').length
-  }
-
-  // 如果是字符串格式的 apiKeys，尝试解析
-  if (typeof account.apiKeys === 'string' && account.apiKeys.trim()) {
-    try {
-      const parsed = JSON.parse(account.apiKeys)
-      if (Array.isArray(parsed)) {
-        // 只计算状态不是 'error' 的 API Keys
-        return parsed.filter((apiKey) => apiKey.status !== 'error').length
-      }
-    } catch (error) {
-      // 忽略解析错误，继续使用其他字段
-    }
-  }
-
-  const candidates = [
-    account.apiKeyCount,
-    account.api_key_count,
-    account.apiKeysCount,
-    account.api_keys_count
-  ]
-
-  for (const candidate of candidates) {
-    const value = Number(candidate)
-    if (Number.isFinite(value) && value >= 0) {
-      return value
-    }
-  }
-
-  return 0
-}
-
-// 根据数量返回徽标样式
-const getDroidApiKeyBadgeClasses = (account) => {
-  const count = getDroidApiKeyCount(account)
-  const baseClass =
-    'ml-1 inline-flex items-center gap-1 rounded-md border px-1.5 py-[1px] text-[10px] font-medium shadow-sm'
-
-  if (count > 0) {
-    return [
-      baseClass,
-      'border-cyan-200 bg-cyan-50/90 text-cyan-700 dark:border-cyan-500/40 dark:bg-cyan-900/40 dark:text-cyan-200'
-    ]
-  }
-
-  return [
-    baseClass,
-    'border-rose-200 bg-rose-50/90 text-rose-600 dark:border-rose-500/40 dark:bg-rose-900/40 dark:text-rose-200'
-  ]
 }
 
 // 获取 Claude 账号类型显示
@@ -5189,9 +5029,6 @@ const handleSaveAccountExpiry = async ({ accountId, expiresAt }) => {
         break
       case 'openai':
         endpoint = `/admin/openai-accounts/${accountId}` // 使用 :id
-        break
-      case 'droid':
-        endpoint = `/admin/droid-accounts/${accountId}` // 使用 :id
         break
       case 'azure_openai':
         endpoint = `/admin/azure-openai-accounts/${accountId}` // 使用 :id

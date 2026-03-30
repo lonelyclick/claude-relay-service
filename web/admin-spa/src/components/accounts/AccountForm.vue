@@ -173,37 +173,6 @@
                       <p class="text-xs text-gray-600 dark:text-gray-400">Google AI</p>
                     </div>
                   </div>
-
-                  <!-- Droid 分组 -->
-                  <div
-                    class="group relative cursor-pointer overflow-hidden rounded-lg border-2 transition-colors duration-200"
-                    :class="[
-                      platformGroup === 'droid'
-                        ? 'border-rose-500 bg-gradient-to-br from-rose-50 to-orange-50 shadow-md dark:from-rose-900/20 dark:to-orange-900/20'
-                        : 'border-gray-200 bg-white hover:border-rose-300 hover:shadow dark:border-gray-700 dark:bg-gray-800 dark:hover:border-rose-600'
-                    ]"
-                    @click="selectPlatformGroup('droid')"
-                  >
-                    <div class="p-3">
-                      <div class="flex items-center justify-between">
-                        <div
-                          class="flex h-8 w-8 items-center justify-center rounded-md bg-gradient-to-br from-rose-500 to-orange-500"
-                        >
-                          <i class="fas fa-robot text-sm text-white"></i>
-                        </div>
-                        <div
-                          v-if="platformGroup === 'droid'"
-                          class="flex h-5 w-5 items-center justify-center rounded-full bg-rose-500"
-                        >
-                          <i class="fas fa-check text-xs text-white"></i>
-                        </div>
-                      </div>
-                      <h4 class="mt-2 text-sm font-semibold text-gray-900 dark:text-gray-100">
-                        Droid
-                      </h4>
-                      <p class="text-xs text-gray-600 dark:text-gray-400">Claude Droid</p>
-                    </div>
-                  </div>
                 </div>
 
                 <!-- 子平台选择器 -->
@@ -539,35 +508,6 @@
                         </div>
                       </label>
                     </template>
-
-                    <!-- Droid 子选项 -->
-                    <template v-if="platformGroup === 'droid'">
-                      <label
-                        class="group relative flex cursor-pointer items-center rounded-md border p-2 transition-colors"
-                        :class="[
-                          form.platform === 'droid'
-                            ? 'border-rose-500 bg-rose-50 dark:border-rose-400 dark:bg-rose-900/30'
-                            : 'border-gray-300 bg-white hover:border-rose-400 hover:bg-rose-50/50 dark:border-gray-600 dark:bg-gray-700 dark:hover:border-rose-500 dark:hover:bg-rose-900/20'
-                        ]"
-                      >
-                        <input v-model="form.platform" class="sr-only" type="radio" value="droid" />
-                        <div class="flex items-center gap-2">
-                          <i class="fas fa-robot text-sm text-rose-600 dark:text-rose-400"></i>
-                          <div>
-                            <span class="block text-xs font-medium text-gray-900 dark:text-gray-100"
-                              >Droid 专属</span
-                            >
-                            <span class="text-xs text-gray-500 dark:text-gray-400">官方</span>
-                          </div>
-                        </div>
-                        <div
-                          v-if="form.platform === 'droid'"
-                          class="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500"
-                        >
-                          <i class="fas fa-check text-xs text-white"></i>
-                        </div>
-                      </label>
-                    </template>
                   </div>
                 </div>
               </div>
@@ -619,17 +559,6 @@
                   />
                   <span class="text-sm text-gray-700 dark:text-gray-300"
                     >手动输入 Access Token</span
-                  >
-                </label>
-                <label v-if="form.platform === 'droid'" class="flex cursor-pointer items-center">
-                  <input
-                    v-model="form.addType"
-                    class="mr-2 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
-                    type="radio"
-                    value="apikey"
-                  />
-                  <span class="text-sm text-gray-700 dark:text-gray-300"
-                    >使用 API Key (支持多个)</span
                   >
                 </label>
               </div>
@@ -2042,12 +1971,6 @@
                     请输入有效的 OpenAI Access Token。如果您有 Refresh
                     Token，建议也一并填写以支持自动刷新。
                   </p>
-                  <p
-                    v-else-if="form.platform === 'droid'"
-                    class="mb-2 text-sm text-blue-800 dark:text-blue-300"
-                  >
-                    请输入有效的 Droid Access Token，并同时提供 Refresh Token 以支持自动刷新。
-                  </p>
                   <div
                     class="mb-2 mt-2 rounded-lg border border-blue-300 bg-white/80 p-3 dark:border-blue-600 dark:bg-gray-800/80"
                   >
@@ -2084,22 +2007,9 @@
                       请从已登录 OpenAI 账户的机器上获取认证凭证， 或通过 OAuth 授权流程获取 Access
                       Token。
                     </p>
-                    <p
-                      v-else-if="form.platform === 'droid'"
-                      class="text-xs text-blue-800 dark:text-blue-300"
-                    >
-                      请从已完成授权的 Droid CLI 或 Factory.ai 导出的凭证中获取 Access Token 与
-                      Refresh Token。
-                    </p>
                   </div>
-                  <p
-                    v-if="form.platform !== 'droid'"
-                    class="text-xs text-blue-600 dark:text-blue-400"
-                  >
+                  <p class="text-xs text-blue-600 dark:text-blue-400">
                     💡 如果未填写 Refresh Token，Token 过期后需要手动更新。
-                  </p>
-                  <p v-else class="text-xs text-red-600 dark:text-red-400">
-                    ⚠️ Droid 账户必须填写 Refresh Token，缺失将导致无法自动刷新 Access Token。
                   </p>
                 </div>
               </div>
@@ -2137,7 +2047,7 @@
                 </p>
               </div>
 
-              <div v-if="form.platform === 'openai' || form.platform === 'droid'">
+              <div v-if="form.platform === 'openai'">
                 <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
                   >Refresh Token *</label
                 >
@@ -2173,96 +2083,6 @@
                   placeholder="请输入 Refresh Token..."
                   rows="4"
                 />
-              </div>
-
-              <!-- Droid User-Agent 配置 (OAuth/Manual 模式) -->
-              <div v-if="form.platform === 'droid'">
-                <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
-                  >自定义 User-Agent (可选)</label
-                >
-                <input
-                  v-model="form.userAgent"
-                  class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-                  placeholder="factory-cli/0.32.1"
-                  type="text"
-                />
-                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  留空使用默认值 factory-cli/0.32.1，可根据需要自定义
-                </p>
-              </div>
-            </div>
-
-            <!-- API Key 模式输入 -->
-            <div
-              v-if="form.addType === 'apikey' && form.platform === 'droid'"
-              class="space-y-4 rounded-lg border border-purple-200 bg-purple-50 p-4 dark:border-purple-700 dark:bg-purple-900/30"
-            >
-              <div class="mb-4 flex items-start gap-3">
-                <div
-                  class="mt-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-purple-500"
-                >
-                  <i class="fas fa-key text-sm text-white" />
-                </div>
-                <div>
-                  <h5 class="mb-2 font-semibold text-purple-900 dark:text-purple-200">
-                    使用 API Key 调度 Droid
-                  </h5>
-                  <p class="text-sm text-purple-800 dark:text-purple-200">
-                    请填写一个或多个 Factory.ai API
-                    Key，系统会自动在请求时随机挑选并结合会话哈希维持粘性，确保对话上下文保持稳定。
-                  </p>
-                </div>
-              </div>
-
-              <div>
-                <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
-                  >API Key 列表 *</label
-                >
-                <textarea
-                  v-model="form.apiKeysInput"
-                  class="form-input w-full resize-none border-gray-300 font-mono text-xs dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-                  :class="{ 'border-red-500': errors.apiKeys }"
-                  placeholder="每行一个 API Key，可粘贴多行"
-                  required
-                  rows="6"
-                />
-                <p v-if="errors.apiKeys" class="mt-1 text-xs text-red-500">
-                  {{ errors.apiKeys }}
-                </p>
-                <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                  <i class="fas fa-info-circle mr-1" />
-                  建议为每条 Key 提供独立额度；系统会自动去重并忽略空白行。
-                </p>
-              </div>
-
-              <!-- Droid User-Agent 配置 -->
-              <div>
-                <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
-                  >自定义 User-Agent (可选)</label
-                >
-                <input
-                  v-model="form.userAgent"
-                  class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-                  placeholder="factory-cli/0.32.1"
-                  type="text"
-                />
-                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  留空使用默认值 factory-cli/0.32.1，可根据需要自定义
-                </p>
-              </div>
-
-              <div
-                class="rounded-lg border border-purple-200 bg-white/70 p-3 text-xs text-purple-800 dark:border-purple-700 dark:bg-purple-800/20 dark:text-purple-100"
-              >
-                <p class="font-medium"><i class="fas fa-random mr-1" />分配策略说明</p>
-                <ul class="mt-1 list-disc space-y-1 pl-4">
-                  <li>新会话将随机命中一个 Key，并在会话有效期内保持粘性。</li>
-                  <li>若某 Key 失效，会自动切换到剩余可用 Key，最大化成功率。</li>
-                  <li>
-                    若上游返回 4xx 错误码，该 Key 会被自动标记为异常；全部 Key
-                    异常后账号将暂停调度。
-                  </li>
-                </ul>
               </div>
             </div>
 
@@ -3820,107 +3640,7 @@
 
           <!-- Token 更新 -->
           <div
-            v-if="isEdit && isEditingDroidApiKey"
-            class="rounded-lg border border-purple-200 bg-purple-50 p-4 dark:border-purple-700 dark:bg-purple-900/30"
-          >
-            <div class="mb-4 flex items-start gap-3">
-              <div
-                class="mt-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-purple-500"
-              >
-                <i class="fas fa-retweet text-sm text-white" />
-              </div>
-              <div class="flex-1">
-                <div class="mb-2 flex items-center justify-between">
-                  <h5 class="font-semibold text-purple-900 dark:text-purple-200">更新 API Key</h5>
-                  <button
-                    class="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-purple-700 dark:bg-purple-500 dark:hover:bg-purple-600"
-                    type="button"
-                    @click="showApiKeyManagement = true"
-                  >
-                    <i class="fas fa-list-ul" />
-                    <span>管理 API Key</span>
-                  </button>
-                </div>
-                <p class="mb-1 text-sm text-purple-800 dark:text-purple-200">
-                  当前已保存 <strong>{{ existingApiKeyCount }}</strong> 条 API Key。您可以追加新的
-                  Key，或通过下方模式快速覆盖、删除指定 Key。
-                </p>
-                <p class="text-xs text-purple-700 dark:text-purple-300">
-                  留空表示保留现有 Key 不变；根据所选模式决定是追加、覆盖还是删除输入的 Key。
-                </p>
-              </div>
-            </div>
-
-            <div class="space-y-4">
-              <div>
-                <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
-                  >新的 API Key 列表</label
-                >
-                <textarea
-                  v-model="form.apiKeysInput"
-                  class="form-input w-full resize-none border-gray-300 font-mono text-xs dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-                  :class="{ 'border-red-500': errors.apiKeys }"
-                  placeholder="根据模式填写；每行一个 API Key"
-                  rows="6"
-                />
-                <p v-if="errors.apiKeys" class="mt-1 text-xs text-red-500">
-                  {{ errors.apiKeys }}
-                </p>
-              </div>
-
-              <div class="space-y-2">
-                <div class="flex items-center justify-between">
-                  <span class="text-sm font-semibold text-purple-800 dark:text-purple-100"
-                    >API Key 更新模式</span
-                  >
-                  <span class="text-xs text-purple-600 dark:text-purple-300">
-                    {{ currentApiKeyModeLabel }}
-                  </span>
-                </div>
-                <div
-                  class="relative grid h-11 grid-cols-3 overflow-hidden rounded-lg border border-purple-200/80 bg-gradient-to-r from-purple-50/80 via-white to-purple-50/80 shadow-inner dark:border-purple-700/70 dark:from-purple-900/40 dark:via-purple-900/20 dark:to-purple-900/40"
-                >
-                  <span
-                    class="pointer-events-none absolute inset-y-0 rounded-lg bg-gradient-to-r from-purple-500/90 via-purple-600 to-indigo-500/90 shadow-lg ring-1 ring-purple-100/80 transition-colors duration-150 ease-out dark:from-purple-500/70 dark:via-purple-600/70 dark:to-indigo-500/70 dark:ring-purple-400/30"
-                    :style="apiKeyModeSliderStyle"
-                  />
-                  <button
-                    v-for="option in apiKeyModeOptions"
-                    :key="option.value"
-                    class="relative z-10 flex items-center justify-center rounded-lg px-2 text-xs font-semibold transition-colors duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/60 dark:focus-visible:ring-purple-400/60"
-                    :class="
-                      form.apiKeyUpdateMode === option.value
-                        ? 'text-white drop-shadow-sm'
-                        : 'text-purple-500/80 hover:text-purple-700 dark:text-purple-200/70 dark:hover:text-purple-100'
-                    "
-                    type="button"
-                    @click="form.apiKeyUpdateMode = option.value"
-                  >
-                    {{ option.label }}
-                  </button>
-                </div>
-                <p class="text-xs text-purple-700 dark:text-purple-300">
-                  {{ currentApiKeyModeDescription }}
-                </p>
-              </div>
-
-              <div
-                class="rounded-lg border border-purple-200 bg-white/70 p-3 text-xs text-purple-800 dark:border-purple-700 dark:bg-purple-800/20 dark:text-purple-100"
-              >
-                <p class="font-medium"><i class="fas fa-lightbulb mr-1" />小提示</p>
-                <ul class="mt-1 list-disc space-y-1 pl-4">
-                  <li>系统会为新的 Key 自动建立粘性映射，保持同一会话命中同一个 Key。</li>
-                  <li>追加模式会保留现有 Key 并在末尾追加新的 Key。</li>
-                  <li>覆盖模式会先清空旧 Key 再写入上方的新列表。</li>
-                  <li>删除模式会根据输入精准移除指定 Key，适合快速处理失效或被封禁的 Key。</li>
-                </ul>
-              </div>
-            </div>
-          </div>
-
-          <div
             v-if="
-              !(isEdit && isEditingDroidApiKey) &&
               form.platform !== 'claude-console' &&
               form.platform !== 'ccr' &&
               form.platform !== 'bedrock' &&
@@ -3969,22 +3689,6 @@
                 />
               </div>
             </div>
-          </div>
-
-          <!-- Droid User-Agent 配置 (编辑模式) -->
-          <div v-if="form.platform === 'droid'">
-            <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
-              >自定义 User-Agent (可选)</label
-            >
-            <input
-              v-model="form.userAgent"
-              class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-              placeholder="factory-cli/0.32.1"
-              type="text"
-            />
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              留空使用默认值 factory-cli/0.32.1，可根据需要自定义
-            </p>
           </div>
 
           <!-- 代理设置 -->
@@ -4095,7 +3799,6 @@ const show = ref(true)
 const autoProtectionPlatforms = [
   'claude-console',
   'ccr',
-  'droid',
   'bedrock',
   'azure-openai',
   'azure_openai',
@@ -4157,8 +3860,6 @@ const determinePlatformGroup = (platform) => {
     return 'openai'
   } else if (['gemini', 'gemini-antigravity', 'gemini-api'].includes(platform)) {
     return 'gemini'
-  } else if (platform === 'droid') {
-    return 'droid'
   }
   return ''
 }
@@ -4502,47 +4203,6 @@ const parseApiKeysInput = (input) => {
   return uniqueKeys
 }
 
-const apiKeyModeOptions = [
-  {
-    value: 'append',
-    label: '追加模式',
-    description: '保留现有 Key，并在末尾追加新 Key 列表。'
-  },
-  {
-    value: 'replace',
-    label: '覆盖模式',
-    description: '先清空旧 Key，再写入上方的新 Key 列表。'
-  },
-  {
-    value: 'delete',
-    label: '删除模式',
-    description: '输入要移除的 Key，可精准删除失效或被封禁的 Key。'
-  }
-]
-
-const apiKeyModeSliderStyle = computed(() => {
-  const index = Math.max(
-    apiKeyModeOptions.findIndex((option) => option.value === form.value.apiKeyUpdateMode),
-    0
-  )
-  const widthPercent = 100 / apiKeyModeOptions.length
-
-  return {
-    width: `${widthPercent}%`,
-    left: `${index * widthPercent}%`
-  }
-})
-
-const currentApiKeyModeLabel = computed(() => {
-  const option = apiKeyModeOptions.find((item) => item.value === form.value.apiKeyUpdateMode)
-  return option ? option.label : apiKeyModeOptions[0].label
-})
-
-const currentApiKeyModeDescription = computed(() => {
-  const option = apiKeyModeOptions.find((item) => item.value === form.value.apiKeyUpdateMode)
-  return option ? option.description : apiKeyModeOptions[0].description
-})
-
 // 表单验证错误
 const errors = ref({
   name: '',
@@ -4594,55 +4254,6 @@ const usagePercentage = computed(() => {
   return (currentUsage / form.value.dailyQuota) * 100
 })
 
-// 当前账户的 API Key 数量（仅用于展示）
-const existingApiKeyCount = computed(() => {
-  if (!props.account || props.account.platform !== 'droid') {
-    return 0
-  }
-
-  let fallbackList = 0
-
-  if (Array.isArray(props.account.apiKeys)) {
-    fallbackList = props.account.apiKeys.length
-  } else if (typeof props.account.apiKeys === 'string') {
-    try {
-      const parsed = JSON.parse(props.account.apiKeys)
-      if (Array.isArray(parsed)) {
-        fallbackList = parsed.length
-      }
-    } catch (error) {
-      fallbackList = 0
-    }
-  }
-
-  const count =
-    props.account.apiKeyCount ??
-    props.account.apiKeysCount ??
-    props.account.api_key_count ??
-    fallbackList
-
-  return Number(count) || 0
-})
-
-// 编辑时判断是否为 API Key 模式的 Droid 账户
-const isEditingDroidApiKey = computed(() => {
-  if (!isEdit.value || form.value.platform !== 'droid') {
-    return false
-  }
-  const method =
-    form.value.authenticationMethod ||
-    props.account?.authenticationMethod ||
-    props.account?.authMethod ||
-    props.account?.authentication_mode ||
-    ''
-
-  if (typeof method !== 'string') {
-    return false
-  }
-
-  return method.trim().toLowerCase() === 'api_key'
-})
-
 // 加载账户今日使用情况
 const loadAccountUsage = async () => {
   if (!isEdit.value || !props.account?.id) return
@@ -4676,8 +4287,6 @@ const selectPlatformGroup = (group) => {
     form.value.platform = 'openai'
   } else if (group === 'gemini') {
     form.value.platform = 'gemini' // Default to Gemini CLI, user can select Antigravity
-  } else if (group === 'droid') {
-    form.value.platform = 'droid'
   }
 }
 
@@ -5107,70 +4716,6 @@ const handleOAuthSuccess = async (tokenInfoOrList) => {
       data.openaiOauth = tokenInfo.tokens || tokenInfo
       data.accountInfo = tokenInfo.accountInfo
       data.priority = form.value.priority || 50
-    } else if (currentPlatform === 'droid') {
-      const rawTokens = tokenInfo.tokens || tokenInfo || {}
-
-      const normalizedTokens = {
-        accessToken: rawTokens.accessToken || rawTokens.access_token || '',
-        refreshToken: rawTokens.refreshToken || rawTokens.refresh_token || '',
-        expiresAt: rawTokens.expiresAt || rawTokens.expires_at || '',
-        expiresIn: rawTokens.expiresIn || rawTokens.expires_in || null,
-        tokenType: rawTokens.tokenType || rawTokens.token_type || 'Bearer',
-        organizationId: rawTokens.organizationId || rawTokens.organization_id || '',
-        authenticationMethod:
-          rawTokens.authenticationMethod || rawTokens.authentication_method || ''
-      }
-
-      if (!normalizedTokens.refreshToken) {
-        loading.value = false
-        showToast('授权成功但未返回 Refresh Token，请确认已授予离线访问权限后重试。', 'error')
-        return
-      }
-
-      data.refreshToken = normalizedTokens.refreshToken
-      data.accessToken = normalizedTokens.accessToken
-      data.expiresAt = normalizedTokens.expiresAt
-      if (normalizedTokens.expiresIn !== null && normalizedTokens.expiresIn !== undefined) {
-        data.expiresIn = normalizedTokens.expiresIn
-      }
-      data.priority = form.value.priority || 50
-      data.endpointType = form.value.endpointType || 'anthropic'
-      data.platform = 'droid'
-      data.tokenType = normalizedTokens.tokenType
-      data.authenticationMethod = normalizedTokens.authenticationMethod
-
-      if (normalizedTokens.organizationId) {
-        data.organizationId = normalizedTokens.organizationId
-      }
-
-      if (rawTokens.user) {
-        const user = rawTokens.user
-        const nameParts = []
-        if (typeof user.first_name === 'string' && user.first_name.trim()) {
-          nameParts.push(user.first_name.trim())
-        }
-        if (typeof user.last_name === 'string' && user.last_name.trim()) {
-          nameParts.push(user.last_name.trim())
-        }
-        const derivedName =
-          nameParts.join(' ').trim() ||
-          (typeof user.name === 'string' ? user.name.trim() : '') ||
-          (typeof user.display_name === 'string' ? user.display_name.trim() : '')
-
-        if (typeof user.email === 'string' && user.email.trim()) {
-          data.ownerEmail = user.email.trim()
-        }
-        if (derivedName) {
-          data.ownerName = derivedName
-          data.ownerDisplayName = derivedName
-        } else if (data.ownerEmail) {
-          data.ownerName = data.ownerName || data.ownerEmail
-          data.ownerDisplayName = data.ownerDisplayName || data.ownerEmail
-        }
-        if (typeof user.id === 'string' && user.id.trim()) {
-          data.userId = user.id.trim()
-        }
-      }
     }
 
     let result
@@ -5180,8 +4725,6 @@ const handleOAuthSuccess = async (tokenInfoOrList) => {
       result = await accountsStore.createGeminiAccount(data)
     } else if (currentPlatform === 'openai') {
       result = await accountsStore.createOpenAIAccount(data)
-    } else if (currentPlatform === 'droid') {
-      result = await accountsStore.createDroidAccount(data)
     } else {
       result = await accountsStore.createGeminiAccount(data)
     }
@@ -5324,15 +4867,6 @@ const createAccount = async () => {
         errors.value.accessToken = '请填写 Access Token'
         hasError = true
       }
-    } else if (form.value.platform === 'droid') {
-      if (!form.value.accessToken || form.value.accessToken.trim() === '') {
-        errors.value.accessToken = '请填写 Access Token'
-        hasError = true
-      }
-      if (!form.value.refreshToken || form.value.refreshToken.trim() === '') {
-        errors.value.refreshToken = '请填写 Refresh Token'
-        hasError = true
-      }
     } else if (form.value.platform === 'claude') {
       // Claude 平台需要 Access Token
       if (!form.value.accessToken || form.value.accessToken.trim() === '') {
@@ -5353,7 +4887,7 @@ const createAccount = async () => {
         hasError = true
       }
     } else {
-      // 其他平台（如 Droid）使用多 API Key 输入
+      // 其他平台使用多 API Key 输入
       const apiKeys = parseApiKeysInput(form.value.apiKeysInput)
       if (apiKeys.length === 0) {
         errors.value.apiKeys = '请至少填写一个 API Key'
@@ -5477,29 +5011,6 @@ const createAccount = async () => {
       data.needsImmediateRefresh = true
       data.requireRefreshSuccess = true // 必须刷新成功才能创建账户
       data.priority = form.value.priority || 50
-    } else if (form.value.platform === 'droid') {
-      data.priority = form.value.priority || 50
-      data.endpointType = form.value.endpointType || 'anthropic'
-      data.platform = 'droid'
-
-      if (form.value.addType === 'apikey') {
-        const apiKeys = parseApiKeysInput(form.value.apiKeysInput)
-        data.apiKeys = apiKeys
-        data.authenticationMethod = 'api_key'
-        data.isActive = true
-        data.schedulable = true
-      } else {
-        const accessToken = form.value.accessToken?.trim() || ''
-        const refreshToken = form.value.refreshToken?.trim() || ''
-        const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString()
-
-        data.accessToken = accessToken
-        data.refreshToken = refreshToken
-        data.expiresAt = expiresAt
-        data.expiresIn = 8 * 60 * 60
-        data.tokenType = 'Bearer'
-        data.authenticationMethod = 'manual'
-      }
     } else if (form.value.platform === 'claude-console' || form.value.platform === 'ccr') {
       // Claude Console 和 CCR 账户特定数据（CCR 使用 Claude Console 的后端逻辑）
       data.apiUrl = form.value.apiUrl
@@ -5586,8 +5097,6 @@ const createAccount = async () => {
     } else if (form.value.platform === 'claude-console' || form.value.platform === 'ccr') {
       // CCR 使用 Claude Console 的后端 API
       result = await accountsStore.createClaudeConsoleAccount(data)
-    } else if (form.value.platform === 'droid') {
-      result = await accountsStore.createDroidAccount(data)
     } else if (form.value.platform === 'openai-responses') {
       result = await accountsStore.createOpenAIResponsesAccount(data)
     } else if (form.value.platform === 'bedrock') {
@@ -5751,66 +5260,11 @@ const updateAccount = async () => {
           data.needsImmediateRefresh = true
           data.requireRefreshSuccess = true
         }
-      } else if (props.account.platform === 'droid') {
-        if (trimmedAccessToken) {
-          data.accessToken = trimmedAccessToken
-        }
-        if (trimmedRefreshToken) {
-          data.refreshToken = trimmedRefreshToken
-        }
-      }
-    }
-
-    if (props.account.platform === 'droid') {
-      const trimmedApiKeysInput = form.value.apiKeysInput?.trim() || ''
-      const apiKeyUpdateMode = form.value.apiKeyUpdateMode || 'append'
-
-      if (apiKeyUpdateMode === 'delete') {
-        if (!trimmedApiKeysInput) {
-          errors.value.apiKeys = '请填写需要删除的 API Key'
-          loading.value = false
-          return
-        }
-
-        const removeApiKeys = parseApiKeysInput(trimmedApiKeysInput)
-        if (removeApiKeys.length === 0) {
-          errors.value.apiKeys = '请填写需要删除的 API Key'
-          loading.value = false
-          return
-        }
-
-        data.removeApiKeys = removeApiKeys
-        data.apiKeyUpdateMode = 'delete'
-      } else {
-        if (trimmedApiKeysInput) {
-          const apiKeys = parseApiKeysInput(trimmedApiKeysInput)
-          if (apiKeys.length === 0) {
-            errors.value.apiKeys = '请至少填写一个 API Key'
-            loading.value = false
-            return
-          }
-          data.apiKeys = apiKeys
-        } else if (apiKeyUpdateMode === 'replace') {
-          data.apiKeys = []
-        }
-
-        if (apiKeyUpdateMode !== 'append' || trimmedApiKeysInput) {
-          data.apiKeyUpdateMode = apiKeyUpdateMode
-        }
-      }
-
-      if (isEditingDroidApiKey.value) {
-        data.authenticationMethod = 'api_key'
       }
     }
 
     if (props.account.platform === 'gemini') {
       data.projectId = form.value.projectId || ''
-    }
-
-    if (props.account.platform === 'droid') {
-      data.priority = form.value.priority || 50
-      data.endpointType = form.value.endpointType || 'anthropic'
     }
 
     // Claude 官方账号优先级和订阅类型更新
@@ -5970,8 +5424,6 @@ const updateAccount = async () => {
       await accountsStore.updateGeminiAccount(props.account.id, data)
     } else if (props.account.platform === 'gemini-api') {
       await accountsStore.updateGeminiApiAccount(props.account.id, data)
-    } else if (props.account.platform === 'droid') {
-      await accountsStore.updateDroidAccount(props.account.id, data)
     } else {
       throw new Error(`不支持的平台: ${props.account.platform}`)
     }
@@ -6136,9 +5588,6 @@ const handleApiKeyRefresh = async () => {
   }
 
   const refreshers = [
-    typeof accountsStore.fetchDroidAccounts === 'function'
-      ? accountsStore.fetchDroidAccounts
-      : null,
     typeof accountsStore.fetchAllAccounts === 'function' ? accountsStore.fetchAllAccounts : null
   ].filter(Boolean)
 

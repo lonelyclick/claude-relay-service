@@ -521,15 +521,30 @@ router.post('/:accountId/test', authenticateAdmin, async (req, res) => {
     }
 
     // 确保 token 有效
-    const tokenResult = await geminiAccountService.ensureValidToken(accountId)
-    if (!tokenResult.success) {
-      return res.status(401).json({
-        error: 'Token refresh failed',
-        message: tokenResult.error
-      })
+    let accessToken
+    // 检查 token 是否过期
+    if (geminiAccountService.isTokenExpired(account)) {
+      try {
+        // token 过期，需要刷新
+        const refreshedTokens = await geminiAccountService.refreshAccountToken(accountId)
+        accessToken = refreshedTokens.access_token
+      } catch (refreshError) {
+        return res.status(401).json({
+          error: 'Token refresh failed',
+          message: refreshError.message
+        })
+      }
+    } else {
+      // token 未过期，直接使用
+      accessToken = account.accessToken
     }
 
-    const { accessToken } = tokenResult
+    if (!accessToken) {
+      return res.status(401).json({
+        error: 'No valid token',
+        message: '无法获取有效的访问令牌'
+      })
+    }
 
     // 构造测试请求
     const axios = require('axios')

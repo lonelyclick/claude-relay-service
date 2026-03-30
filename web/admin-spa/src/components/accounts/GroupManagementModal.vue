@@ -35,9 +35,7 @@
                   ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
                   : tab.key === 'gemini'
                     ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                    : tab.key === 'droid'
-                      ? 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300'
-                      : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200'
+                    : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200'
                 : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
             ]"
             @click="activeTab = tab.key"
@@ -105,7 +103,7 @@
                           ? 'Gemini'
                           : group.platform === 'openai'
                             ? 'OpenAI'
-                            : 'Droid'
+                            : group.platform
                     }}
                   </span>
                 </div>
@@ -255,10 +253,6 @@
                 <input v-model="createForm.platform" class="mr-2" type="radio" value="openai" />
                 <span class="text-sm text-gray-700 dark:text-gray-300">OpenAI</span>
               </label>
-              <label class="flex cursor-pointer items-center">
-                <input v-model="createForm.platform" class="mr-2" type="radio" value="droid" />
-                <span class="text-sm text-gray-700 dark:text-gray-300">Droid</span>
-              </label>
             </div>
           </div>
 
@@ -322,8 +316,7 @@ const platformTabs = [
   { key: 'all', label: '全部', color: 'gray' },
   { key: 'claude', label: 'Claude', color: 'purple' },
   { key: 'gemini', label: 'Gemini', color: 'blue' },
-  { key: 'openai', label: 'OpenAI', color: 'gray' },
-  { key: 'droid', label: 'Droid', color: 'cyan' }
+  { key: 'openai', label: 'OpenAI', color: 'gray' }
 ]
 
 // 各平台分组数量

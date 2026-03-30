@@ -54,16 +54,6 @@ const CLIENT_DEFINITIONS = {
     icon: '🔷',
     // Codex CLI 仅允许访问 OpenAI Responses 和 Azure 端点
     allowedPathPrefixes: ['/openai/responses', '/openai/v1/responses', '/azure/']
-  },
-
-  DROID_CLI: {
-    id: 'droid_cli',
-    name: 'Droid CLI',
-    displayName: 'Factory Droid CLI',
-    description: 'Factory Droid platform command-line interface',
-    icon: '🤖',
-    // Droid CLI 仅允许访问 Droid 端点
-    allowedPathPrefixes: ['/droid/']
   }
 }
 
@@ -71,8 +61,7 @@ const CLIENT_DEFINITIONS = {
 const CLIENT_IDS = {
   CLAUDE_CODE: 'claude_code',
   GEMINI_CLI: 'gemini_cli',
-  CODEX_CLI: 'codex_cli',
-  DROID_CLI: 'droid_cli'
+  CODEX_CLI: 'codex_cli'
 }
 
 // 获取所有客户端定义
