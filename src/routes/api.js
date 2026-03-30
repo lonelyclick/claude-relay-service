@@ -1050,9 +1050,10 @@ async function handleMessagesRequest(req, res) {
         logger.error('❌ Error in global session binding check (non-stream):', error)
       }
 
-      // 🎯 支持通过 header 强制指定账户（非流式）
-      // 格式: x-force-account: <accountType>:<accountId>
-      const forceAccountHeaderNonStream = req.headers['x-force-account']
+      // 🎯 支持通过 header 或 query 参数强制指定账户（非流式）
+      // Header 格式: x-force-account: <accountType>:<accountId>
+      // Query 格式: ?force_account=<accountType>:<accountId>
+      const forceAccountHeaderNonStream = req.headers['x-force-account'] || req.query.force_account
       if (forceAccountHeaderNonStream && typeof forceAccountHeaderNonStream === 'string') {
         const parts = forceAccountHeaderNonStream.split(':')
         if (parts.length === 2) {
@@ -1071,7 +1072,7 @@ async function handleMessagesRequest(req, res) {
               accountType: headerAccountType
             }
             logger.api(
-              `🎯 Force account header detected (non-stream): ${headerAccountType}:${headerAccountId}`
+              `🎯 Force account detected (non-stream) via ${req.headers['x-force-account'] ? 'header' : 'query'}: ${headerAccountType}:${headerAccountId}`
             )
           }
         }

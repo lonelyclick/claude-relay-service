@@ -168,51 +168,7 @@ class ClaudeConsoleRelayService {
 
       // Factory.ai 特殊处理
       if (isFactoryAi) {
-        // Factory.ai 模型名映射（4.6 系列去日期，4.5 及以下保留日期）
-        const mappedFactoryModel = this._mapModelForFactoryAi(modifiedRequestBody.model)
-        if (mappedFactoryModel !== modifiedRequestBody.model) {
-          logger.info(`🔧 Factory.ai: model mapping: ${modifiedRequestBody.model} → ${mappedFactoryModel}`)
-          modifiedRequestBody.model = mappedFactoryModel
-        }
-        // 将 system 字段转为 messages 头部，而不是直接删除（保留 system prompt 效果）
-        if (modifiedRequestBody.system) {
-          const systemContent = this._systemToText(modifiedRequestBody.system)
-          if (systemContent) {
-            const systemMessages = [
-              { role: 'user', content: `[System Instructions]\n${systemContent}` },
-              { role: 'assistant', content: 'Understood. I will follow these instructions.' }
-            ]
-            modifiedRequestBody.messages = [
-              ...systemMessages,
-              ...(modifiedRequestBody.messages || [])
-            ]
-            logger.info(`🔧 Factory.ai: converted system prompt to messages (${systemContent.length} chars)`)
-          }
-          delete modifiedRequestBody.system
-        }
-        // 移除 metadata 字段
-        delete modifiedRequestBody.metadata
-        // 移除 messages 中的 cache_control
-        if (modifiedRequestBody.messages && Array.isArray(modifiedRequestBody.messages)) {
-          modifiedRequestBody.messages = modifiedRequestBody.messages.map(msg => {
-            if (msg.content && Array.isArray(msg.content)) {
-              return {
-                ...msg,
-                content: msg.content.map(item => {
-                  const newItem = { ...item }
-                  delete newItem.cache_control
-                  return newItem
-                })
-              }
-            }
-            return msg
-          })
-        }
-        // 映射 tools 类型版本（Factory.ai 支持的版本与 Claude Code 发送的不同）
-        if (modifiedRequestBody.tools && Array.isArray(modifiedRequestBody.tools)) {
-          modifiedRequestBody.tools = this._mapToolsForFactoryAi(modifiedRequestBody.tools)
-        }
-        logger.info('🔧 Factory.ai detected: processed request body fields')
+        modifiedRequestBody = this._processFactoryAiRequestBody(modifiedRequestBody, '')
       }
 
       // 模型兼容性检查已经在调度器中完成，这里不需要再检查
@@ -726,51 +682,7 @@ class ClaudeConsoleRelayService {
 
       // Factory.ai 特殊处理
       if (isFactoryAi) {
-        // Factory.ai 模型名映射（4.6 系列去日期，4.5 及以下保留日期）
-        const mappedFactoryModel = this._mapModelForFactoryAi(modifiedRequestBody.model)
-        if (mappedFactoryModel !== modifiedRequestBody.model) {
-          logger.info(`🔧 [Stream] Factory.ai: model mapping: ${modifiedRequestBody.model} → ${mappedFactoryModel}`)
-          modifiedRequestBody.model = mappedFactoryModel
-        }
-        // 将 system 字段转为 messages 头部，而不是直接删除（保留 system prompt 效果）
-        if (modifiedRequestBody.system) {
-          const systemContent = this._systemToText(modifiedRequestBody.system)
-          if (systemContent) {
-            const systemMessages = [
-              { role: 'user', content: `[System Instructions]\n${systemContent}` },
-              { role: 'assistant', content: 'Understood. I will follow these instructions.' }
-            ]
-            modifiedRequestBody.messages = [
-              ...systemMessages,
-              ...(modifiedRequestBody.messages || [])
-            ]
-            logger.info(`🔧 [Stream] Factory.ai: converted system prompt to messages (${systemContent.length} chars)`)
-          }
-          delete modifiedRequestBody.system
-        }
-        // 移除 metadata 字段
-        delete modifiedRequestBody.metadata
-        // 移除 messages 中的 cache_control
-        if (modifiedRequestBody.messages && Array.isArray(modifiedRequestBody.messages)) {
-          modifiedRequestBody.messages = modifiedRequestBody.messages.map(msg => {
-            if (msg.content && Array.isArray(msg.content)) {
-              return {
-                ...msg,
-                content: msg.content.map(item => {
-                  const newItem = { ...item }
-                  delete newItem.cache_control
-                  return newItem
-                })
-              }
-            }
-            return msg
-          })
-        }
-        // 映射 tools 类型版本（Factory.ai 支持的版本与 Claude Code 发送的不同）
-        if (modifiedRequestBody.tools && Array.isArray(modifiedRequestBody.tools)) {
-          modifiedRequestBody.tools = this._mapToolsForFactoryAi(modifiedRequestBody.tools)
-        }
-        logger.info('🔧 [Stream] Factory.ai detected: processed request body fields')
+        modifiedRequestBody = this._processFactoryAiRequestBody(modifiedRequestBody, '[Stream] ')
       }
 
       // 模型兼容性检查已经在调度器中完成，这里不需要再检查
@@ -1599,6 +1511,79 @@ class ClaudeConsoleRelayService {
     if (mapped) {
       logger.info(`🔧 Factory.ai: mapped tools: ${JSON.stringify(tools.map(t => t.type + ':' + t.name))} → ${JSON.stringify(result.map(t => t.type + ':' + t.name))}`)
     }
+    return result
+  }
+
+  /**
+   * 统一处理 Factory.ai 请求体兼容
+   * 将分散在流式/非流式路径中的重复逻辑抽取到此方法
+   */
+  _processFactoryAiRequestBody(body, logPrefix = '') {
+    const result = { ...body }
+
+    // 1. 模型名映射（4.6 系列去日期后缀）
+    const mappedModel = this._mapModelForFactoryAi(result.model)
+    if (mappedModel !== result.model) {
+      logger.info(`🔧 ${logPrefix}Factory.ai: model mapping: ${result.model} → ${mappedModel}`)
+      result.model = mappedModel
+    }
+
+    // 2. system 字段转为 messages（Factory.ai 不支持 system 字段）
+    if (result.system) {
+      const systemContent = this._systemToText(result.system)
+      if (systemContent) {
+        const systemMessages = [
+          { role: 'user', content: `[System Instructions]\n${systemContent}` },
+          { role: 'assistant', content: 'Understood. I will follow these instructions.' }
+        ]
+        result.messages = [...systemMessages, ...(result.messages || [])]
+        logger.info(
+          `🔧 ${logPrefix}Factory.ai: converted system prompt to messages (${systemContent.length} chars)`
+        )
+      }
+      delete result.system
+    }
+
+    // 3. 移除不支持的字段
+    delete result.metadata
+
+    // 4. 移除 messages 中的 cache_control
+    if (result.messages && Array.isArray(result.messages)) {
+      result.messages = result.messages.map(msg => {
+        if (msg.content && Array.isArray(msg.content)) {
+          return {
+            ...msg,
+            content: msg.content.map(item => {
+              const newItem = { ...item }
+              delete newItem.cache_control
+              return newItem
+            })
+          }
+        }
+        return msg
+      })
+    }
+
+    // 5. 映射 tools 类型版本
+    if (result.tools && Array.isArray(result.tools)) {
+      result.tools = this._mapToolsForFactoryAi(result.tools)
+    }
+
+    // 6. thinking.budget_tokens 兼容：Factory.ai 要求最小 1024
+    if (
+      result.thinking &&
+      result.thinking.type === 'enabled' &&
+      typeof result.thinking.budget_tokens === 'number' &&
+      result.thinking.budget_tokens < 1024
+    ) {
+      const original = result.thinking.budget_tokens
+      result.thinking = { ...result.thinking, budget_tokens: 1024 }
+      logger.info(
+        `🔧 ${logPrefix}Factory.ai: thinking.budget_tokens ${original} → 1024 (minimum)`
+      )
+    }
+
+    logger.info(`🔧 ${logPrefix}Factory.ai detected: processed request body fields`)
     return result
   }
 
