@@ -1578,24 +1578,7 @@ class ClaudeConsoleRelayService {
     delete result.metadata
     delete result.context_management
 
-    // 4. 移除 messages 中的 cache_control
-    if (result.messages && Array.isArray(result.messages)) {
-      result.messages = result.messages.map(msg => {
-        if (msg.content && Array.isArray(msg.content)) {
-          return {
-            ...msg,
-            content: msg.content.map(item => {
-              const newItem = { ...item }
-              delete newItem.cache_control
-              return newItem
-            })
-          }
-        }
-        return msg
-      })
-    }
-
-    // 4.5 清理 messages 中触发 Factory.ai 安全过滤的 Claude Code 指纹文本
+    // 4. 清理 messages 中触发 Factory.ai 安全过滤的 Claude Code 指纹文本
     if (result.messages && Array.isArray(result.messages)) {
       const fingerprints = [
         // Factory.ai 检测 Claude Code 身份声明（精确匹配完整短语）
