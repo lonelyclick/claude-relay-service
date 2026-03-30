@@ -9,6 +9,7 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+!web/admin-spa/.env.cloudflare
 
 # Claude specific directories
 .claude/
