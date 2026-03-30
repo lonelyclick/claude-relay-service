@@ -1,5 +1,6 @@
 const axios = require('axios')
 const { v4: uuidv4 } = require('uuid')
+const crypto = require('crypto')
 const claudeConsoleAccountService = require('../account/claudeConsoleAccountService')
 const redis = require('../../models/redis')
 const logger = require('../../utils/logger')
@@ -17,6 +18,11 @@ const { filterForClaude } = require('../../utils/headerFilter')
 class ClaudeConsoleRelayService {
   constructor() {
     this.defaultUserAgent = 'claude-cli/2.0.52 (external, cli)'
+    // Factory.ai Droid 伪装：为每个账户维护一个持久化的 session UUID
+    // 模拟 droid CLI 的行为——一个 CLI 会话内 x-session-id 保持不变
+    // 使用 Map<accountId, { id: string, lastUsed: number }> 存储，30 分钟无活动则自动过期
+    this._factorySessionMap = new Map()
+    this._FACTORY_SESSION_TTL = 30 * 60 * 1000 // 30 分钟
   }
 
   // 🚀 转发请求到Claude Console API
@@ -288,7 +294,7 @@ class ClaudeConsoleRelayService {
             delete requestConfig.headers['anthropic-beta']
           }
         }
-        this._cleanHeadersForFactoryAi(requestConfig.headers)
+        this._cleanHeadersForFactoryAi(requestConfig.headers, accountId)
       }
 
       // 发送请求
@@ -873,7 +879,7 @@ class ClaudeConsoleRelayService {
             delete requestConfig.headers['anthropic-beta']
           }
         }
-        this._cleanHeadersForFactoryAi(requestConfig.headers)
+        this._cleanHeadersForFactoryAi(requestConfig.headers, accountId)
       }
 
       // 发送请求
@@ -1478,16 +1484,39 @@ class ClaudeConsoleRelayService {
   }
 
   /**
-   * 清理 Factory.ai 不需要的 headers（就地修改）
-   * Factory.ai 对未知 headers 敏感，可能返回 403
+   * 获取 Factory.ai 账户的 session UUID（同一账户在活跃期间保持不变）
    */
-  _cleanHeadersForFactoryAi(headers) {
+  _getFactorySessionId(accountId) {
+    const entry = this._factorySessionMap.get(accountId)
+    const now = Date.now()
+    if (entry && (now - entry.lastUsed) < this._FACTORY_SESSION_TTL) {
+      entry.lastUsed = now
+      return entry.id
+    }
+    // 新建 session
+    const id = crypto.randomUUID()
+    this._factorySessionMap.set(accountId, { id, lastUsed: now })
+    // 清理过期 entries（防止内存泄漏）
+    if (this._factorySessionMap.size > 100) {
+      for (const [key, val] of this._factorySessionMap) {
+        if ((now - val.lastUsed) >= this._FACTORY_SESSION_TTL) {
+          this._factorySessionMap.delete(key)
+        }
+      }
+    }
+    return id
+  }
+
+  /**
+   * 清理并注入 Factory.ai 伪装 headers（就地修改）
+   * 模拟 droid CLI 0.89.0 的请求 headers，确保 Factory.ai 无法区分来源
+   */
+  _cleanHeadersForFactoryAi(headers, accountId) {
+    // 1. 移除 Factory.ai 敏感的 headers
     const keysToRemove = []
     for (const key of Object.keys(headers)) {
       const lk = key.toLowerCase()
-      // 移除 x-stainless-*, anthropic-dangerous-*, sec-fetch-*, x-app, accept-language 等
       if (
-        lk.startsWith('x-stainless-') ||
         lk.startsWith('anthropic-dangerous-') ||
         lk.startsWith('sec-fetch-') ||
         lk === 'x-app' ||
@@ -1500,8 +1529,32 @@ class ClaudeConsoleRelayService {
       for (const key of keysToRemove) {
         delete headers[key]
       }
-      logger.info(`🔧 Factory.ai: removed ${keysToRemove.length} unsupported headers: ${keysToRemove.join(', ')}`)
+      logger.info(`🔧 Factory.ai: removed ${keysToRemove.length} headers: ${keysToRemove.join(', ')}`)
     }
+
+    // 2. 注入 droid CLI 伪装 headers
+    // User-Agent 强制设为 droid 格式（覆盖 account.userAgent 可能的旧值）
+    headers['User-Agent'] = 'factory-cli/0.89.0'
+    // x-client-version 是必须的，否则 Factory.ai 返回 400 "Unable to determine client version"
+    headers['x-client-version'] = '0.89.0'
+    headers['x-factory-client'] = 'cli'
+    headers['x-api-provider'] = 'anthropic'
+    headers['x-api-key'] = 'placeholder'
+    // 注入 x-session-id（同一账户的连续请求保持不变，模拟 droid CLI 会话）
+    if (accountId) {
+      headers['x-session-id'] = this._getFactorySessionId(accountId)
+    }
+    // 注入 x-assistant-message-id（每个请求独立的随机 UUID）
+    headers['x-assistant-message-id'] = crypto.randomUUID()
+    // 注入 x-stainless-* headers（droid 原生就发送这些）
+    if (!headers['x-stainless-lang']) headers['x-stainless-lang'] = 'js'
+    if (!headers['x-stainless-os']) headers['x-stainless-os'] = 'Linux'
+    if (!headers['x-stainless-arch']) headers['x-stainless-arch'] = 'x64'
+    if (!headers['x-stainless-runtime']) headers['x-stainless-runtime'] = 'node'
+    if (!headers['x-stainless-runtime-version']) headers['x-stainless-runtime-version'] = 'v24.3.0'
+    if (!headers['x-stainless-package-version']) headers['x-stainless-package-version'] = '0.70.1'
+    if (!headers['x-stainless-retry-count']) headers['x-stainless-retry-count'] = '0'
+    if (!headers['x-stainless-timeout']) headers['x-stainless-timeout'] = '600'
   }
 
   /**
@@ -1558,69 +1611,92 @@ class ClaudeConsoleRelayService {
       result.model = mappedModel
     }
 
-    // 2. system 字段转为 messages（Factory.ai 不支持 system 字段）
-    if (result.system) {
-      const systemContent = this._systemToText(result.system)
-      if (systemContent) {
-        const systemMessages = [
-          { role: 'user', content: `[System Instructions]\n${systemContent}` },
-          { role: 'assistant', content: 'Understood. I will follow these instructions.' }
-        ]
-        result.messages = [...systemMessages, ...(result.messages || [])]
-        logger.info(
-          `🔧 ${logPrefix}Factory.ai: converted system prompt to messages (${systemContent.length} chars)`
-        )
+    // 2. system 字段处理：注入 Droid 身份标识
+    // Factory.ai 要求 system 第一个 text block 必须以 Droid 身份声明开头，否则 403
+    // 策略：在 system 数组最前面插入 Droid magic string block
+    {
+      const DROID_MAGIC = 'You are Droid, an AI software engineering agent built by Factory.'
+      if (result.system) {
+        // 将 system 标准化为数组格式
+        let systemBlocks = result.system
+        if (typeof systemBlocks === 'string') {
+          systemBlocks = [{ type: 'text', text: systemBlocks }]
+        }
+        if (Array.isArray(systemBlocks)) {
+          // 检查第一个 block 是否已经以 magic 开头
+          const firstText = systemBlocks[0]?.text || ''
+          if (!firstText.startsWith(DROID_MAGIC)) {
+            systemBlocks = [{ type: 'text', text: DROID_MAGIC }, ...systemBlocks]
+            logger.info(`🔧 ${logPrefix}Factory.ai: injected Droid identity into system prompt`)
+          }
+          result.system = systemBlocks
+        }
+      } else {
+        // 没有 system 字段时不添加（不发 system 也能正常工作）
       }
-      delete result.system
     }
 
     // 3. 移除不支持的字段
     delete result.metadata
     delete result.context_management
 
-    // 4. 清理 messages 中触发 Factory.ai 安全过滤的 Claude Code 指纹文本
-    if (result.messages && Array.isArray(result.messages)) {
-      const fingerprints = [
-        // Factory.ai 检测 Claude Code 身份声明（精确匹配完整短语）
-        [/You are Claude Code, Anthropic's official CLI for Claude/g, 'You are an AI coding assistant'],
-        // Factory.ai 检测 CLAUDE.md 注入标记（括号包裹的 "private global instructions for all projects"）
-        [/\(user's private global instructions for all projects\)/g, '[user project-level config]'],
-      ]
-      let cleaned = 0
-      result.messages = result.messages.map(msg => {
-        const replaceText = (text) => {
-          if (typeof text !== 'string') return text
-          let modified = text
-          for (const [pattern, replacement] of fingerprints) {
-            if (pattern.test(modified)) {
-              modified = modified.replace(pattern, replacement)
-              cleaned++
-            }
-            // Reset regex lastIndex for global patterns
-            pattern.lastIndex = 0
-          }
-          return modified
+    // 4. 清理 system 和 messages 中触发 Factory.ai 安全过滤的 Claude Code 指纹文本
+    const fingerprints = [
+      // Factory.ai 检测 Claude Code 身份声明（精确匹配完整短语）
+      [/You are Claude Code, Anthropic's official CLI for Claude/g, 'You are an AI coding assistant'],
+      // Factory.ai 检测 CLAUDE.md 注入标记（括号包裹的 "private global instructions for all projects"）
+      [/\(user's private global instructions for all projects\)/g, '[user project-level config]'],
+    ]
+    const replaceText = (text) => {
+      if (typeof text !== 'string') return { text, changed: false }
+      let modified = text
+      let changed = false
+      for (const [pattern, replacement] of fingerprints) {
+        if (pattern.test(modified)) {
+          modified = modified.replace(pattern, replacement)
+          changed = true
         }
+        pattern.lastIndex = 0
+      }
+      return { text: modified, changed }
+    }
 
+    // 4a. 清理 system blocks
+    let cleaned = 0
+    if (result.system && Array.isArray(result.system)) {
+      result.system = result.system.map(block => {
+        if (block.type === 'text' && typeof block.text === 'string') {
+          const { text, changed } = replaceText(block.text)
+          if (changed) { cleaned++; return { ...block, text } }
+        }
+        return block
+      })
+    }
+
+    // 4b. 清理 messages
+    if (result.messages && Array.isArray(result.messages)) {
+      result.messages = result.messages.map(msg => {
         if (typeof msg.content === 'string') {
-          return { ...msg, content: replaceText(msg.content) }
+          const { text, changed } = replaceText(msg.content)
+          if (changed) { cleaned++; return { ...msg, content: text } }
+          return msg
         }
         if (Array.isArray(msg.content)) {
-          return {
-            ...msg,
-            content: msg.content.map(item => {
-              if (item.type === 'text' && typeof item.text === 'string') {
-                return { ...item, text: replaceText(item.text) }
-              }
-              return item
-            })
-          }
+          let msgChanged = false
+          const newContent = msg.content.map(item => {
+            if (item.type === 'text' && typeof item.text === 'string') {
+              const { text, changed } = replaceText(item.text)
+              if (changed) { cleaned++; msgChanged = true; return { ...item, text } }
+            }
+            return item
+          })
+          return msgChanged ? { ...msg, content: newContent } : msg
         }
         return msg
       })
-      if (cleaned > 0) {
-        logger.info(`🔧 ${logPrefix}Factory.ai: cleaned ${cleaned} Claude Code fingerprint(s) from messages`)
-      }
+    }
+    if (cleaned > 0) {
+      logger.info(`🔧 ${logPrefix}Factory.ai: cleaned ${cleaned} Claude Code fingerprint(s)`)
     }
 
     // 5. 映射 tools 类型版本
@@ -1642,19 +1718,28 @@ class ClaudeConsoleRelayService {
       )
     }
 
-    // 7. max_tokens 必须大于 thinking.budget_tokens（Factory.ai 严格检查）
-    if (
-      result.thinking &&
-      result.thinking.type === 'enabled' &&
-      typeof result.thinking.budget_tokens === 'number' &&
-      typeof result.max_tokens === 'number' &&
-      result.max_tokens <= result.thinking.budget_tokens
-    ) {
+    // 7. max_tokens 强制设为 128000（与 Droid 0.89.0 完全一致）
+    // Droid 使用 max_tokens: 128000，同时确保大于 budget_tokens
+    {
       const original = result.max_tokens
-      result.max_tokens = result.thinking.budget_tokens + 1024
-      logger.info(
-        `🔧 ${logPrefix}Factory.ai: max_tokens ${original} → ${result.max_tokens} (must be > budget_tokens ${result.thinking.budget_tokens})`
-      )
+      result.max_tokens = 128000
+      // 仍需确保 max_tokens > budget_tokens
+      if (
+        result.thinking &&
+        typeof result.thinking.budget_tokens === 'number' &&
+        result.max_tokens <= result.thinking.budget_tokens
+      ) {
+        result.max_tokens = result.thinking.budget_tokens + 1024
+      }
+      if (original !== result.max_tokens) {
+        logger.info(`🔧 ${logPrefix}Factory.ai: max_tokens ${original} → ${result.max_tokens}`)
+      }
+    }
+
+    // 8. 删除 temperature（Droid 0.89.0 不发送此字段）
+    if (result.temperature !== undefined) {
+      logger.info(`🔧 ${logPrefix}Factory.ai: removed temperature=${result.temperature} (Droid doesn't send it)`)
+      delete result.temperature
     }
 
     logger.info(`🔧 ${logPrefix}Factory.ai detected: processed request body fields`)
