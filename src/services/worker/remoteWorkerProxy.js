@@ -28,11 +28,14 @@ class RemoteWorkerProxy {
    * @returns {Promise<{ statusCode: number, headers: object, body: object|string }>}
    */
   async sendRequest(workerId, task, timeout = 600000) {
+    // 字段归一化：调用方可能传 data 或 body，Worker 端读 task.body
+    const normalizedTask = this._normalizeTask(task)
+
     const result = await workerWsServer.sendRequest(
       workerId,
       {
         type: 'http_request',
-        ...task,
+        ...normalizedTask,
         stream: false
       },
       { timeout }
@@ -46,7 +49,9 @@ class RemoteWorkerProxy {
       throw err
     }
 
-    return result
+    // 响应归一化：Worker 返回 { statusCode, headers, body }
+    // 部分调用方读 result.data，这里同时提供两个字段名
+    return this._normalizeResponse(result)
   }
 
   /**
@@ -63,6 +68,9 @@ class RemoteWorkerProxy {
    * @returns {Promise<void>}
    */
   async sendStreamRequest(workerId, task, callbacks, timeout = 600000) {
+    // 字段归一化：同 sendRequest
+    const normalizedTask = this._normalizeTask(task)
+
     return new Promise((resolve, reject) => {
       // ✅ 修复 Bug #5: 缓存 SSE 数据以提取 usage
       const sseBuffer = []
@@ -72,7 +80,7 @@ class RemoteWorkerProxy {
           workerId,
           {
             type: 'http_request',
-            ...task,
+            ...normalizedTask,
             stream: true
           },
           {
@@ -145,6 +153,40 @@ class RemoteWorkerProxy {
           reject(err)
         })
     })
+  }
+
+  /**
+   * 归一化请求 task：确保 Worker 端收到 body 字段
+   * 调用方可能传 data（axios 风格）或 body，统一为 body
+   */
+  _normalizeTask(task) {
+    if (task.body !== undefined || task.data === undefined) {
+      return task
+    }
+    // 调用方传了 data 但没传 body → 映射为 body
+    const { data, ...rest } = task
+    return { ...rest, body: data }
+  }
+
+  /**
+   * 归一化 Worker 响应：同时提供 body 和 data 字段
+   * Worker 返回 { statusCode, headers, body }
+   * 部分调用方读 result.data（如 account service）
+   */
+  _normalizeResponse(result) {
+    if (result.data === undefined && result.body !== undefined) {
+      // 解析 body：如果是 JSON 字符串则解析为对象
+      let parsed = result.body
+      if (typeof parsed === 'string') {
+        try {
+          parsed = JSON.parse(parsed)
+        } catch (_e) {
+          // 保持原始字符串
+        }
+      }
+      return { ...result, data: parsed }
+    }
+    return result
   }
 
   /**

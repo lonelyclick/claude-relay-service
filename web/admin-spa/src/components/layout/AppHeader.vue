@@ -10,7 +10,7 @@
       transform: translateX(-50%);
     "
   >
-    <div class="mx-auto max-w-[1440px] px-4 py-1.5 sm:px-6 sm:py-1.5 md:px-8 md:py-1.5">
+    <div class="mx-auto max-w-[1440px] px-4 py-1 sm:px-6 sm:py-1 md:px-8 md:py-1">
       <div class="flex flex-col items-center justify-between gap-3 sm:flex-row sm:gap-3">
         <div
           class="flex w-full items-center justify-center gap-2 sm:w-auto sm:justify-start sm:gap-3 md:gap-4"
@@ -59,7 +59,7 @@
           <!-- 用户菜单（仅管理员登录时显示） -->
           <div v-if="authStore.isAuthenticated" class="user-menu-container relative">
             <button
-              class="user-menu-button flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors duration-150 hover:shadow active:scale-95 sm:px-4 sm:py-1.5"
+              class="user-menu-button flex items-center gap-2 px-3 py-1 text-sm font-semibold text-white shadow-sm transition-colors duration-150 hover:shadow active:scale-95 sm:px-4 sm:py-1"
               @click="userMenuOpen = !userMenuOpen"
             >
               <i class="fas fa-user-circle text-sm sm:text-base" />

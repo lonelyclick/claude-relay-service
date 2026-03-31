@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen p-3 sm:p-3 md:p-4">
+  <div class="min-h-screen px-3 pb-3 sm:px-3 sm:pb-3 md:px-4 md:pb-4">
     <!-- 顶部导航 -->
     <AppHeader />
 

@@ -32,6 +32,29 @@ class WorkerRouter {
     logger.warn(`Worker ${workerId} not online`)
     return { mode: 'local', workerId: null }
   }
+
+  /**
+   * 解析 Worker 是否在线，返回 workerId 或 null
+   *
+   * 供 account service / oauthHelper 等场景使用：
+   * - Worker 在线 → 返回 workerId（string）
+   * - Worker 不在线 → 返回 null
+   *
+   * @param {string|null} workerId - 账户绑定的 workerId
+   * @returns {string|null} 在线时返回 workerId，否则 null
+   */
+  resolveWorker(workerId) {
+    if (!workerId) {
+      return null
+    }
+
+    if (workerService.isOnline(workerId)) {
+      return workerId
+    }
+
+    logger.warn(`Worker ${workerId} not online`)
+    return null
+  }
 }
 
 module.exports = new WorkerRouter()
