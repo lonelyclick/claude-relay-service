@@ -160,17 +160,15 @@ async function refreshAccessToken(refreshToken, proxy = null, workerId = null) {
 
           logger.success('✅ OpenAI token refresh successful via Worker')
         } catch (workerError) {
-          logger.error(
-            `❌ Worker OpenAI token refresh failed, falling back to local: ${workerError.message}`
-          )
-          response = null // 标记需要降级
+          logger.error(`❌ Worker OpenAI token refresh failed: ${workerError.message}`)
+          throw workerError
         }
       } else {
-        logger.warn(`⚠️  Worker ${workerId} offline, falling back to local OpenAI token refresh`)
+        throw new Error(`Worker ${workerId} is offline, cannot process OpenAI token refresh`)
       }
     }
 
-    // 本地执行（默认或降级）
+    // 本地执行（无 Worker 绑定时）
     if (!response) {
       const requestOptions = {
         method: 'POST',

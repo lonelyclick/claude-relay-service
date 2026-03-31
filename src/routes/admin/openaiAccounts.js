@@ -176,20 +176,17 @@ router.post('/exchange-code', authenticateAdmin, async (req, res) => {
 
           logger.success('OpenAI token exchange successful via Worker')
         } catch (workerError) {
-          logger.error(
-            `❌ Worker OpenAI token exchange failed, falling back to local: ${workerError.message}`
-          )
-          // 降级到本地执行
-          tokenResponse = null
+          logger.error(`❌ Worker OpenAI token exchange failed: ${workerError.message}`)
+          throw workerError
         }
       } else {
-        logger.warn(
-          `⚠️  Worker ${sessionData.workerId} offline, falling back to local OpenAI token exchange`
+        throw new Error(
+          `Worker ${sessionData.workerId} is offline, cannot process OpenAI token exchange`
         )
       }
     }
 
-    // 本地执行（默认或降级）
+    // 本地执行（无 Worker 绑定时）
     if (!tokenResponse) {
       const axiosConfig = {
         headers: {

@@ -362,7 +362,6 @@ async function exchangeCodeForTokens(
       if (resolvedWorkerId) {
         try {
           const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
-          const axios = require('axios')
 
           const tokenUrl = 'https://oauth2.googleapis.com/token'
           const tokenParams = new URLSearchParams({
@@ -405,17 +404,15 @@ async function exchangeCodeForTokens(
             expiry_date: tokens.expiry_date || Date.now() + tokens.expires_in * 1000
           }
         } catch (workerError) {
-          logger.error(
-            `❌ Worker Gemini token exchange failed, falling back to local: ${workerError.message}`
-          )
-          // 降级到本地执行
+          logger.error(`❌ Worker Gemini token exchange failed: ${workerError.message}`)
+          throw workerError
         }
       } else {
-        logger.warn(`⚠️  Worker ${workerId} offline, falling back to local Gemini token exchange`)
+        throw new Error(`Worker ${workerId} is offline, cannot process Gemini token exchange`)
       }
     }
 
-    // 本地执行（默认或降级）
+    // 本地执行（无 Worker 绑定时）
     const oAuth2Client = createOAuth2Client(redirectUri, proxyConfig, normalizedProvider)
 
     if (proxyConfig) {
@@ -473,7 +470,6 @@ async function refreshAccessToken(
       if (resolvedWorkerId) {
         try {
           const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
-          const axios = require('axios')
 
           const tokenUrl = 'https://oauth2.googleapis.com/token'
           const tokenParams = new URLSearchParams({
@@ -511,17 +507,15 @@ async function refreshAccessToken(
             expiry_date: credentials.expiry_date || Date.now() + credentials.expires_in * 1000
           }
         } catch (workerError) {
-          logger.error(
-            `❌ Worker Gemini token refresh failed, falling back to local: ${workerError.message}`
-          )
-          // 降级到本地执行
+          logger.error(`❌ Worker Gemini token refresh failed: ${workerError.message}`)
+          throw workerError
         }
       } else {
-        logger.warn(`⚠️  Worker ${workerId} offline, falling back to local Gemini token refresh`)
+        throw new Error(`Worker ${workerId} is offline, cannot process Gemini token refresh`)
       }
     }
 
-    // 本地执行（默认或降级）
+    // 本地执行（无 Worker 绑定时）
     const oAuth2Client = createOAuth2Client(null, proxyConfig, normalizedProvider)
 
     // 设置 refresh_token

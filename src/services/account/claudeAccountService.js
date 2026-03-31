@@ -349,22 +349,21 @@ class ClaudeAccountService {
 
             logger.success(`✅ Token refresh successful via Worker for account ${accountData.name}`)
           } catch (workerError) {
-            logger.error(
-              `❌ Worker token refresh failed, falling back to local: ${workerError.message}`
-            )
-            response = null // 标记需要降级
+            logger.error(`❌ Worker token refresh failed: ${workerError.message}`)
+            throw workerError
           }
         } else {
-          logger.warn(
-            `⚠️  Worker ${accountData.workerId} offline, falling back to local token refresh`
+          throw new Error(
+            `Worker ${accountData.workerId} is offline, cannot process token refresh for account ${accountData.name}`
           )
         }
       }
 
-      // 本地执行（默认或降级）
-      if (!response) {
-        const agent = this._createProxyAgent(accountData.proxy)
+      // 创建代理 agent（本地执行和 profile fetch 都需要）
+      const agent = this._createProxyAgent(accountData.proxy)
 
+      // 本地执行（无 Worker 绑定时）
+      if (!response) {
         const axiosConfig = {
           headers: {
             'Content-Type': 'application/json',
@@ -2145,19 +2144,17 @@ class ClaudeAccountService {
               `✅ OAuth usage fetch successful via Worker for account ${accountData.name}`
             )
           } catch (workerError) {
-            logger.debug(
-              `⚠️  Worker OAuth usage fetch failed, falling back to local: ${workerError.message}`
-            )
-            response = null
+            logger.error(`❌ Worker OAuth usage fetch failed: ${workerError.message}`)
+            throw workerError
           }
         } else {
-          logger.debug(
-            `⚠️  Worker ${accountData.workerId} offline, falling back to local OAuth usage fetch`
+          throw new Error(
+            `Worker ${accountData.workerId} is offline, cannot process OAuth usage fetch for account ${accountData.name}`
           )
         }
       }
 
-      // 本地执行（默认或降级）
+      // 本地执行（无 Worker 绑定时）
       if (!response) {
         const axiosConfig = {
           headers: {
@@ -2383,19 +2380,17 @@ class ClaudeAccountService {
 
             logger.success(`✅ Profile fetch successful via Worker for account ${accountData.name}`)
           } catch (workerError) {
-            logger.error(
-              `❌ Worker profile fetch failed, falling back to local: ${workerError.message}`
-            )
-            response = null
+            logger.error(`❌ Worker profile fetch failed: ${workerError.message}`)
+            throw workerError
           }
         } else {
-          logger.warn(
-            `⚠️  Worker ${accountData.workerId} offline, falling back to local profile fetch`
+          throw new Error(
+            `Worker ${accountData.workerId} is offline, cannot process profile fetch for account ${accountData.name}`
           )
         }
       }
 
-      // 本地执行（默认或降级）
+      // 本地执行（无 Worker 绑定时）
       if (!response) {
         const axiosConfig = {
           headers: {

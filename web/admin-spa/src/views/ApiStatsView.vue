@@ -11,7 +11,7 @@
         transform: translateX(-50%);
       "
     >
-      <div class="mx-auto max-w-[1440px] px-4 py-3 sm:px-6 sm:py-3 md:px-8 md:py-3">
+      <div class="mx-auto max-w-[1440px] px-4 py-1.5 sm:px-6 sm:py-1.5 md:px-8 md:py-1.5">
         <div class="flex flex-col items-center justify-between gap-3 sm:flex-row sm:gap-3">
           <LogoTitle
             :loading="oemLoading"
@@ -41,7 +41,7 @@
             <!-- 用户登录按钮 (仅在 LDAP 启用时显示) -->
             <router-link
               v-if="oemSettings.ldapEnabled"
-              class="user-login-button flex items-center gap-2 rounded-lg px-4 py-2 text-white transition-colors duration-150 md:px-5 md:py-2.5"
+              class="user-login-button flex items-center gap-2 px-3 py-1.5 text-white transition-colors duration-150 sm:px-4 sm:py-1.5"
               to="/user-login"
             >
               <i class="fas fa-user text-sm md:text-base" />
@@ -50,7 +50,7 @@
             <!-- 管理后台按钮 -->
             <router-link
               v-if="oemSettings.showAdminButton !== false"
-              class="admin-button-refined flex items-center gap-2 rounded-lg px-4 py-2 transition-colors duration-150 md:px-5 md:py-2.5"
+              class="admin-button-refined flex items-center gap-2 px-3 py-1.5 transition-colors duration-150 sm:px-4 sm:py-1.5"
               to="/dashboard"
             >
               <i class="fas fa-shield-alt text-sm md:text-base" />

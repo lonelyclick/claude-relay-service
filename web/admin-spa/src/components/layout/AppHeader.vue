@@ -10,7 +10,7 @@
       transform: translateX(-50%);
     "
   >
-    <div class="mx-auto max-w-[1440px] px-4 py-3 sm:px-6 sm:py-3 md:px-8 md:py-3">
+    <div class="mx-auto max-w-[1440px] px-4 py-1.5 sm:px-6 sm:py-1.5 md:px-8 md:py-1.5">
       <div class="flex flex-col items-center justify-between gap-3 sm:flex-row sm:gap-3">
         <div
           class="flex w-full items-center justify-center gap-2 sm:w-auto sm:justify-start sm:gap-3 md:gap-4"
@@ -31,7 +31,7 @@
                 <!-- 更新提示 -->
                 <a
                   v-if="versionInfo.hasUpdate"
-                  class="inline-flex animate-pulse items-center gap-1 rounded-full border border-green-600 bg-green-500 px-2 py-0.5 text-xs text-white transition-colors hover:bg-green-600"
+                  class="inline-flex animate-pulse items-center gap-1 border border-green-600 bg-green-500 px-2 py-0.5 text-xs text-white transition-colors hover:bg-green-600"
                   :href="versionInfo.releaseInfo?.htmlUrl || '#'"
                   target="_blank"
                   title="有新版本可用"
@@ -59,7 +59,7 @@
           <!-- 用户菜单（仅管理员登录时显示） -->
           <div v-if="authStore.isAuthenticated" class="user-menu-container relative">
             <button
-              class="user-menu-button flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors duration-150 hover:shadow active:scale-95 sm:px-4 sm:py-2.5"
+              class="user-menu-button flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors duration-150 hover:shadow active:scale-95 sm:px-4 sm:py-1.5"
               @click="userMenuOpen = !userMenuOpen"
             >
               <i class="fas fa-user-circle text-sm sm:text-base" />
@@ -73,7 +73,7 @@
             <!-- 悬浮菜单 -->
             <div
               v-if="userMenuOpen"
-              class="user-menu-dropdown absolute right-0 top-full mt-2 w-48 rounded-lg border border-gray-200 bg-white py-2 shadow-md dark:border-gray-700 dark:bg-gray-800 sm:w-56"
+              class="user-menu-dropdown absolute right-0 top-full mt-2 w-48 border border-gray-200 bg-white py-2 shadow-md dark:border-gray-700 dark:bg-gray-800 sm:w-56"
               style="z-index: 999999"
               @click.stop
             >
@@ -95,7 +95,7 @@
                     >
                   </div>
                   <a
-                    class="block w-full rounded-lg bg-green-500 px-3 py-1.5 text-center text-sm text-white transition-colors hover:bg-green-600"
+                    class="block w-full bg-green-500 px-3 py-1.5 text-center text-sm text-white transition-colors hover:bg-green-600"
                     :href="versionInfo.releaseInfo?.htmlUrl || '#'"
                     target="_blank"
                   >
@@ -114,7 +114,7 @@
                     <div
                       v-if="versionInfo.noUpdateMessage"
                       key="message"
-                      class="inline-block rounded-lg border border-green-200 bg-green-100 px-3 py-1.5 dark:border-green-800 dark:bg-green-900/30"
+                      class="inline-block border border-green-200 bg-green-100 px-3 py-1.5 dark:border-green-800 dark:bg-green-900/30"
                     >
                       <p class="text-xs font-medium text-green-700 dark:text-green-400">
                         <i class="fas fa-check-circle mr-1" />当前已是最新版本

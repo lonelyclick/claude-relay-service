@@ -2352,6 +2352,33 @@ async function handleStandardGenerateContent(req, res) {
       })
     }
 
+    // 🔌 Worker 路由检查：Standard Gemini API 在 handler 中直接发起 HTTP 请求，不支持 Worker 路由
+    if (account.workerId) {
+      const workerRouter = require('../services/worker/workerRouter')
+      const routing = workerRouter.resolve(account.workerId)
+      if (routing.mode === 'remote') {
+        logger.error(
+          `🔌 [Worker] Standard generateContent does not support Worker routing. Account ${actualAccountId} should not bind Worker for this path.`
+        )
+        return res.status(501).json({
+          error: {
+            message: 'Standard Gemini generateContent does not support Worker routing',
+            type: 'worker_not_supported'
+          }
+        })
+      }
+      // Worker 离线也不能降级到本地执行
+      logger.error(
+        `🔌 [Worker] Worker ${account.workerId} is offline, cannot process standard generateContent. Account ${actualAccountId}`
+      )
+      return res.status(503).json({
+        error: {
+          message: `Worker ${account.workerId} is offline. Standard Gemini generateContent does not support Worker routing.`,
+          type: 'worker_offline'
+        }
+      })
+    }
+
     // 解析账户的代理配置
     const proxyConfig = parseProxyConfig(account)
 
@@ -2643,6 +2670,33 @@ async function handleStandardStreamGenerateContent(req, res) {
           apiKeyId: req.apiKey?.id || 'unknown'
         }
       )
+    }
+
+    // 🔌 Worker 路由检查：Standard Gemini API 在 handler 中直接发起 HTTP 请求，不支持 Worker 路由
+    if (account.workerId) {
+      const workerRouter = require('../services/worker/workerRouter')
+      const routing = workerRouter.resolve(account.workerId)
+      if (routing.mode === 'remote') {
+        logger.error(
+          `🔌 [Worker] Standard streamGenerateContent does not support Worker routing. Account ${actualAccountId} should not bind Worker for this path.`
+        )
+        return res.status(501).json({
+          error: {
+            message: 'Standard Gemini streamGenerateContent does not support Worker routing',
+            type: 'worker_not_supported'
+          }
+        })
+      }
+      // Worker 离线也不能降级到本地执行
+      logger.error(
+        `🔌 [Worker] Worker ${account.workerId} is offline, cannot process standard streamGenerateContent. Account ${actualAccountId}`
+      )
+      return res.status(503).json({
+        error: {
+          message: `Worker ${account.workerId} is offline. Standard Gemini streamGenerateContent does not support Worker routing.`,
+          type: 'worker_offline'
+        }
+      })
     }
 
     // 创建中止控制器

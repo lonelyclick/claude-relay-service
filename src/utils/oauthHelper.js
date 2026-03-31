@@ -238,17 +238,15 @@ async function exchangeCodeForTokens(
           ext_info: extInfo
         }
       } catch (workerError) {
-        logger.error(
-          `❌ Worker OAuth token exchange failed, falling back to local: ${workerError.message}`
-        )
-        // 降级到本地执行
+        logger.error(`❌ Worker OAuth token exchange failed: ${workerError.message}`)
+        throw workerError
       }
     } else {
-      logger.warn(`⚠️  Worker ${workerId} offline, falling back to local OAuth token exchange`)
+      throw new Error(`Worker ${workerId} is offline, cannot process OAuth token exchange`)
     }
   }
 
-  // 本地执行（默认或降级）
+  // 本地执行（无 Worker 绑定时）
   const agent = createProxyAgent(proxyConfig)
 
   try {
@@ -558,17 +556,15 @@ async function exchangeSetupTokenCode(
 
         return result
       } catch (workerError) {
-        logger.error(
-          `❌ Worker Setup Token exchange failed, falling back to local: ${workerError.message}`
-        )
-        // 降级到本地执行
+        logger.error(`❌ Worker Setup Token exchange failed: ${workerError.message}`)
+        throw workerError
       }
     } else {
-      logger.warn(`⚠️  Worker ${workerId} offline, falling back to local Setup Token exchange`)
+      throw new Error(`Worker ${workerId} is offline, cannot process Setup Token exchange`)
     }
   }
 
-  // 本地执行（默认或降级）
+  // 本地执行（无 Worker 绑定时）
   const agent = createProxyAgent(proxyConfig)
 
   try {
