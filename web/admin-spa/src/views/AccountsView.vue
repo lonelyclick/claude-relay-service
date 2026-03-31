@@ -4602,7 +4602,7 @@ onUnmounted(() => {
 
 /* 防止表格内容溢出，保证横向滚动 */
 .table-container table {
-  min-width: 1400px;
+  min-width: 1000px;
   border-collapse: collapse;
   table-layout: auto;
 }
