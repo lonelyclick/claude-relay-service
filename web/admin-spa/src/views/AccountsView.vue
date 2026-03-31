@@ -361,67 +361,69 @@
                       <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
                         <div
                           v-if="account.platform === 'gemini'"
-                          class="flex items-center gap-1.5 rounded-lg border border-yellow-200 bg-gradient-to-r from-yellow-100 to-amber-100 px-2.5 py-1"
+                          class="flex items-center gap-1 rounded border border-yellow-200 bg-gradient-to-r from-yellow-100 to-amber-100 px-2 py-0.5"
                         >
-                          <i class="fas fa-robot text-xs text-yellow-700" />
-                          <span class="text-xs font-semibold text-yellow-800">Gemini</span>
-                          <span class="mx-1 h-4 w-px bg-yellow-300" />
-                          <span class="text-xs font-medium text-yellow-700">
+                          <i class="fas fa-robot text-[10px] text-yellow-700" />
+                          <span class="text-[11px] font-semibold text-yellow-800">Gemini</span>
+                          <span class="mx-0.5 h-3 w-px bg-yellow-300" />
+                          <span class="text-[11px] font-medium text-yellow-700">
                             {{ getGeminiAuthType() }}
                           </span>
                         </div>
                         <div
                           v-else-if="account.platform === 'claude-console'"
-                          class="flex items-center gap-1.5 rounded-lg border border-purple-200 bg-gradient-to-r from-purple-100 to-pink-100 px-2.5 py-1"
+                          class="flex items-center gap-1 rounded border border-purple-200 bg-gradient-to-r from-purple-100 to-pink-100 px-2 py-0.5"
                         >
-                          <i class="fas fa-terminal text-xs text-purple-700" />
-                          <span class="text-xs font-semibold text-purple-800">Console</span>
-                          <span class="mx-1 h-4 w-px bg-purple-300" />
-                          <span class="text-xs font-medium text-purple-700">API Key</span>
+                          <i class="fas fa-terminal text-[10px] text-purple-700" />
+                          <span class="text-[11px] font-semibold text-purple-800">Console</span>
+                          <span class="mx-0.5 h-3 w-px bg-purple-300" />
+                          <span class="text-[11px] font-medium text-purple-700">API Key</span>
                         </div>
                         <div
                           v-else-if="account.platform === 'bedrock'"
-                          class="flex items-center gap-1.5 rounded-lg border border-orange-200 bg-gradient-to-r from-orange-100 to-red-100 px-2.5 py-1"
+                          class="flex items-center gap-1 rounded border border-orange-200 bg-gradient-to-r from-orange-100 to-red-100 px-2 py-0.5"
                         >
-                          <i class="fab fa-aws text-xs text-orange-700" />
-                          <span class="text-xs font-semibold text-orange-800">Bedrock</span>
-                          <span class="mx-1 h-4 w-px bg-orange-300" />
-                          <span class="text-xs font-medium text-orange-700">AWS</span>
+                          <i class="fab fa-aws text-[10px] text-orange-700" />
+                          <span class="text-[11px] font-semibold text-orange-800">Bedrock</span>
+                          <span class="mx-0.5 h-3 w-px bg-orange-300" />
+                          <span class="text-[11px] font-medium text-orange-700">AWS</span>
                         </div>
                         <div
                           v-else-if="account.platform === 'openai'"
-                          class="flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-100 bg-gradient-to-r from-gray-100 to-gray-100 px-2.5 py-1"
+                          class="flex items-center gap-1 rounded border border-gray-700 bg-gray-100 bg-gradient-to-r from-gray-100 to-gray-100 px-2 py-0.5"
                         >
-                          <div class="fa-openai" />
-                          <span class="text-xs font-semibold text-gray-950">OpenAi</span>
-                          <span class="mx-1 h-4 w-px bg-gray-400" />
-                          <span class="text-xs font-medium text-gray-950">{{
+                          <div class="fa-openai text-[10px]" />
+                          <span class="text-[11px] font-semibold text-gray-950">OpenAi</span>
+                          <span class="mx-0.5 h-3 w-px bg-gray-400" />
+                          <span class="text-[11px] font-medium text-gray-950">{{
                             getOpenAIAuthType()
                           }}</span>
                         </div>
                         <div
                           v-else-if="account.platform === 'azure_openai'"
-                          class="flex items-center gap-1.5 rounded-lg border border-blue-200 bg-gradient-to-r from-blue-100 to-cyan-100 px-2.5 py-1 dark:border-blue-700 dark:from-blue-900/20 dark:to-cyan-900/20"
+                          class="flex items-center gap-1 rounded border border-blue-200 bg-gradient-to-r from-blue-100 to-cyan-100 px-2 py-0.5 dark:border-blue-700 dark:from-blue-900/20 dark:to-cyan-900/20"
                         >
-                          <i class="fab fa-microsoft text-xs text-blue-700 dark:text-blue-400" />
-                          <span class="text-xs font-semibold text-blue-800 dark:text-blue-300"
+                          <i
+                            class="fab fa-microsoft text-[10px] text-blue-700 dark:text-blue-400"
+                          />
+                          <span class="text-[11px] font-semibold text-blue-800 dark:text-blue-300"
                             >Azure OpenAI</span
                           >
-                          <span class="mx-1 h-4 w-px bg-blue-300 dark:bg-blue-600" />
-                          <span class="text-xs font-medium text-blue-700 dark:text-blue-400"
+                          <span class="mx-0.5 h-3 w-px bg-blue-300 dark:bg-blue-600" />
+                          <span class="text-[11px] font-medium text-blue-700 dark:text-blue-400"
                             >API Key</span
                           >
                         </div>
                         <div
                           v-else-if="account.platform === 'openai-responses'"
-                          class="flex items-center gap-1.5 rounded-lg border border-teal-200 bg-gradient-to-r from-teal-100 to-green-100 px-2.5 py-1 dark:border-teal-700 dark:from-teal-900/20 dark:to-green-900/20"
+                          class="flex items-center gap-1 rounded border border-teal-200 bg-gradient-to-r from-teal-100 to-green-100 px-2 py-0.5 dark:border-teal-700 dark:from-teal-900/20 dark:to-green-900/20"
                         >
-                          <i class="fas fa-server text-xs text-teal-700 dark:text-teal-400" />
-                          <span class="text-xs font-semibold text-teal-800 dark:text-teal-300"
+                          <i class="fas fa-server text-[10px] text-teal-700 dark:text-teal-400" />
+                          <span class="text-[11px] font-semibold text-teal-800 dark:text-teal-300"
                             >OpenAI-Api</span
                           >
-                          <span class="mx-1 h-4 w-px bg-teal-300 dark:bg-teal-600" />
-                          <span class="text-xs font-medium text-teal-700 dark:text-teal-400"
+                          <span class="mx-0.5 h-3 w-px bg-teal-300 dark:bg-teal-600" />
+                          <span class="text-[11px] font-medium text-teal-700 dark:text-teal-400"
                             >API Key</span
                           >
                         </div>
@@ -429,49 +431,51 @@
                           v-else-if="
                             account.platform === 'claude' || account.platform === 'claude-oauth'
                           "
-                          class="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-gradient-to-r from-indigo-100 to-blue-100 px-2.5 py-1"
+                          class="flex items-center gap-1 rounded border border-indigo-200 bg-gradient-to-r from-indigo-100 to-blue-100 px-2 py-0.5"
                         >
-                          <i class="fas fa-brain text-xs text-indigo-700" />
-                          <span class="text-xs font-semibold text-indigo-800">{{
+                          <i class="fas fa-brain text-[10px] text-indigo-700" />
+                          <span class="text-[11px] font-semibold text-indigo-800">{{
                             getClaudeAccountType(account)
                           }}</span>
-                          <span class="mx-1 h-4 w-px bg-indigo-300" />
-                          <span class="text-xs font-medium text-indigo-700">
+                          <span class="mx-0.5 h-3 w-px bg-indigo-300" />
+                          <span class="text-[11px] font-medium text-indigo-700">
                             {{ getClaudeAuthType(account) }}
                           </span>
                         </div>
                         <div
                           v-else-if="account.platform === 'ccr'"
-                          class="flex items-center gap-1.5 rounded-lg border border-teal-200 bg-gradient-to-r from-teal-100 to-emerald-100 px-2.5 py-1 dark:border-teal-700 dark:from-teal-900/20 dark:to-emerald-900/20"
+                          class="flex items-center gap-1 rounded border border-teal-200 bg-gradient-to-r from-teal-100 to-emerald-100 px-2 py-0.5 dark:border-teal-700 dark:from-teal-900/20 dark:to-emerald-900/20"
                         >
-                          <i class="fas fa-code-branch text-xs text-teal-700 dark:text-teal-400" />
-                          <span class="text-xs font-semibold text-teal-800 dark:text-teal-300"
+                          <i
+                            class="fas fa-code-branch text-[10px] text-teal-700 dark:text-teal-400"
+                          />
+                          <span class="text-[11px] font-semibold text-teal-800 dark:text-teal-300"
                             >CCR</span
                           >
-                          <span class="mx-1 h-4 w-px bg-teal-300 dark:bg-teal-600" />
-                          <span class="text-xs font-medium text-teal-700 dark:text-teal-300"
+                          <span class="mx-0.5 h-3 w-px bg-teal-300 dark:bg-teal-600" />
+                          <span class="text-[11px] font-medium text-teal-700 dark:text-teal-300"
                             >Relay</span
                           >
                         </div>
                         <div
                           v-else-if="account.platform === 'gemini-api'"
-                          class="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-gradient-to-r from-amber-100 to-yellow-100 px-2.5 py-1 dark:border-amber-700 dark:from-amber-900/20 dark:to-yellow-900/20"
+                          class="flex items-center gap-1 rounded border border-amber-200 bg-gradient-to-r from-amber-100 to-yellow-100 px-2 py-0.5 dark:border-amber-700 dark:from-amber-900/20 dark:to-yellow-900/20"
                         >
-                          <i class="fas fa-robot text-xs text-amber-700 dark:text-amber-400" />
-                          <span class="text-xs font-semibold text-amber-800 dark:text-amber-300"
+                          <i class="fas fa-robot text-[10px] text-amber-700 dark:text-amber-400" />
+                          <span class="text-[11px] font-semibold text-amber-800 dark:text-amber-300"
                             >Gemini-API</span
                           >
-                          <span class="mx-1 h-4 w-px bg-amber-300 dark:bg-amber-600" />
-                          <span class="text-xs font-medium text-amber-700 dark:text-amber-400"
+                          <span class="mx-0.5 h-3 w-px bg-amber-300 dark:bg-amber-600" />
+                          <span class="text-[11px] font-medium text-amber-700 dark:text-amber-400"
                             >API Key</span
                           >
                         </div>
                         <div
                           v-else
-                          class="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-gradient-to-r from-gray-100 to-gray-200 px-2.5 py-1"
+                          class="flex items-center gap-1 rounded border border-gray-200 bg-gradient-to-r from-gray-100 to-gray-200 px-2 py-0.5"
                         >
-                          <i class="fas fa-question text-xs text-gray-700" />
-                          <span class="text-xs font-semibold text-gray-800">未知</span>
+                          <i class="fas fa-question text-[10px] text-gray-700" />
+                          <span class="text-[11px] font-semibold text-gray-800">未知</span>
                         </div>
                         <!-- 状态徽章 -->
                         <span
