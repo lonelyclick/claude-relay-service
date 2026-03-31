@@ -552,13 +552,34 @@
                     <!-- OAuth 账户：显示三窗口 OAuth usage(无进度条) -->
                     <div v-if="isClaudeOAuth(account) && account.claudeUsage">
                       <div class="text-gray-600 dark:text-gray-400">
-                        ⏱️ 5h 剩余 {{ formatClaudeRemaining(account.claudeUsage.fiveHour) }}
+                        ⏱️ 5h
+                        <span
+                          class="font-semibold"
+                          :class="getClaudeUsageTextClass(account.claudeUsage.fiveHour)"
+                        >
+                          {{ formatClaudeUsagePercent(account.claudeUsage.fiveHour) }}
+                        </span>
+                        · 剩余 {{ formatClaudeRemaining(account.claudeUsage.fiveHour) }}
                       </div>
                       <div class="text-gray-600 dark:text-gray-400">
-                        📅 7d 剩余 {{ formatClaudeRemaining(account.claudeUsage.sevenDay) }}
+                        📅 7d
+                        <span
+                          class="font-semibold"
+                          :class="getClaudeUsageTextClass(account.claudeUsage.sevenDay)"
+                        >
+                          {{ formatClaudeUsagePercent(account.claudeUsage.sevenDay) }}
+                        </span>
+                        · 剩余 {{ formatClaudeRemaining(account.claudeUsage.sevenDay) }}
                       </div>
                       <div class="text-gray-600 dark:text-gray-400">
-                        🎯 opus 剩余 {{ formatClaudeRemaining(account.claudeUsage.sevenDayOpus) }}
+                        🎯 opus
+                        <span
+                          class="font-semibold"
+                          :class="getClaudeUsageTextClass(account.claudeUsage.sevenDayOpus)"
+                        >
+                          {{ formatClaudeUsagePercent(account.claudeUsage.sevenDayOpus) }}
+                        </span>
+                        · 剩余 {{ formatClaudeRemaining(account.claudeUsage.sevenDayOpus) }}
                       </div>
                     </div>
                     <!-- Setup Token 账户：显示会话窗口(无进度条) -->
@@ -4082,6 +4103,18 @@ const getClaudeUsageBarClass = (window) => {
     return 'bg-gradient-to-r from-yellow-500 to-orange-500'
   }
   return 'bg-gradient-to-r from-red-500 to-red-600'
+}
+
+// 获取 Claude 使用率文字颜色
+const getClaudeUsageTextClass = (window) => {
+  const util = window?.utilization || 0
+  if (util < 50) {
+    return 'text-green-600 dark:text-green-400'
+  }
+  if (util < 80) {
+    return 'text-orange-600 dark:text-orange-400'
+  }
+  return 'text-red-600 dark:text-red-400'
 }
 
 // 格式化 Claude 剩余时间

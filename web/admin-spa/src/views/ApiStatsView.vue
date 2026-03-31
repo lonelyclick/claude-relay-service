@@ -1,11 +1,8 @@
 <template>
-  <div
-    class="min-h-screen p-2 sm:p-3 md:p-4"
-    :class="isDarkMode ? 'gradient-bg-dark' : 'gradient-bg'"
-  >
+  <div class="min-h-screen bg-gray-50 p-2 dark:bg-gray-900 sm:p-3 md:p-4">
     <!-- 顶部导航 -->
     <div
-      class="glass-strong mb-4 rounded-lg p-3 shadow-md sm:mb-4 sm:rounded-lg sm:p-3 md:mb-6 md:p-4"
+      class="mb-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:mb-4 sm:rounded-lg sm:p-3 md:mb-6 md:p-4"
     >
       <div class="flex flex-col items-center justify-between gap-3 sm:gap-3 md:flex-row">
         <LogoTitle
@@ -102,7 +99,9 @@
 
       <!-- 统计数据展示区域 -->
       <div v-if="statsData" class="fade-in">
-        <div class="glass-strong rounded-lg p-3 shadow-md sm:rounded-lg sm:p-3 md:p-4">
+        <div
+          class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:rounded-lg sm:p-3 md:p-4"
+        >
           <!-- 时间范围选择器 -->
           <div
             class="mb-3 border-b border-gray-200 pb-3 dark:border-gray-700 sm:mb-4 sm:pb-4 md:mb-6 md:pb-6"
@@ -229,14 +228,18 @@
 
     <!-- 教程内容 -->
     <div v-if="currentTab === 'tutorial'" class="tab-content">
-      <div class="glass-strong rounded-lg shadow-md">
+      <div
+        class="rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800"
+      >
         <TutorialView />
       </div>
     </div>
 
     <!-- 额度卡内容（含二级 tab） -->
     <div v-if="currentTab === 'quota'" class="tab-content">
-      <div class="glass-strong rounded-lg p-4 shadow-md sm:rounded-lg sm:p-6 md:p-4">
+      <div
+        class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:rounded-lg sm:p-6 md:p-4"
+      >
         <!-- 二级 Tab -->
         <div
           class="mb-4 flex gap-2 border-b border-gray-200 pb-4 dark:border-gray-700 md:mb-6 md:pb-6"
@@ -551,9 +554,6 @@ const themeStore = useThemeStore()
 
 // 当前标签页
 const currentTab = ref('stats')
-
-// 主题相关
-const isDarkMode = computed(() => themeStore.isDarkMode)
 
 const {
   apiKey,
