@@ -147,36 +147,65 @@
       </div>
 
       <!-- 使用统计概览 -->
-      <div class="card-section">
-        <header class="section-header">
-          <i class="header-icon fas fa-chart-bar text-green-500" />
-          <h3 class="header-title">使用统计概览</h3>
-          <span class="header-tag">{{ statsPeriod === 'daily' ? '今日' : '本月' }}</span>
-        </header>
-        <div class="metric-grid">
-          <div class="metric-card">
-            <p class="metric-value text-green-600 dark:text-emerald-300">
-              {{ formatNumber(currentPeriodData.requests) }}
-            </p>
-            <p class="metric-label">{{ statsPeriod === 'daily' ? '今日' : '本月' }}请求数</p>
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:gap-4 lg:grid-cols-4">
+        <div class="stat-card">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="mb-1 text-xs font-semibold text-gray-600 dark:text-gray-400 sm:text-sm">
+                {{ statsPeriod === 'daily' ? '今日' : '本月' }}请求数
+              </p>
+              <p class="text-2xl font-bold text-gray-900 dark:text-gray-100 sm:text-3xl">
+                {{ formatNumber(currentPeriodData.requests) }}
+              </p>
+            </div>
+            <div class="stat-icon flex-shrink-0 bg-gradient-to-br from-green-500 to-green-600">
+              <i class="fas fa-paper-plane" />
+            </div>
           </div>
-          <div class="metric-card">
-            <p class="metric-value text-blue-600 dark:text-sky-300">
-              {{ formatNumber(currentPeriodData.allTokens) }}
-            </p>
-            <p class="metric-label">{{ statsPeriod === 'daily' ? '今日' : '本月' }}Token 数</p>
+        </div>
+        <div class="stat-card">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="mb-1 text-xs font-semibold text-gray-600 dark:text-gray-400 sm:text-sm">
+                {{ statsPeriod === 'daily' ? '今日' : '本月' }}Token 数
+              </p>
+              <p class="text-2xl font-bold text-gray-900 dark:text-gray-100 sm:text-3xl">
+                {{ formatNumber(currentPeriodData.allTokens) }}
+              </p>
+            </div>
+            <div class="stat-icon flex-shrink-0 bg-gradient-to-br from-blue-500 to-blue-600">
+              <i class="fas fa-cube" />
+            </div>
           </div>
-          <div class="metric-card">
-            <p class="metric-value text-purple-600 dark:text-violet-300">
-              {{ currentPeriodData.formattedCost || '$0.000000' }}
-            </p>
-            <p class="metric-label">{{ statsPeriod === 'daily' ? '今日' : '本月' }}费用</p>
+        </div>
+        <div class="stat-card">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="mb-1 text-xs font-semibold text-gray-600 dark:text-gray-400 sm:text-sm">
+                {{ statsPeriod === 'daily' ? '今日' : '本月' }}费用
+              </p>
+              <p class="text-2xl font-bold text-gray-900 dark:text-gray-100 sm:text-3xl">
+                {{ currentPeriodData.formattedCost || '$0' }}
+              </p>
+            </div>
+            <div class="stat-icon flex-shrink-0 bg-gradient-to-br from-purple-500 to-purple-600">
+              <i class="fas fa-dollar-sign" />
+            </div>
           </div>
-          <div class="metric-card">
-            <p class="metric-value text-amber-500 dark:text-amber-300">
-              {{ formatNumber(currentPeriodData.inputTokens) }}
-            </p>
-            <p class="metric-label">{{ statsPeriod === 'daily' ? '今日' : '本月' }}输入 Token</p>
+        </div>
+        <div class="stat-card">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="mb-1 text-xs font-semibold text-gray-600 dark:text-gray-400 sm:text-sm">
+                {{ statsPeriod === 'daily' ? '今日' : '本月' }}输入 Token
+              </p>
+              <p class="text-2xl font-bold text-gray-900 dark:text-gray-100 sm:text-3xl">
+                {{ formatNumber(currentPeriodData.inputTokens) }}
+              </p>
+            </div>
+            <div class="stat-icon flex-shrink-0 bg-gradient-to-br from-amber-500 to-amber-600">
+              <i class="fas fa-sign-in-alt" />
+            </div>
           </div>
         </div>
       </div>
@@ -624,32 +653,7 @@ const getCodexWindowLabel = (type) => (type === 'secondary' ? '周限' : '5h')
   color: var(--text-secondary, #cbd5e1);
 }
 
-.metric-grid {
-  @apply grid grid-cols-2 gap-3 md:gap-4;
-}
-
-.metric-card {
-  @apply rounded-lg p-4 text-center shadow-sm;
-  background: rgba(var(--primary-rgb), 0.03);
-  border: 1px solid var(--border-color);
-}
-
-:global(.dark) .metric-card {
-  background: rgba(var(--primary-rgb), 0.08);
-}
-
-.metric-value {
-  @apply text-xl font-semibold md:text-2xl;
-}
-
-.metric-label {
-  @apply mt-1 text-xs;
-  color: var(--text-secondary, #64748b);
-}
-
-:global(.dark) .metric-label {
-  color: var(--text-secondary, #cbd5e1);
-}
+/* 移除旧的 metric-card、metric-value、metric-label 样式，使用全局 stat-card */
 
 .account-card {
   @apply rounded-lg p-4 shadow-sm transition-shadow hover:shadow-md;
