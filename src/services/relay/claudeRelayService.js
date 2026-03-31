@@ -1672,6 +1672,13 @@ class ClaudeRelayService {
       }
     }
 
+    // Worker 绑定了但不在线，直接报错，不降级到本地
+    if (account?.workerId) {
+      throw new Error(
+        `Worker ${account.workerId} is offline, cannot process non-stream request for account ${accountId}`
+      )
+    }
+
     return new Promise((resolve, reject) => {
       // 支持自定义路径（如 count_tokens）
       let requestPath = url.pathname
@@ -2202,6 +2209,13 @@ class ClaudeRelayService {
           }
         },
         config.requestTimeout || 600000
+      )
+    }
+
+    // Worker 绑定了但不在线，直接报错，不降级到本地
+    if (account?.workerId) {
+      throw new Error(
+        `Worker ${account.workerId} is offline, cannot process stream request for account ${accountId}`
       )
     }
 

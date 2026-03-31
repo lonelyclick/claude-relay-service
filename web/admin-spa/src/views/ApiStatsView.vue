@@ -1,9 +1,15 @@
 <template>
   <div class="min-h-screen bg-gray-50 dark:bg-gray-900">
-    <!-- 顶部导航 - 全宽背景 -->
+    <!-- 顶部导航 - 全宽背景（突破父容器限制） -->
     <div
-      class="glass-strong mb-4 w-full shadow-md sm:mb-4 md:mb-6"
-      style="z-index: 10; position: relative"
+      class="glass-strong mb-4 shadow-md sm:mb-4 md:mb-6"
+      style="
+        z-index: 10;
+        position: relative;
+        width: 100vw;
+        margin-left: 50%;
+        transform: translateX(-50%);
+      "
     >
       <div class="mx-auto max-w-7xl px-4 py-3 sm:px-6 sm:py-3 md:px-8 md:py-4">
         <div class="flex flex-col items-center justify-between gap-3 sm:gap-3 md:flex-row">

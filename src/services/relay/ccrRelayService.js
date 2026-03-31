@@ -543,7 +543,104 @@ class CcrRelayService {
       // 创建代理agent
       const proxyAgent = ccrAccountService._createProxyAgent(account.proxy)
 
-      // 发送流式请求
+      // 🔌 Worker 路由：如果账户绑定了 Worker，流式请求也必须通过 Worker
+      if (account.workerId) {
+        const workerRouter = require('../worker/workerRouter')
+        const routing = workerRouter.resolve(account.workerId)
+
+        if (routing.mode === 'remote') {
+          const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
+          logger.info(
+            `🔌 [Worker] Routing CCR stream request to remote worker ${routing.workerId} for account ${accountId}`
+          )
+
+          // 构建请求配置（与 _makeCcrStreamRequest 中一致）
+          const cleanUrl = (account.apiUrl || '').replace(/\/$/, '')
+          const apiEndpoint = cleanUrl.endsWith('/v1/messages')
+            ? cleanUrl
+            : `${cleanUrl}/v1/messages`
+
+          const filteredHeaders = this._filterClientHeaders(clientHeaders)
+          const userAgent =
+            account.userAgent ||
+            clientHeaders?.['user-agent'] ||
+            clientHeaders?.['User-Agent'] ||
+            this.defaultUserAgent
+
+          const requestHeaders = {
+            'Content-Type': 'application/json',
+            'anthropic-version': '2023-06-01',
+            'User-Agent': userAgent,
+            ...filteredHeaders
+          }
+
+          // 根据 API Key 格式选择认证方式
+          if (account.apiKey && account.apiKey.startsWith('sk-ant-')) {
+            requestHeaders['x-api-key'] = account.apiKey
+          } else {
+            requestHeaders['Authorization'] = `Bearer ${account.apiKey}`
+          }
+
+          await remoteWorkerProxy.sendStreamRequest(
+            routing.workerId,
+            {
+              url: apiEndpoint,
+              method: 'POST',
+              headers: requestHeaders,
+              data: modifiedRequestBody,
+              proxy: account.proxy || null,
+              timeout: config.requestTimeout || 600000
+            },
+            {
+              onData: (chunk) => {
+                if (responseStream && !responseStream.destroyed) {
+                  responseStream.write(chunk)
+                }
+              },
+              onStatus: async (statusCode, headers) => {
+                if (statusCode !== 200) {
+                  logger.warn(
+                    `🔌 [Worker] CCR stream response status: ${statusCode} from worker ${routing.workerId}`
+                  )
+                }
+                // 释放队列锁
+                if (queueLockAcquired && queueRequestId && accountId) {
+                  try {
+                    await userMessageQueueService.releaseQueueLock(accountId, queueRequestId)
+                    queueLockAcquired = false
+                  } catch (releaseError) {
+                    logger.error(
+                      `❌ Failed to release queue lock for CCR stream:`,
+                      releaseError.message
+                    )
+                  }
+                }
+              },
+              onError: (err) => {
+                logger.error(
+                  `🔌 [Worker] CCR stream error from worker ${routing.workerId}: ${err.message}`
+                )
+                if (responseStream && !responseStream.destroyed) {
+                  responseStream.end()
+                }
+              }
+            }
+          )
+
+          if (responseStream && !responseStream.destroyed) {
+            responseStream.end()
+          }
+          await this._updateLastUsedTime(accountId)
+          return
+        }
+
+        // Worker 离线，直接报错
+        throw new Error(
+          `Worker ${account.workerId} is offline, cannot process CCR stream request`
+        )
+      }
+
+      // 本地执行（无 Worker 绑定时）— 发送流式请求
       await this._makeCcrStreamRequest(
         modifiedRequestBody,
         account,
