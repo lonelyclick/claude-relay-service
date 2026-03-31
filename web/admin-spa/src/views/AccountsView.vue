@@ -535,6 +535,7 @@
                   <div class="text-xs">
                     <BalanceDisplay
                       :account-id="account.id"
+                      :hide-refresh="true"
                       :initial-balance="account.balanceInfo"
                       :platform="account.platform"
                       :query-mode="
@@ -617,6 +618,25 @@
                 >
                   <!-- 宽度足够时显示所有按钮 -->
                   <div v-if="!needsHorizontalScroll" class="flex items-center gap-1">
+                    <button
+                      :class="[
+                        'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                        account.isRefreshingBalance
+                          ? 'cursor-not-allowed bg-gray-100 text-gray-400'
+                          : 'bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/40 dark:text-purple-300 dark:hover:bg-purple-800/50'
+                      ]"
+                      :disabled="account.isRefreshingBalance"
+                      :title="account.isRefreshingBalance ? '刷新中...' : '刷新余额'"
+                      @click="refreshSingleBalance(account)"
+                    >
+                      <i
+                        :class="[
+                          'fas fa-sync-alt',
+                          account.isRefreshingBalance ? 'animate-spin' : ''
+                        ]"
+                      />
+                      <span class="ml-1">刷新</span>
+                    </button>
                     <button
                       v-if="showResetButton(account)"
                       :class="[
@@ -1940,6 +1960,15 @@ const showResetButton = (account) => {
 const getAccountActions = (account) => {
   const actions = []
 
+  // 刷新余额
+  actions.push({
+    key: 'refresh-balance',
+    label: '刷新余额',
+    icon: 'fa-sync-alt',
+    color: 'purple',
+    handler: () => refreshSingleBalance(account)
+  })
+
   // 重置状态（仅在需要时显示）
   if (showResetButton(account)) {
     actions.push({
@@ -2420,6 +2449,40 @@ const handleBalanceRefreshed = (accountId, balanceInfo) => {
 const handleBalanceError = (_accountId, error) => {
   const message = error?.message || '余额查询失败'
   showToast(message, 'error')
+}
+
+// 刷新单个账户余额
+const refreshSingleBalance = async (account) => {
+  if (!account?.id || !account?.platform) return
+  if (account.isRefreshingBalance) return
+
+  const balanceInfo = account.balanceInfo
+  const canRefresh =
+    balanceInfo?.scriptEnabled !== false &&
+    (balanceInfo?.scriptConfigured ||
+      (account.platform === 'gemini' && account.oauthProvider === 'antigravity'))
+
+  if (!canRefresh) {
+    showToast('此账户未配置余额脚本，无法刷新', 'warning')
+    return
+  }
+
+  account.isRefreshingBalance = true
+  try {
+    const response = await httpApis.refreshAccountBalanceApi(account.id, {
+      platform: account.platform
+    })
+    if (response?.success && response.data) {
+      handleBalanceRefreshed(account.id, response.data)
+      showToast('余额刷新成功', 'success')
+    } else {
+      showToast(response?.error || '余额刷新失败', 'error')
+    }
+  } catch (error) {
+    showToast(error?.message || '余额刷新失败', 'error')
+  } finally {
+    account.isRefreshingBalance = false
+  }
 }
 
 // 批量刷新当前页余额（触发查询）
