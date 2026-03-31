@@ -1139,7 +1139,7 @@ watch(apiKey, (newValue) => {
   border-radius: 9999px;
   font-weight: 500;
   font-size: 0.875rem;
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(75, 85, 99, 0.9);
   background: transparent;
   border: none;
   cursor: pointer;
@@ -1154,7 +1154,7 @@ watch(apiKey, (newValue) => {
 
 /* 暗夜模式下的Tab按钮基础样式 */
 :global(html.dark) .tab-pill-button {
-  color: rgba(209, 213, 219, 0.8);
+  color: rgba(209, 213, 219, 0.9);
 }
 
 @media (min-width: 768px) {
@@ -1165,13 +1165,13 @@ watch(apiKey, (newValue) => {
 }
 
 .tab-pill-button:hover {
-  color: white;
-  background: rgba(255, 255, 255, 0.1);
+  color: rgba(31, 41, 55, 1);
+  background: rgba(229, 231, 235, 0.6);
 }
 
 :global(html.dark) .tab-pill-button:hover {
   color: #f3f4f6;
-  background: rgba(100, 116, 139, 0.2);
+  background: rgba(100, 116, 139, 0.3);
 }
 
 .tab-pill-button.active {
