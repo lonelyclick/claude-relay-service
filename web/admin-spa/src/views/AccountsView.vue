@@ -527,11 +527,7 @@
                   </div>
                 </td>
                 <td class="min-w-[280px] px-3 py-4">
-                  <!-- 使用统计列 -->
-                </td>
-
-                <td class="min-w-[280px] px-3 py-4">
-                  <!-- 余额/配额信息 -->
+                  <!-- 使用统计列：余额/配额信息 -->
                   <div class="text-xs">
                     <BalanceDisplay
                       :account-id="account.id"
