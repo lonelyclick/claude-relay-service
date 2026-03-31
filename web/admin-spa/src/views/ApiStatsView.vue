@@ -2,7 +2,8 @@
   <div class="min-h-screen bg-gray-50 p-2 dark:bg-gray-900 sm:p-3 md:p-4">
     <!-- 顶部导航 -->
     <div
-      class="mb-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:mb-4 sm:rounded-lg sm:p-3 md:mb-6 md:p-4"
+      class="glass-strong mb-4 rounded-lg p-3 shadow-md sm:mb-4 sm:rounded-lg sm:p-3 md:mb-6 md:rounded-lg md:p-4"
+      style="z-index: 10; position: relative"
     >
       <div class="flex flex-col items-center justify-between gap-3 sm:gap-3 md:flex-row">
         <LogoTitle
@@ -16,6 +17,7 @@
                 : '使用教程'
           "
           :title="oemSettings.siteName"
+          title-class="text-white dark:text-gray-100"
         />
         <div class="flex items-center gap-2 md:gap-4">
           <!-- 主题切换按钮 -->
