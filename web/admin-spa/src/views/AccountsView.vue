@@ -105,7 +105,7 @@
             <div class="relative">
               <el-tooltip content="查看账户统计汇总" effect="dark" placement="bottom">
                 <button
-                  class="group relative flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:shadow-md dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
+                  class="group relative flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:shadow-md dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
                   @click="showAccountStatsModal = true"
                 >
                   <div
@@ -125,7 +125,7 @@
                 placement="bottom"
               >
                 <button
-                  class="group relative flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
+                  class="group relative flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
                   :disabled="accountsLoading"
                   @click.ctrl.exact="loadAccounts(true)"
                   @click.exact="loadAccounts(false)"
@@ -149,7 +149,7 @@
             <div class="relative">
               <el-tooltip :content="refreshBalanceTooltip" effect="dark" placement="bottom">
                 <button
-                  class="group relative flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
+                  class="group relative flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
                   :disabled="accountsLoading || refreshingBalances || !canRefreshVisibleBalances"
                   @click="refreshVisibleBalances"
                 >
@@ -169,7 +169,7 @@
 
             <!-- 选择/取消选择按钮 -->
             <button
-              class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:bg-gray-50 hover:shadow-md dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              class="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:bg-gray-50 hover:shadow-md dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
               @click="toggleSelectionMode"
             >
               <i :class="showCheckboxes ? 'fas fa-times' : 'fas fa-check-square'"></i>
@@ -180,7 +180,7 @@
             <div class="relative">
               <el-tooltip content="管理账户分组" effect="dark" placement="bottom">
                 <button
-                  class="group relative flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:shadow-md dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
+                  class="group relative flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-colors duration-200 hover:border-gray-300 hover:shadow-md dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-gray-500 sm:w-auto"
                   @click="showGroupManagementModal = true"
                 >
                   <div
@@ -195,7 +195,7 @@
             <!-- 批量删除按钮 -->
             <button
               v-if="selectedAccounts.length > 0"
-              class="group relative flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 shadow-sm transition-colors duration-200 hover:border-red-300 hover:bg-red-100 hover:shadow-md dark:border-red-700 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/50 sm:w-auto"
+              class="group relative flex items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 shadow-sm transition-colors duration-200 hover:border-red-300 hover:bg-red-100 hover:shadow-md dark:border-red-700 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/50 sm:w-auto"
               @click="batchDeleteAccounts"
             >
               <div
@@ -207,7 +207,7 @@
 
             <!-- 添加账户按钮 -->
             <button
-              class="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-green-500 to-green-600 px-5 py-2.5 text-sm font-medium text-white shadow-md transition-colors duration-200 hover:from-green-600 hover:to-green-700 hover:shadow-md sm:w-auto"
+              class="flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-green-500 to-green-600 px-3 py-1.5 text-xs font-medium text-white shadow-md transition-colors duration-200 hover:from-green-600 hover:to-green-700 hover:shadow-md sm:w-auto"
               @click.stop="openCreateAccountModal"
             >
               <i class="fas fa-plus"></i>
@@ -255,11 +255,11 @@
                   </div>
                 </th>
                 <th
-                  class="name-column sticky z-20 min-w-[180px] cursor-pointer px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-600"
+                  class="name-column sticky z-20 min-w-[200px] cursor-pointer px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-600"
                   :class="shouldShowCheckboxes ? 'left-[50px]' : 'left-0'"
                   @click="sortAccounts('name')"
                 >
-                  名称
+                  账户信息
                   <i
                     v-if="accountsSortBy === 'name'"
                     :class="[
@@ -272,24 +272,9 @@
                 </th>
                 <th
                   class="min-w-[220px] cursor-pointer px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-600"
-                  @click="sortAccounts('platform')"
-                >
-                  平台/类型
-                  <i
-                    v-if="accountsSortBy === 'platform'"
-                    :class="[
-                      'fas',
-                      accountsSortOrder === 'asc' ? 'fa-sort-up' : 'fa-sort-down',
-                      'ml-1'
-                    ]"
-                  />
-                  <i v-else class="fas fa-sort ml-1 text-gray-400" />
-                </th>
-                <th
-                  class="w-[120px] min-w-[180px] max-w-[200px] cursor-pointer px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-600"
                   @click="sortAccounts('status')"
                 >
-                  状态
+                  状态信息
                   <i
                     v-if="accountsSortBy === 'status'"
                     :class="[
@@ -301,134 +286,9 @@
                   <i v-else class="fas fa-sort ml-1 text-gray-400" />
                 </th>
                 <th
-                  class="min-w-[150px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
+                  class="min-w-[280px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
                 >
-                  今日使用
-                </th>
-                <th
-                  class="min-w-[220px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
-                >
-                  余额/配额
-                </th>
-                <th
-                  class="min-w-[210px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
-                >
-                  <div class="flex items-center gap-2">
-                    <span>会话窗口</span>
-                    <el-tooltip placement="top">
-                      <template #content>
-                        <div
-                          class="w-[260px] space-y-3 text-xs leading-relaxed text-white dark:text-gray-800"
-                        >
-                          <div class="space-y-2">
-                            <div class="text-sm font-semibold text-white dark:text-gray-900">
-                              Claude 系列
-                            </div>
-                            <div class="text-gray-200 dark:text-gray-600">
-                              会话窗口进度表示 5 小时窗口的时间推移，颜色提示当前调度状态。
-                            </div>
-                            <div class="space-y-1 pt-1 text-gray-200 dark:text-gray-600">
-                              <div class="flex items-center gap-2">
-                                <div
-                                  class="h-2 w-16 rounded bg-gradient-to-r from-blue-500 to-indigo-600"
-                                ></div>
-                                <span class="font-medium text-white dark:text-gray-900"
-                                  >正常：请求正常处理</span
-                                >
-                              </div>
-                              <div class="flex items-center gap-2">
-                                <div
-                                  class="h-2 w-16 rounded bg-gradient-to-r from-yellow-500 to-orange-500"
-                                ></div>
-                                <span class="font-medium text-white dark:text-gray-900"
-                                  >警告：接近限制</span
-                                >
-                              </div>
-                              <div class="flex items-center gap-2">
-                                <div
-                                  class="h-2 w-16 rounded bg-gradient-to-r from-red-500 to-red-600"
-                                ></div>
-                                <span class="font-medium text-white dark:text-gray-900"
-                                  >拒绝：达到速率限制</span
-                                >
-                              </div>
-                            </div>
-                          </div>
-                          <div class="h-px bg-gray-200 dark:bg-gray-600/50"></div>
-                          <div class="space-y-2">
-                            <div class="text-sm font-semibold text-white dark:text-gray-900">
-                              OpenAI
-                            </div>
-                            <div class="text-gray-200 dark:text-gray-600">
-                              进度条分别展示 5h 与周限窗口的额度使用比例，颜色含义与上方保持一致。
-                            </div>
-                            <div class="space-y-1 text-gray-200 dark:text-gray-600">
-                              <div class="flex items-start gap-2">
-                                <i class="fas fa-clock mt-[2px] text-[10px] text-blue-500"></i>
-                                <span class="font-medium text-white dark:text-gray-900"
-                                  >5h 窗口：5小时使用量进度，到达重置时间后会自动归零。</span
-                                >
-                              </div>
-                              <div class="flex items-start gap-2">
-                                <i class="fas fa-history mt-[2px] text-[10px] text-emerald-500"></i>
-                                <span class="font-medium text-white dark:text-gray-900"
-                                  >周限窗口：7天使用量进度，重置时同样回到 0%。</span
-                                >
-                              </div>
-                              <div class="flex items-start gap-2">
-                                <i
-                                  class="fas fa-info-circle mt-[2px] text-[10px] text-indigo-500"
-                                ></i>
-                                <span class="font-medium text-white dark:text-gray-900"
-                                  >当"重置剩余"为 0 时，进度条与百分比会同步清零。</span
-                                >
-                              </div>
-                            </div>
-                          </div>
-                          <div class="h-px bg-gray-200 dark:bg-gray-600/50"></div>
-                          <div class="space-y-2">
-                            <div class="text-sm font-semibold text-white dark:text-gray-900">
-                              Claude OAuth 账户
-                            </div>
-                            <div class="text-gray-200 dark:text-gray-600">
-                              展示三个窗口的使用率（utilization百分比），颜色含义同上。
-                            </div>
-                            <div class="space-y-1 text-gray-200 dark:text-gray-600">
-                              <div class="flex items-start gap-2">
-                                <i class="fas fa-clock mt-[2px] text-[10px] text-indigo-500"></i>
-                                <span class="font-medium text-white dark:text-gray-900"
-                                  >5h 窗口：5小时滑动窗口的使用率。</span
-                                >
-                              </div>
-                              <div class="flex items-start gap-2">
-                                <i
-                                  class="fas fa-calendar-alt mt-[2px] text-[10px] text-emerald-500"
-                                ></i>
-                                <span class="font-medium text-white dark:text-gray-900"
-                                  >7d 窗口：7天总限额的使用率。</span
-                                >
-                              </div>
-                              <div class="flex items-start gap-2">
-                                <i class="fas fa-gem mt-[2px] text-[10px] text-purple-500"></i>
-                                <span class="font-medium text-white dark:text-gray-900"
-                                  >Sonnet窗口：7天Sonnet模型专用限额。</span
-                                >
-                              </div>
-                              <div class="flex items-start gap-2">
-                                <i class="fas fa-sync-alt mt-[2px] text-[10px] text-blue-500"></i>
-                                <span class="font-medium text-white dark:text-gray-900"
-                                  >到达重置时间后自动归零。</span
-                                >
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </template>
-                      <i
-                        class="fas fa-question-circle cursor-help text-xs text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-400"
-                      />
-                    </el-tooltip>
-                  </div>
+                  使用统计
                 </th>
                 <th
                   class="min-w-[80px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
