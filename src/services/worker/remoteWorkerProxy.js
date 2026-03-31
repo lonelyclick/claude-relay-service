@@ -28,11 +28,15 @@ class RemoteWorkerProxy {
    * @returns {Promise<{ statusCode: number, headers: object, body: object|string }>}
    */
   async sendRequest(workerId, task, timeout = 600000) {
-    const result = await workerWsServer.sendRequest(workerId, {
-      type: 'http_request',
-      ...task,
-      stream: false
-    }, { timeout })
+    const result = await workerWsServer.sendRequest(
+      workerId,
+      {
+        type: 'http_request',
+        ...task,
+        stream: false
+      },
+      { timeout }
+    )
 
     if (result.error) {
       const err = new Error(result.error)
@@ -60,56 +64,131 @@ class RemoteWorkerProxy {
    */
   async sendStreamRequest(workerId, task, callbacks, timeout = 600000) {
     return new Promise((resolve, reject) => {
-      workerWsServer.sendRequest(workerId, {
-        type: 'http_request',
-        ...task,
-        stream: true
-      }, {
-        timeout,
+      // ✅ 修复 Bug #5: 缓存 SSE 数据以提取 usage
+      const sseBuffer = []
 
-        onStreamStart: (data) => {
-          // data: { statusCode, headers }
-          try {
-            if (callbacks.onResponseStart) {
-              callbacks.onResponseStart(data.statusCode, data.headers)
-            }
-          } catch (err) {
-            logger.warn(`[Worker] onResponseStart callback error: ${err.message}`)
-          }
-        },
+      workerWsServer
+        .sendRequest(
+          workerId,
+          {
+            type: 'http_request',
+            ...task,
+            stream: true
+          },
+          {
+            timeout,
 
-        onStreamData: (data) => {
-          // data: { chunk } — base64 编码的二进制数据或纯文本
-          try {
-            if (callbacks.onData) {
-              const chunk = data.encoding === 'base64'
-                ? Buffer.from(data.chunk, 'base64')
-                : data.chunk
-              callbacks.onData(chunk)
-            }
-          } catch (err) {
-            logger.warn(`[Worker] onData callback error: ${err.message}`)
-          }
-        },
+            onStreamStart: (data) => {
+              // data: { statusCode, headers }
+              try {
+                if (callbacks.onResponseStart) {
+                  callbacks.onResponseStart(data.statusCode, data.headers)
+                }
+              } catch (err) {
+                logger.warn(`[Worker] onResponseStart callback error: ${err.message}`)
+              }
+            },
 
-        onStreamEnd: (data) => {
-          // data: { summary }（可能包含 usage 数据等）
-          try {
-            if (callbacks.onEnd) {
-              callbacks.onEnd(data)
+            onStreamData: (data) => {
+              // data: { chunk } — base64 编码的二进制数据或纯文本
+              try {
+                const chunk =
+                  data.encoding === 'base64' ? Buffer.from(data.chunk, 'base64') : data.chunk
+
+                // ✅ 缓存 SSE 数据用于后续 usage 提取
+                const chunkStr = chunk.toString('utf8')
+                sseBuffer.push(chunkStr)
+
+                if (callbacks.onData) {
+                  callbacks.onData(chunk)
+                }
+              } catch (err) {
+                logger.warn(`[Worker] onData callback error: ${err.message}`)
+              }
+            },
+
+            onStreamEnd: (data) => {
+              // ✅ 修复 Bug #5: 从缓存的 SSE 数据中提取 usage
+              // Worker 发送的 data 为空对象，我们需要自己解析
+              try {
+                const sseData = sseBuffer.join('')
+                const usage = this._extractUsageFromSSE(sseData)
+
+                // 将提取的 usage 合并到 summary 中
+                const summary = { ...data, usage }
+
+                if (callbacks.onEnd) {
+                  callbacks.onEnd(summary)
+                }
+
+                // 如果提取到 usage，记录日志
+                if (usage) {
+                  logger.info(
+                    `📊 [Worker] Extracted usage from SSE: input=${usage.input_tokens}, output=${usage.output_tokens}`
+                  )
+                } else {
+                  logger.warn(`⚠️  [Worker] Could not extract usage from SSE stream`)
+                }
+
+                resolve(summary)
+              } catch (err) {
+                logger.warn(`[Worker] onEnd callback error: ${err.message}`)
+                resolve(data)
+              }
             }
-          } catch (err) {
-            logger.warn(`[Worker] onEnd callback error: ${err.message}`)
           }
-          resolve(data)
-        }
-      }).catch((err) => {
-        if (callbacks.onError) {
-          callbacks.onError(err)
-        }
-        reject(err)
-      })
+        )
+        .catch((err) => {
+          if (callbacks.onError) {
+            callbacks.onError(err)
+          }
+          reject(err)
+        })
     })
+  }
+
+  /**
+   * 从 SSE 流数据中提取 usage 信息
+   * Anthropic API 的 usage 数据在 message_delta 事件中
+   *
+   * @param {string} sseData - 完整的 SSE 数据
+   * @returns {object|null} - { input_tokens, output_tokens, ... } 或 null
+   */
+  _extractUsageFromSSE(sseData) {
+    try {
+      const lines = sseData.split('\n')
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const jsonStr = line.slice(6).trim()
+            if (jsonStr === '[DONE]' || !jsonStr) {
+              continue
+            }
+
+            const eventData = JSON.parse(jsonStr)
+
+            // Anthropic API 格式：message_delta 事件包含 usage
+            if (eventData.type === 'message_delta' && eventData.usage) {
+              return eventData.usage
+            }
+
+            // 也检查 delta.usage（某些格式）
+            if (eventData.type === 'message_delta' && eventData.delta?.usage) {
+              return eventData.delta.usage
+            }
+          } catch (e) {
+            // 跳过无法解析的行
+            continue
+          }
+        }
+      }
+
+      return null
+    } catch (err) {
+      logger.error(`Failed to extract usage from SSE: ${err.message}`)
+      return null
+    }
   }
 }
 

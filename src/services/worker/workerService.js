@@ -167,9 +167,26 @@ class WorkerService {
    * Worker 上线
    */
   registerOnline(workerId, ws, ip) {
-    // 如果已有连接，先关闭旧的
+    // 如果已有连接，先清理旧连接的 pending 请求，再关闭旧连接
     const existing = this.onlineWorkers.get(workerId)
     if (existing && existing.ws !== ws) {
+      logger.warn(
+        `⚠️  Worker ${workerId} reconnecting, cleaning up ${existing.pendingRequests.size} pending requests from old connection`
+      )
+
+      // ✅ 修复 Bug #1: 先清理旧 pendingRequests，再关闭连接
+      // 确保 close 事件触发时不会尝试清理已经被新连接覆盖的 Map entry
+      for (const [reqId, pending] of existing.pendingRequests) {
+        clearTimeout(pending.timeout)
+        try {
+          pending.reject(new Error('Worker replaced by new connection'))
+        } catch (err) {
+          logger.debug(`Pending request ${reqId} reject failed: ${err.message}`)
+        }
+      }
+      existing.pendingRequests.clear()
+
+      // 然后关闭旧 WebSocket（此时 close 事件触发时 pendingRequests 已清空）
       try {
         existing.ws.close(4001, 'Replaced by new connection')
       } catch (_err) {
@@ -177,6 +194,7 @@ class WorkerService {
       }
     }
 
+    // 现在可以安全覆盖 Map entry
     this.onlineWorkers.set(workerId, {
       ws,
       ip,
