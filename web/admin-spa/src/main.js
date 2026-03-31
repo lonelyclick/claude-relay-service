@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
+import { MotionPlugin } from '@vueuse/motion'
 import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
 import './assets/fonts/inter/inter.css'
@@ -25,6 +26,9 @@ app.use(router)
 app.use(ElementPlus, {
   locale: zhCn
 })
+
+// 使用 Motion 动画插件
+app.use(MotionPlugin)
 
 // 设置axios拦截器
 const userStore = useUserStore()
