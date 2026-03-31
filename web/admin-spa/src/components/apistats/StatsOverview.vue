@@ -147,7 +147,7 @@
       </div>
 
       <!-- 使用统计概览 -->
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:gap-4 lg:grid-cols-4">
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:gap-4">
         <div class="stat-card">
           <div class="flex items-center justify-between">
             <div>
