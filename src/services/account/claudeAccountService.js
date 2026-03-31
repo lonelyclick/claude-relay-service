@@ -306,67 +306,83 @@ class ClaudeAccountService {
       logRefreshStart(accountId, accountData.name, 'claude', 'manual_refresh')
       logger.info(`🔄 Starting token refresh for account: ${accountData.name} (${accountId})`)
 
-      // 创建代理agent
-      const agent = this._createProxyAgent(accountData.proxy)
+      let response
 
-      const axiosConfig = {
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json, text/plain, */*',
-          'User-Agent': 'claude-cli/1.0.56 (external, cli)',
-          'Accept-Language': 'en-US,en;q=0.9',
-          Referer: 'https://claude.ai/',
-          Origin: 'https://claude.ai'
-        },
-        timeout: 30000
-      }
-
-      if (agent) {
-        axiosConfig.httpAgent = agent
-        axiosConfig.httpsAgent = agent
-        axiosConfig.proxy = false
-      }
-
-      // 🔌 Worker 路由
-      let response = null
+      // Worker 路由支持
       if (accountData.workerId) {
+        logger.info(
+          `🔀 Routing token refresh through Worker: ${accountData.workerId} for account ${accountData.name}`
+        )
+
         const workerRouter = require('../worker/workerRouter')
-        const routing = workerRouter.resolve(accountData.workerId)
+        const resolvedWorkerId = await workerRouter.resolveWorker(accountData.workerId)
 
-        if (routing.mode === 'remote') {
-          const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
-          logger.info(`🔌 [Worker] Routing token refresh through Worker: ${routing.workerId}`)
-
+        if (resolvedWorkerId) {
           try {
-            const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
-              url: this.claudeApiUrl,
+            const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
+
+            const taskConfig = {
               method: 'POST',
-              headers: axiosConfig.headers,
+              url: this.claudeApiUrl,
+              headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json, text/plain, */*',
+                'User-Agent': 'claude-cli/1.0.56 (external, cli)',
+                'Accept-Language': 'en-US,en;q=0.9',
+                Referer: 'https://claude.ai/',
+                Origin: 'https://claude.ai'
+              },
               data: {
                 grant_type: 'refresh_token',
                 refresh_token: refreshToken,
                 client_id: this.claudeOauthClientId
               },
-              proxy: accountData.proxy || null,
-              timeout: 30000
-            })
-
-            response = {
-              status: workerResponse.statusCode,
-              data: workerResponse.body,
-              headers: workerResponse.headers || {}
+              timeout: 30000,
+              proxy: accountData.proxy || null
             }
+
+            response = await remoteWorkerProxy.sendRequest(resolvedWorkerId, taskConfig)
+
+            if (!response || !response.data) {
+              throw new Error('Worker returned empty response')
+            }
+
+            logger.success(`✅ Token refresh successful via Worker for account ${accountData.name}`)
           } catch (workerError) {
-            logger.error(`🔌 [Worker] Token refresh failed: ${workerError.message}`)
-            throw workerError
+            logger.error(
+              `❌ Worker token refresh failed, falling back to local: ${workerError.message}`
+            )
+            response = null // 标记需要降级
           }
         } else {
-          throw new Error(`Worker ${accountData.workerId} is offline, cannot refresh token`)
+          logger.warn(
+            `⚠️  Worker ${accountData.workerId} offline, falling back to local token refresh`
+          )
         }
       }
 
-      // 本地执行（无 Worker 绑定时）
+      // 本地执行（默认或降级）
       if (!response) {
+        const agent = this._createProxyAgent(accountData.proxy)
+
+        const axiosConfig = {
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json, text/plain, */*',
+            'User-Agent': 'claude-cli/1.0.56 (external, cli)',
+            'Accept-Language': 'en-US,en;q=0.9',
+            Referer: 'https://claude.ai/',
+            Origin: 'https://claude.ai'
+          },
+          timeout: 30000
+        }
+
+        if (agent) {
+          axiosConfig.httpAgent = agent
+          axiosConfig.httpsAgent = agent
+          axiosConfig.proxy = false
+        }
+
         response = await axios.post(
           this.claudeApiUrl,
           {
@@ -376,6 +392,8 @@ class ClaudeAccountService {
           },
           axiosConfig
         )
+
+        logger.success(`✅ Token refresh successful (local) for account ${accountData.name}`)
       }
 
       if (response.status === 200) {
@@ -2087,61 +2105,80 @@ class ClaudeAccountService {
 
       logger.debug(`📊 Fetching OAuth usage for account: ${accountData.name} (${accountId})`)
 
-      // 请求 OAuth usage 接口
-      const axiosConfig = {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          'anthropic-beta': 'oauth-2025-04-20',
-          'User-Agent': 'claude-cli/2.0.53 (external, cli)',
-          'Accept-Language': 'en-US,en;q=0.9'
-        },
-        timeout: 15000
-      }
+      let response
 
-      if (agent) {
-        axiosConfig.httpAgent = agent
-        axiosConfig.httpsAgent = agent
-        axiosConfig.proxy = false
-      }
-
-      // 🔌 Worker 路由
-      let response = null
+      // Worker 路由支持
       if (accountData.workerId) {
+        logger.debug(
+          `🔀 Routing OAuth usage fetch through Worker: ${accountData.workerId} for account ${accountData.name}`
+        )
+
         const workerRouter = require('../worker/workerRouter')
-        const routing = workerRouter.resolve(accountData.workerId)
+        const resolvedWorkerId = await workerRouter.resolveWorker(accountData.workerId)
 
-        if (routing.mode === 'remote') {
-          const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
-          logger.info(`🔌 [Worker] Routing usage fetch through Worker: ${routing.workerId}`)
-
+        if (resolvedWorkerId) {
           try {
-            const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
-              url: 'https://api.anthropic.com/api/oauth/usage',
-              method: 'GET',
-              headers: axiosConfig.headers,
-              proxy: accountData.proxy || null,
-              timeout: 15000
-            })
+            const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
 
-            response = {
-              status: workerResponse.statusCode,
-              data: workerResponse.body,
-              headers: workerResponse.headers || {}
+            const taskConfig = {
+              method: 'GET',
+              url: 'https://api.anthropic.com/api/oauth/usage',
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'anthropic-beta': 'oauth-2025-04-20',
+                'User-Agent': 'claude-cli/2.0.53 (external, cli)',
+                'Accept-Language': 'en-US,en;q=0.9'
+              },
+              timeout: 15000,
+              proxy: accountData.proxy || null
             }
+
+            response = await remoteWorkerProxy.sendRequest(resolvedWorkerId, taskConfig)
+
+            if (!response || !response.data) {
+              throw new Error('Worker returned empty response')
+            }
+
+            logger.debug(
+              `✅ OAuth usage fetch successful via Worker for account ${accountData.name}`
+            )
           } catch (workerError) {
-            logger.error(`🔌 [Worker] Usage fetch failed: ${workerError.message}`)
-            throw workerError
+            logger.debug(
+              `⚠️  Worker OAuth usage fetch failed, falling back to local: ${workerError.message}`
+            )
+            response = null
           }
         } else {
-          throw new Error(`Worker ${accountData.workerId} is offline, cannot fetch usage`)
+          logger.debug(
+            `⚠️  Worker ${accountData.workerId} offline, falling back to local OAuth usage fetch`
+          )
         }
       }
 
-      // 本地执行（无 Worker 绑定时）
+      // 本地执行（默认或降级）
       if (!response) {
+        const axiosConfig = {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'anthropic-beta': 'oauth-2025-04-20',
+            'User-Agent': 'claude-cli/2.0.53 (external, cli)',
+            'Accept-Language': 'en-US,en;q=0.9'
+          },
+          timeout: 15000
+        }
+
+        if (agent) {
+          axiosConfig.httpAgent = agent
+          axiosConfig.httpsAgent = agent
+          axiosConfig.proxy = false
+        }
+
         response = await axios.get('https://api.anthropic.com/api/oauth/usage', axiosConfig)
+        logger.debug(`✅ OAuth usage fetch successful (local) for account ${accountData.name}`)
       }
 
       if (response.status === 200 && response.data) {
@@ -2309,60 +2346,76 @@ class ClaudeAccountService {
 
       logger.info(`📊 Fetching profile info for account: ${accountData.name} (${accountId})`)
 
-      // 请求 profile 接口
-      const axiosConfig = {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          'User-Agent': 'claude-cli/1.0.56 (external, cli)',
-          'Accept-Language': 'en-US,en;q=0.9'
-        },
-        timeout: 15000
-      }
+      let response
 
-      if (agent) {
-        axiosConfig.httpAgent = agent
-        axiosConfig.httpsAgent = agent
-        axiosConfig.proxy = false
-      }
-
-      // 🔌 Worker 路由
-      let response = null
+      // Worker 路由支持
       if (accountData.workerId) {
+        logger.info(
+          `🔀 Routing profile fetch through Worker: ${accountData.workerId} for account ${accountData.name}`
+        )
+
         const workerRouter = require('../worker/workerRouter')
-        const routing = workerRouter.resolve(accountData.workerId)
+        const resolvedWorkerId = await workerRouter.resolveWorker(accountData.workerId)
 
-        if (routing.mode === 'remote') {
-          const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
-          logger.info(`🔌 [Worker] Routing profile fetch through Worker: ${routing.workerId}`)
-
+        if (resolvedWorkerId) {
           try {
-            const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
-              url: 'https://api.anthropic.com/api/oauth/profile',
-              method: 'GET',
-              headers: axiosConfig.headers,
-              proxy: accountData.proxy || null,
-              timeout: 15000
-            })
+            const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
 
-            response = {
-              status: workerResponse.statusCode,
-              data: workerResponse.body,
-              headers: workerResponse.headers || {}
+            const taskConfig = {
+              method: 'GET',
+              url: 'https://api.anthropic.com/api/oauth/profile',
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'User-Agent': 'claude-cli/1.0.56 (external, cli)',
+                'Accept-Language': 'en-US,en;q=0.9'
+              },
+              timeout: 15000,
+              proxy: accountData.proxy || null
             }
+
+            response = await remoteWorkerProxy.sendRequest(resolvedWorkerId, taskConfig)
+
+            if (!response || !response.data) {
+              throw new Error('Worker returned empty response')
+            }
+
+            logger.success(`✅ Profile fetch successful via Worker for account ${accountData.name}`)
           } catch (workerError) {
-            logger.error(`🔌 [Worker] Profile fetch failed: ${workerError.message}`)
-            throw workerError
+            logger.error(
+              `❌ Worker profile fetch failed, falling back to local: ${workerError.message}`
+            )
+            response = null
           }
         } else {
-          throw new Error(`Worker ${accountData.workerId} is offline, cannot fetch profile`)
+          logger.warn(
+            `⚠️  Worker ${accountData.workerId} offline, falling back to local profile fetch`
+          )
         }
       }
 
-      // 本地执行（无 Worker 绑定时）
+      // 本地执行（默认或降级）
       if (!response) {
+        const axiosConfig = {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'User-Agent': 'claude-cli/1.0.56 (external, cli)',
+            'Accept-Language': 'en-US,en;q=0.9'
+          },
+          timeout: 15000
+        }
+
+        if (agent) {
+          axiosConfig.httpAgent = agent
+          axiosConfig.httpsAgent = agent
+          axiosConfig.proxy = false
+        }
+
         response = await axios.get('https://api.anthropic.com/api/oauth/profile', axiosConfig)
+        logger.success(`✅ Profile fetch successful (local) for account ${accountData.name}`)
       }
 
       if (response.status === 200 && response.data) {

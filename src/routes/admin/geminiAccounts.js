@@ -21,7 +21,7 @@ function getDefaultRedirectUri(oauthProvider) {
 // 生成 Gemini OAuth 授权 URL
 router.post('/generate-auth-url', authenticateAdmin, async (req, res) => {
   try {
-    const { state, proxy, oauthProvider } = req.body // 接收代理配置与OAuth Provider
+    const { state, proxy, oauthProvider, workerId } = req.body // 接收代理配置、OAuth Provider 和 Worker ID
 
     const redirectUri = getDefaultRedirectUri(oauthProvider)
 
@@ -35,7 +35,7 @@ router.post('/generate-auth-url', authenticateAdmin, async (req, res) => {
       oauthProvider: resolvedOauthProvider
     } = await geminiAccountService.generateAuthUrl(state, redirectUri, proxy, oauthProvider)
 
-    // 创建 OAuth 会话，包含 codeVerifier 和代理配置
+    // 创建 OAuth 会话，包含 codeVerifier、代理配置和 Worker ID
     const sessionId = authState
     await redis.setOAuthSession(sessionId, {
       state: authState,
@@ -43,6 +43,7 @@ router.post('/generate-auth-url', authenticateAdmin, async (req, res) => {
       redirectUri: finalRedirectUri,
       codeVerifier, // 保存 PKCE code verifier
       proxy: proxy || null, // 保存代理配置
+      workerId: workerId || null, // 保存 Worker ID
       oauthProvider: resolvedOauthProvider,
       createdAt: new Date().toISOString()
     })
@@ -88,7 +89,13 @@ router.post('/poll-auth-status', authenticateAdmin, async (req, res) => {
 // 交换 Gemini 授权码
 router.post('/exchange-code', authenticateAdmin, async (req, res) => {
   try {
-    const { code, sessionId, proxy: requestProxy, oauthProvider } = req.body
+    const {
+      code,
+      sessionId,
+      proxy: requestProxy,
+      oauthProvider,
+      workerId: requestWorkerId
+    } = req.body
     let resolvedOauthProvider = oauthProvider
 
     if (!code) {
@@ -98,6 +105,7 @@ router.post('/exchange-code', authenticateAdmin, async (req, res) => {
     let redirectUri = getDefaultRedirectUri(resolvedOauthProvider)
     let codeVerifier = null
     let proxyConfig = null
+    let workerId = null
 
     // 如果提供了 sessionId，从 OAuth 会话中获取信息
     if (sessionId) {
@@ -107,17 +115,19 @@ router.post('/exchange-code', authenticateAdmin, async (req, res) => {
           redirectUri: sessionRedirectUri,
           codeVerifier: sessionCodeVerifier,
           proxy,
+          workerId: sessionWorkerId,
           oauthProvider: sessionOauthProvider
         } = sessionData
         redirectUri = sessionRedirectUri || redirectUri
         codeVerifier = sessionCodeVerifier
         proxyConfig = proxy // 获取代理配置
+        workerId = sessionWorkerId // 获取 Worker ID
         if (!resolvedOauthProvider && sessionOauthProvider) {
           // 会话里保存的 provider 仅作为兜底
           resolvedOauthProvider = sessionOauthProvider
         }
         logger.info(
-          `Using session redirect_uri: ${redirectUri}, has codeVerifier: ${!!codeVerifier}, has proxy from session: ${!!proxyConfig}`
+          `Using session redirect_uri: ${redirectUri}, has codeVerifier: ${!!codeVerifier}, has proxy from session: ${!!proxyConfig}, has workerId: ${!!workerId}`
         )
       }
     }
@@ -130,12 +140,19 @@ router.post('/exchange-code', authenticateAdmin, async (req, res) => {
       )
     }
 
+    // 如果请求体中直接提供了 workerId，优先使用它
+    if (requestWorkerId) {
+      workerId = requestWorkerId
+      logger.info(`Using workerId from request body: ${workerId}`)
+    }
+
     const tokens = await geminiAccountService.exchangeCodeForTokens(
       code,
       redirectUri,
       codeVerifier,
       proxyConfig, // 传递代理配置
-      resolvedOauthProvider
+      resolvedOauthProvider,
+      workerId // 传递 Worker ID
     )
 
     // 清理 OAuth 会话

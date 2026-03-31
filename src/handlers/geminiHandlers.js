@@ -616,7 +616,8 @@ async function handleMessages(req, res) {
           apiKeyId: apiKeyData.id,
           signal: abortController.signal,
           projectId: effectiveProjectId,
-          accountId: account.id
+          accountId: account.id,
+          workerId: account.workerId
         })
       } else {
         geminiResponse = await sendGeminiRequest({
@@ -630,7 +631,8 @@ async function handleMessages(req, res) {
           apiKeyId: apiKeyData.id,
           signal: abortController.signal,
           projectId: effectiveProjectId,
-          accountId: account.id
+          accountId: account.id,
+          workerId: account.workerId
         })
       }
     }

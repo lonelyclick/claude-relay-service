@@ -1380,6 +1380,21 @@ const authenticateAdmin = async (req, res, next) => {
       })
     }
 
+    // 🔑 检查是否为静态 Admin API Token（用于服务间调用）
+    const staticAdminToken = config.adminApiToken || process.env.ADMIN_API_TOKEN
+    if (staticAdminToken && token === staticAdminToken) {
+      req.admin = {
+        username: 'api-service',
+        sessionId: 'static-token',
+        loginTime: new Date().toISOString(),
+        isStaticToken: true
+      }
+      const authDuration = Date.now() - startTime
+      req._authInfo = `api-service (static) ${authDuration}ms`
+      logger.security(`Admin authenticated via static token from ${req.ip || 'unknown'} in ${authDuration}ms`)
+      return next()
+    }
+
     // 获取管理员会话（带超时处理）
     const adminSession = await Promise.race([
       redis.getSession(token),

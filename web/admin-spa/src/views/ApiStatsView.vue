@@ -1,479 +1,468 @@
 <template>
-  <div class="min-h-screen bg-gray-50 dark:bg-gray-900">
-    <!-- 顶部导航 - 全宽背景（突破父容器限制） -->
+  <div class="min-h-screen bg-gray-50 p-2 dark:bg-gray-900 sm:p-3 md:p-4">
+    <!-- 顶部导航 -->
     <div
-      class="glass-strong mb-4 shadow-md sm:mb-4 md:mb-6"
-      style="
-        z-index: 10;
-        position: relative;
-        width: 100vw;
-        margin-left: 50%;
-        transform: translateX(-50%);
-      "
+      class="glass-strong mb-4 rounded-lg p-3 shadow-md sm:mb-4 sm:rounded-lg sm:p-3 md:mb-6 md:rounded-lg md:p-4"
+      style="z-index: 10; position: relative"
     >
-      <div class="mx-auto max-w-7xl px-4 py-3 sm:px-6 sm:py-3 md:px-8 md:py-4">
-        <div class="flex flex-col items-center justify-between gap-3 sm:gap-3 md:flex-row">
-          <LogoTitle
-            :loading="oemLoading"
-            :logo-src="oemSettings.siteIconData || oemSettings.siteIcon"
-            :subtitle="
-              currentTab === 'stats'
-                ? 'API Key 使用统计'
-                : currentTab === 'quota'
-                  ? '额度卡'
-                  : '使用教程'
-            "
-            :title="oemSettings.siteName"
-            title-class="text-white dark:text-gray-100"
+      <div class="flex flex-col items-center justify-between gap-3 sm:flex-row sm:gap-3">
+        <LogoTitle
+          :loading="oemLoading"
+          :logo-src="oemSettings.siteIconData || oemSettings.siteIcon"
+          :subtitle="
+            currentTab === 'stats'
+              ? 'API Key 使用统计'
+              : currentTab === 'quota'
+                ? '额度卡'
+                : '使用教程'
+          "
+          :title="oemSettings.siteName"
+          title-class="text-white dark:text-gray-100"
+        />
+        <div class="flex items-center gap-2 md:gap-4">
+          <!-- 主题切换按钮 -->
+          <div class="flex items-center">
+            <ThemeToggle mode="dropdown" />
+          </div>
+
+          <!-- 分隔线 -->
+          <div
+            v-if="oemSettings.ldapEnabled || oemSettings.showAdminButton !== false"
+            class="h-8 w-px bg-gradient-to-b from-transparent via-gray-300 to-transparent opacity-50 dark:via-gray-600"
           />
-          <div class="flex items-center gap-2 md:gap-4">
-            <!-- 主题切换按钮 -->
-            <div class="flex items-center">
-              <ThemeToggle mode="dropdown" />
-            </div>
 
-            <!-- 分隔线 -->
+          <!-- 用户登录按钮 (仅在 LDAP 启用时显示) -->
+          <router-link
+            v-if="oemSettings.ldapEnabled"
+            class="user-login-button flex items-center gap-2 rounded-lg px-4 py-2 text-white transition-colors duration-150 md:px-5 md:py-2.5"
+            to="/user-login"
+          >
+            <i class="fas fa-user text-sm md:text-base" />
+            <span class="text-xs font-semibold tracking-wide md:text-sm">用户登录</span>
+          </router-link>
+          <!-- 管理后台按钮 -->
+          <router-link
+            v-if="oemSettings.showAdminButton !== false"
+            class="admin-button-refined flex items-center gap-2 rounded-lg px-4 py-2 transition-colors duration-150 md:px-5 md:py-2.5"
+            to="/dashboard"
+          >
+            <i class="fas fa-shield-alt text-sm md:text-base" />
+            <span class="text-xs font-semibold tracking-wide md:text-sm">管理后台</span>
+          </router-link>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 切换 -->
+    <div class="mb-4 sm:mb-4 md:mb-6">
+      <div class="flex justify-center">
+        <div
+          class="inline-flex w-full max-w-2xl flex-wrap justify-center gap-1 rounded-full border border-white/20 bg-white/10 p-1 shadow-sm sm:w-auto sm:flex-nowrap"
+        >
+          <button
+            :class="['tab-pill-button', currentTab === 'stats' ? 'active' : '']"
+            @click="currentTab = 'stats'"
+          >
+            <i class="fas fa-chart-line mr-1 md:mr-2" />
+            <span class="text-sm md:text-base">统计查询</span>
+          </button>
+          <button
+            :class="['tab-pill-button', currentTab === 'quota' ? 'active' : '']"
+            @click="switchToQuota"
+          >
+            <i class="fas fa-ticket-alt mr-1 md:mr-2" />
+            <span class="text-sm md:text-base">额度卡</span>
+          </button>
+          <button
+            :class="['tab-pill-button', currentTab === 'tutorial' ? 'active' : '']"
+            @click="currentTab = 'tutorial'"
+          >
+            <i class="fas fa-graduation-cap mr-1 md:mr-2" />
+            <span class="text-sm md:text-base">使用教程</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 统计内容 -->
+    <div v-if="currentTab === 'stats'" class="tab-content">
+      <!-- API Key 输入区域 -->
+      <ApiKeyInput />
+
+      <!-- 错误提示 -->
+      <div v-if="error" class="mb-4 sm:mb-4 md:mb-6">
+        <div
+          class="rounded-lg border border-red-500/30 bg-red-500/20 p-3 text-sm text-red-800 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200 md:p-4 md:text-base"
+        >
+          <i class="fas fa-exclamation-triangle mr-2" />
+          {{ error }}
+        </div>
+      </div>
+
+      <!-- 统计数据展示区域 -->
+      <div v-if="statsData" class="fade-in">
+        <div
+          class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:rounded-lg sm:p-3 md:p-4"
+        >
+          <!-- 时间范围选择器 -->
+          <div
+            class="mb-3 border-b border-gray-200 pb-3 dark:border-gray-700 sm:mb-4 sm:pb-4 md:mb-6 md:pb-6"
+          >
             <div
-              v-if="oemSettings.ldapEnabled || oemSettings.showAdminButton !== false"
-              class="h-8 w-px bg-gradient-to-b from-transparent via-gray-300 to-transparent opacity-50 dark:via-gray-600"
-            />
+              class="flex flex-col items-start justify-between gap-2 sm:gap-3 md:flex-row md:items-center md:gap-4"
+            >
+              <div class="flex items-center gap-2 md:gap-3">
+                <i class="fas fa-clock text-base text-blue-500 md:text-lg" />
+                <span class="text-base font-medium text-gray-700 dark:text-gray-200 md:text-lg"
+                  >统计时间范围</span
+                >
+              </div>
+              <div class="flex w-full items-center gap-2 md:w-auto">
+                <button
+                  class="flex flex-1 items-center justify-center gap-1 px-4 py-2 text-xs font-medium md:flex-none md:gap-2 md:px-6 md:text-sm"
+                  :class="['period-btn', { active: statsPeriod === 'daily' }]"
+                  :disabled="loading"
+                  @click="switchPeriod('daily')"
+                >
+                  <i class="fas fa-calendar-day text-xs md:text-sm" />
+                  今日
+                </button>
+                <button
+                  class="flex flex-1 items-center justify-center gap-1 px-4 py-2 text-xs font-medium md:flex-none md:gap-2 md:px-6 md:text-sm"
+                  :class="['period-btn', { active: statsPeriod === 'monthly' }]"
+                  :disabled="loading"
+                  @click="switchPeriod('monthly')"
+                >
+                  <i class="fas fa-calendar-alt text-xs md:text-sm" />
+                  本月
+                </button>
+                <button
+                  class="flex flex-1 items-center justify-center gap-1 px-4 py-2 text-xs font-medium md:flex-none md:gap-2 md:px-6 md:text-sm"
+                  :class="['period-btn', { active: statsPeriod === 'alltime' }]"
+                  :disabled="loading"
+                  @click="switchPeriod('alltime')"
+                >
+                  <i class="fas fa-infinity text-xs md:text-sm" />
+                  全部
+                </button>
+                <!-- 测试按钮下拉菜单 - 仅在单Key模式下显示 -->
+                <div v-if="!multiKeyMode" class="relative">
+                  <button
+                    :class="[
+                      'test-btn flex items-center justify-center gap-1 px-4 py-2 text-xs font-medium md:gap-2 md:px-6 md:text-sm',
+                      !hasAnyTestPermission ? 'cursor-not-allowed opacity-50' : ''
+                    ]"
+                    :disabled="loading || !hasAnyTestPermission"
+                    :title="
+                      hasAnyTestPermission
+                        ? '测试 API'
+                        : `当前 Key 可用服务: ${availableServicesText}`
+                    "
+                    @click="toggleTestMenu"
+                  >
+                    <i class="fas fa-vial text-xs md:text-sm" />
+                    测试
+                    <i class="fas fa-chevron-down ml-1 text-xs" />
+                  </button>
+                  <!-- 下拉菜单 -->
+                  <div
+                    v-if="showTestMenu"
+                    class="absolute right-0 top-full z-50 mt-1 min-w-[140px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800"
+                  >
+                    <button
+                      v-if="canTestClaude"
+                      class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                      @click="openTestModal('claude')"
+                    >
+                      <i class="fas fa-robot text-orange-500" />
+                      Claude
+                    </button>
+                    <button
+                      v-if="canTestGemini"
+                      class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                      @click="openTestModal('gemini')"
+                    >
+                      <i class="fas fa-gem text-blue-500" />
+                      Gemini
+                    </button>
+                    <button
+                      v-if="canTestOpenAI"
+                      class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                      @click="openTestModal('openai')"
+                    >
+                      <i class="fas fa-code text-green-500" />
+                      Codex
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
 
-            <!-- 用户登录按钮 (仅在 LDAP 启用时显示) -->
-            <router-link
-              v-if="oemSettings.ldapEnabled"
-              class="user-login-button flex items-center gap-2 rounded-lg px-4 py-2 text-white transition-colors duration-150 md:px-5 md:py-2.5"
-              to="/user-login"
-            >
-              <i class="fas fa-user text-sm md:text-base" />
-              <span class="text-xs font-semibold tracking-wide md:text-sm">用户登录</span>
-            </router-link>
-            <!-- 管理后台按钮 -->
-            <router-link
-              v-if="oemSettings.showAdminButton !== false"
-              class="admin-button-refined flex items-center gap-2 rounded-lg px-4 py-2 transition-colors duration-150 md:px-5 md:py-2.5"
-              to="/dashboard"
-            >
-              <i class="fas fa-shield-alt text-sm md:text-base" />
-              <span class="text-xs font-semibold tracking-wide md:text-sm">管理后台</span>
-            </router-link>
+          <!-- 基本信息和统计概览 -->
+          <StatsOverview />
+
+          <!-- Token 分布和限制配置 -->
+          <div
+            class="mb-4 mt-4 grid grid-cols-1 gap-3 sm:mb-4 sm:mt-6 sm:gap-3 md:mb-6 md:mt-8 md:gap-6 xl:grid-cols-2 xl:items-stretch"
+          >
+            <TokenDistribution class="h-full" />
+            <template v-if="multiKeyMode">
+              <AggregatedStatsCard class="h-full" />
+            </template>
+            <template v-else>
+              <LimitConfig class="h-full" />
+            </template>
+          </div>
+
+          <!-- 服务费用统计卡片 -->
+          <ServiceCostCards class="mb-4 sm:mb-4" />
+
+          <!-- 模型使用统计 - 三个时间段 -->
+          <div class="space-y-4 sm:space-y-6">
+            <ModelUsageStats period="daily" />
+            <ModelUsageStats period="monthly" />
+            <ModelUsageStats period="alltime" />
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 内容区 - 带左右边距 -->
-    <div class="px-2 sm:px-3 md:px-4">
-      <!-- Tab 切换 -->
-      <div class="mb-4 sm:mb-4 md:mb-6">
-        <div class="flex justify-center">
-          <div
-            class="inline-flex w-full max-w-2xl flex-wrap justify-center gap-1 rounded-full border border-white/20 bg-white/10 p-1 shadow-sm sm:w-auto sm:flex-nowrap"
+    <!-- 教程内容 -->
+    <div v-if="currentTab === 'tutorial'" class="tab-content">
+      <div
+        class="rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800"
+      >
+        <TutorialView />
+      </div>
+    </div>
+
+    <!-- 额度卡内容（含二级 tab） -->
+    <div v-if="currentTab === 'quota'" class="tab-content">
+      <div
+        class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:rounded-lg sm:p-6 md:p-4"
+      >
+        <!-- 二级 Tab -->
+        <div
+          class="mb-4 flex gap-2 border-b border-gray-200 pb-4 dark:border-gray-700 md:mb-6 md:pb-6"
+        >
+          <button
+            :class="[
+              'rounded-lg px-4 py-2 text-sm font-medium transition-colors',
+              quotaSubTab === 'redeem'
+                ? 'bg-blue-500 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+            ]"
+            @click="quotaSubTab = 'redeem'"
           >
+            <i class="fas fa-ticket-alt mr-2" />
+            兑换额度卡
+          </button>
+          <button
+            :class="[
+              'rounded-lg px-4 py-2 text-sm font-medium transition-colors',
+              quotaSubTab === 'history'
+                ? 'bg-blue-500 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+            ]"
+            @click="switchToHistorySubTab"
+          >
+            <i class="fas fa-history mr-2" />
+            兑换记录
+          </button>
+        </div>
+
+        <!-- 兑换额度卡子内容 -->
+        <div v-if="quotaSubTab === 'redeem'">
+          <!-- 需要先输入 API Key -->
+          <div v-if="!apiId" class="py-8 text-center">
+            <div class="mb-4 text-gray-500 dark:text-gray-400">
+              <i class="fas fa-key mb-4 block text-4xl opacity-50" />
+              <p>请先在「统计查询」页面输入您的 API Key</p>
+            </div>
             <button
-              :class="['tab-pill-button', currentTab === 'stats' ? 'active' : '']"
+              class="rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 px-6 py-2.5 font-medium text-white transition-colors hover:from-blue-600 hover:to-cyan-600"
               @click="currentTab = 'stats'"
             >
-              <i class="fas fa-chart-line mr-1 md:mr-2" />
-              <span class="text-sm md:text-base">统计查询</span>
-            </button>
-            <button
-              :class="['tab-pill-button', currentTab === 'quota' ? 'active' : '']"
-              @click="switchToQuota"
-            >
-              <i class="fas fa-ticket-alt mr-1 md:mr-2" />
-              <span class="text-sm md:text-base">额度卡</span>
-            </button>
-            <button
-              :class="['tab-pill-button', currentTab === 'tutorial' ? 'active' : '']"
-              @click="currentTab = 'tutorial'"
-            >
-              <i class="fas fa-graduation-cap mr-1 md:mr-2" />
-              <span class="text-sm md:text-base">使用教程</span>
+              前往输入 API Key
             </button>
           </div>
-        </div>
-      </div>
 
-      <!-- 统计内容 -->
-      <div v-if="currentTab === 'stats'" class="tab-content">
-        <!-- API Key 输入区域 -->
-        <ApiKeyInput />
+          <!-- 兑换表单 -->
+          <div v-else>
+            <div class="mb-6 rounded-lg bg-blue-50 p-4 dark:bg-blue-900/20">
+              <p class="text-sm text-blue-700 dark:text-blue-300">
+                <i class="fas fa-info-circle mr-2" />
+                当前 API Key: <span class="font-medium">{{ statsData?.name || apiId }}</span>
+              </p>
+            </div>
 
-        <!-- 错误提示 -->
-        <div v-if="error" class="mb-4 sm:mb-4 md:mb-6">
-          <div
-            class="rounded-lg border border-red-500/30 bg-red-500/20 p-3 text-sm text-red-800 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200 md:p-4 md:text-base"
-          >
-            <i class="fas fa-exclamation-triangle mr-2" />
-            {{ error }}
-          </div>
-        </div>
-
-        <!-- 统计数据展示区域 -->
-        <div v-if="statsData" class="fade-in">
-          <div
-            class="rounded-lg border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:rounded-lg sm:p-3 md:p-4"
-          >
-            <!-- 时间范围选择器 -->
-            <div
-              class="mb-3 border-b border-gray-200 pb-3 dark:border-gray-700 sm:mb-4 sm:pb-4 md:mb-6 md:pb-6"
-            >
-              <div
-                class="flex flex-col items-start justify-between gap-2 sm:gap-3 md:flex-row md:items-center md:gap-4"
-              >
-                <div class="flex items-center gap-2 md:gap-3">
-                  <i class="fas fa-clock text-base text-blue-500 md:text-lg" />
-                  <span class="text-base font-medium text-gray-700 dark:text-gray-200 md:text-lg"
-                    >统计时间范围</span
-                  >
-                </div>
-                <div class="flex w-full items-center gap-2 md:w-auto">
-                  <button
-                    class="flex flex-1 items-center justify-center gap-1 px-4 py-2 text-xs font-medium md:flex-none md:gap-2 md:px-6 md:text-sm"
-                    :class="['period-btn', { active: statsPeriod === 'daily' }]"
-                    :disabled="loading"
-                    @click="switchPeriod('daily')"
-                  >
-                    <i class="fas fa-calendar-day text-xs md:text-sm" />
-                    今日
-                  </button>
-                  <button
-                    class="flex flex-1 items-center justify-center gap-1 px-4 py-2 text-xs font-medium md:flex-none md:gap-2 md:px-6 md:text-sm"
-                    :class="['period-btn', { active: statsPeriod === 'monthly' }]"
-                    :disabled="loading"
-                    @click="switchPeriod('monthly')"
-                  >
-                    <i class="fas fa-calendar-alt text-xs md:text-sm" />
-                    本月
-                  </button>
-                  <button
-                    class="flex flex-1 items-center justify-center gap-1 px-4 py-2 text-xs font-medium md:flex-none md:gap-2 md:px-6 md:text-sm"
-                    :class="['period-btn', { active: statsPeriod === 'alltime' }]"
-                    :disabled="loading"
-                    @click="switchPeriod('alltime')"
-                  >
-                    <i class="fas fa-infinity text-xs md:text-sm" />
-                    全部
-                  </button>
-                  <!-- 测试按钮下拉菜单 - 仅在单Key模式下显示 -->
-                  <div v-if="!multiKeyMode" class="relative">
-                    <button
-                      :class="[
-                        'test-btn flex items-center justify-center gap-1 px-4 py-2 text-xs font-medium md:gap-2 md:px-6 md:text-sm',
-                        !hasAnyTestPermission ? 'cursor-not-allowed opacity-50' : ''
-                      ]"
-                      :disabled="loading || !hasAnyTestPermission"
-                      :title="
-                        hasAnyTestPermission
-                          ? '测试 API'
-                          : `当前 Key 可用服务: ${availableServicesText}`
-                      "
-                      @click="toggleTestMenu"
-                    >
-                      <i class="fas fa-vial text-xs md:text-sm" />
-                      测试
-                      <i class="fas fa-chevron-down ml-1 text-xs" />
-                    </button>
-                    <!-- 下拉菜单 -->
-                    <div
-                      v-if="showTestMenu"
-                      class="absolute right-0 top-full z-50 mt-1 min-w-[140px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800"
-                    >
-                      <button
-                        v-if="canTestClaude"
-                        class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
-                        @click="openTestModal('claude')"
-                      >
-                        <i class="fas fa-robot text-orange-500" />
-                        Claude
-                      </button>
-                      <button
-                        v-if="canTestGemini"
-                        class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
-                        @click="openTestModal('gemini')"
-                      >
-                        <i class="fas fa-gem text-blue-500" />
-                        Gemini
-                      </button>
-                      <button
-                        v-if="canTestOpenAI"
-                        class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
-                        @click="openTestModal('openai')"
-                      >
-                        <i class="fas fa-code text-green-500" />
-                        Codex
-                      </button>
-                    </div>
-                  </div>
-                </div>
+            <div class="space-y-4">
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  额度卡卡号
+                </label>
+                <input
+                  v-model="redeemCode"
+                  class="w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-gray-900 placeholder-gray-400 transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+                  placeholder="请输入额度卡卡号"
+                  type="text"
+                  @keyup.enter="handleRedeem"
+                />
               </div>
-            </div>
 
-            <!-- 基本信息和统计概览 -->
-            <StatsOverview />
-
-            <!-- Token 分布和限制配置 -->
-            <div
-              class="mb-4 mt-4 grid grid-cols-1 gap-3 sm:mb-4 sm:mt-6 sm:gap-3 md:mb-6 md:mt-8 md:gap-6 xl:grid-cols-2 xl:items-stretch"
-            >
-              <TokenDistribution class="h-full" />
-              <template v-if="multiKeyMode">
-                <AggregatedStatsCard class="h-full" />
-              </template>
-              <template v-else>
-                <LimitConfig class="h-full" />
-              </template>
-            </div>
-
-            <!-- 服务费用统计卡片 -->
-            <ServiceCostCards class="mb-4 sm:mb-4" />
-
-            <!-- 模型使用统计 - 三个时间段 -->
-            <div class="space-y-4 sm:space-y-6">
-              <ModelUsageStats period="daily" />
-              <ModelUsageStats period="monthly" />
-              <ModelUsageStats period="alltime" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 教程内容 -->
-      <div v-if="currentTab === 'tutorial'" class="tab-content">
-        <div
-          class="rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800"
-        >
-          <TutorialView />
-        </div>
-      </div>
-
-      <!-- 额度卡内容（含二级 tab） -->
-      <div v-if="currentTab === 'quota'" class="tab-content">
-        <div
-          class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:rounded-lg sm:p-6 md:p-4"
-        >
-          <!-- 二级 Tab -->
-          <div
-            class="mb-4 flex gap-2 border-b border-gray-200 pb-4 dark:border-gray-700 md:mb-6 md:pb-6"
-          >
-            <button
-              :class="[
-                'rounded-lg px-4 py-2 text-sm font-medium transition-colors',
-                quotaSubTab === 'redeem'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
-              ]"
-              @click="quotaSubTab = 'redeem'"
-            >
-              <i class="fas fa-ticket-alt mr-2" />
-              兑换额度卡
-            </button>
-            <button
-              :class="[
-                'rounded-lg px-4 py-2 text-sm font-medium transition-colors',
-                quotaSubTab === 'history'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
-              ]"
-              @click="switchToHistorySubTab"
-            >
-              <i class="fas fa-history mr-2" />
-              兑换记录
-            </button>
-          </div>
-
-          <!-- 兑换额度卡子内容 -->
-          <div v-if="quotaSubTab === 'redeem'">
-            <!-- 需要先输入 API Key -->
-            <div v-if="!apiId" class="py-8 text-center">
-              <div class="mb-4 text-gray-500 dark:text-gray-400">
-                <i class="fas fa-key mb-4 block text-4xl opacity-50" />
-                <p>请先在「统计查询」页面输入您的 API Key</p>
-              </div>
               <button
-                class="rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 px-6 py-2.5 font-medium text-white transition-colors hover:from-blue-600 hover:to-cyan-600"
-                @click="currentTab = 'stats'"
+                class="w-full rounded-lg bg-gradient-to-r from-green-500 to-emerald-500 px-6 py-3 font-medium text-white transition-colors hover:from-green-600 hover:to-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="!redeemCode.trim() || redeemLoading"
+                @click="handleRedeem"
               >
-                前往输入 API Key
+                <i v-if="redeemLoading" class="fas fa-spinner fa-spin mr-2" />
+                <i v-else class="fas fa-check-circle mr-2" />
+                {{ redeemLoading ? '兑换中...' : '立即兑换' }}
               </button>
             </div>
 
-            <!-- 兑换表单 -->
-            <div v-else>
-              <div class="mb-6 rounded-lg bg-blue-50 p-4 dark:bg-blue-900/20">
-                <p class="text-sm text-blue-700 dark:text-blue-300">
-                  <i class="fas fa-info-circle mr-2" />
-                  当前 API Key: <span class="font-medium">{{ statsData?.name || apiId }}</span>
-                </p>
-              </div>
-
-              <div class="space-y-4">
-                <div>
-                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    额度卡卡号
-                  </label>
-                  <input
-                    v-model="redeemCode"
-                    class="w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-gray-900 placeholder-gray-400 transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
-                    placeholder="请输入额度卡卡号"
-                    type="text"
-                    @keyup.enter="handleRedeem"
+            <!-- 兑换结果 -->
+            <div v-if="redeemResult" class="mt-6">
+              <div
+                :class="[
+                  'rounded-lg p-4',
+                  redeemResult.success
+                    ? redeemResult.hasWarnings
+                      ? 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300'
+                      : 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300'
+                    : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300'
+                ]"
+              >
+                <div class="flex items-start gap-3">
+                  <i
+                    :class="[
+                      'mt-0.5 text-lg',
+                      redeemResult.success
+                        ? redeemResult.hasWarnings
+                          ? 'fas fa-exclamation-triangle'
+                          : 'fas fa-check-circle'
+                        : 'fas fa-times-circle'
+                    ]"
                   />
-                </div>
-
-                <button
-                  class="w-full rounded-lg bg-gradient-to-r from-green-500 to-emerald-500 px-6 py-3 font-medium text-white transition-colors hover:from-green-600 hover:to-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
-                  :disabled="!redeemCode.trim() || redeemLoading"
-                  @click="handleRedeem"
-                >
-                  <i v-if="redeemLoading" class="fas fa-spinner fa-spin mr-2" />
-                  <i v-else class="fas fa-check-circle mr-2" />
-                  {{ redeemLoading ? '兑换中...' : '立即兑换' }}
-                </button>
-              </div>
-
-              <!-- 兑换结果 -->
-              <div v-if="redeemResult" class="mt-6">
-                <div
-                  :class="[
-                    'rounded-lg p-4',
-                    redeemResult.success
-                      ? redeemResult.hasWarnings
-                        ? 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300'
-                        : 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300'
-                      : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300'
-                  ]"
-                >
-                  <div class="flex items-start gap-3">
-                    <i
-                      :class="[
-                        'mt-0.5 text-lg',
+                  <div>
+                    <p class="font-medium">
+                      {{
                         redeemResult.success
                           ? redeemResult.hasWarnings
-                            ? 'fas fa-exclamation-triangle'
-                            : 'fas fa-check-circle'
-                          : 'fas fa-times-circle'
-                      ]"
-                    />
-                    <div>
-                      <p class="font-medium">
-                        {{
-                          redeemResult.success
-                            ? redeemResult.hasWarnings
-                              ? '兑换成功（部分截断）'
-                              : '兑换成功'
-                            : '兑换失败'
-                        }}
+                            ? '兑换成功（部分截断）'
+                            : '兑换成功'
+                          : '兑换失败'
+                      }}
+                    </p>
+                    <p class="mt-1 text-sm opacity-90">{{ redeemResult.message }}</p>
+                    <div v-if="redeemResult.success && redeemResult.data" class="mt-2 text-sm">
+                      <p v-if="redeemResult.data.quotaAdded">
+                        额度增加:
+                        <span class="font-medium">${{ redeemResult.data.quotaAdded }}</span>
                       </p>
-                      <p class="mt-1 text-sm opacity-90">{{ redeemResult.message }}</p>
-                      <div v-if="redeemResult.success && redeemResult.data" class="mt-2 text-sm">
-                        <p v-if="redeemResult.data.quotaAdded">
-                          额度增加:
-                          <span class="font-medium">${{ redeemResult.data.quotaAdded }}</span>
-                        </p>
-                        <p v-if="redeemResult.data.timeAdded">
-                          有效期延长:
-                          <span class="font-medium"
-                            >{{ redeemResult.data.timeAdded
-                            }}{{
-                              redeemResult.data.timeUnit === 'days'
-                                ? '天'
-                                : redeemResult.data.timeUnit === 'hours'
-                                  ? '小时'
-                                  : '月'
-                            }}</span
-                          >
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 兑换记录子内容 -->
-          <div v-if="quotaSubTab === 'history'">
-            <!-- 需要先输入 API Key -->
-            <div v-if="!apiId" class="py-8 text-center">
-              <div class="mb-4 text-gray-500 dark:text-gray-400">
-                <i class="fas fa-key mb-4 block text-4xl opacity-50" />
-                <p>请先在「统计查询」页面输入您的 API Key</p>
-              </div>
-              <button
-                class="rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 px-6 py-2.5 font-medium text-white transition-colors hover:from-blue-600 hover:to-cyan-600"
-                @click="currentTab = 'stats'"
-              >
-                前往输入 API Key
-              </button>
-            </div>
-
-            <!-- 记录列表 -->
-            <div v-else>
-              <div v-if="historyLoading" class="py-8 text-center">
-                <i class="fas fa-spinner fa-spin text-2xl text-gray-400" />
-                <p class="mt-2 text-gray-500 dark:text-gray-400">加载中...</p>
-              </div>
-
-              <div v-else-if="redemptionHistory.length === 0" class="py-8 text-center">
-                <i class="fas fa-inbox text-4xl text-gray-300 dark:text-gray-600" />
-                <p class="mt-2 text-gray-500 dark:text-gray-400">暂无兑换记录</p>
-              </div>
-
-              <div v-else class="space-y-3">
-                <div
-                  v-for="record in redemptionHistory"
-                  :key="record.id"
-                  class="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800"
-                >
-                  <div class="flex items-start justify-between gap-4">
-                    <div class="min-w-0 flex-1">
-                      <div class="mb-1 flex items-center gap-2">
-                        <span
-                          :class="[
-                            'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-                            record.cardType === 'quota'
-                              ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                              : record.cardType === 'time'
-                                ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
-                                : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
-                          ]"
-                        >
-                          {{
-                            record.cardType === 'quota'
-                              ? '额度卡'
-                              : record.cardType === 'time'
-                                ? '时间卡'
-                                : '组合卡'
-                          }}
-                        </span>
-                        <span
-                          v-if="record.status === 'revoked'"
-                          class="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-300"
-                        >
-                          已撤销
-                        </span>
-                      </div>
-                      <p class="text-sm text-gray-600 dark:text-gray-300">
-                        <span v-if="record.quotaAdded">额度 +${{ record.quotaAdded }}</span>
-                        <span v-if="record.quotaAdded && record.timeAdded"> · </span>
-                        <span v-if="record.timeAdded"
-                          >有效期 +{{ record.timeAmount
+                      <p v-if="redeemResult.data.timeAdded">
+                        有效期延长:
+                        <span class="font-medium"
+                          >{{ redeemResult.data.timeAdded
                           }}{{
-                            record.timeUnit === 'days'
+                            redeemResult.data.timeUnit === 'days'
                               ? '天'
-                              : record.timeUnit === 'hours'
+                              : redeemResult.data.timeUnit === 'hours'
                                 ? '小时'
                                 : '月'
                           }}</span
                         >
                       </p>
                     </div>
-                    <div
-                      class="whitespace-nowrap text-right text-xs text-gray-500 dark:text-gray-400"
-                    >
-                      {{ formatDateTime(record.redeemedAt) }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 兑换记录子内容 -->
+        <div v-if="quotaSubTab === 'history'">
+          <!-- 需要先输入 API Key -->
+          <div v-if="!apiId" class="py-8 text-center">
+            <div class="mb-4 text-gray-500 dark:text-gray-400">
+              <i class="fas fa-key mb-4 block text-4xl opacity-50" />
+              <p>请先在「统计查询」页面输入您的 API Key</p>
+            </div>
+            <button
+              class="rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 px-6 py-2.5 font-medium text-white transition-colors hover:from-blue-600 hover:to-cyan-600"
+              @click="currentTab = 'stats'"
+            >
+              前往输入 API Key
+            </button>
+          </div>
+
+          <!-- 记录列表 -->
+          <div v-else>
+            <div v-if="historyLoading" class="py-8 text-center">
+              <i class="fas fa-spinner fa-spin text-2xl text-gray-400" />
+              <p class="mt-2 text-gray-500 dark:text-gray-400">加载中...</p>
+            </div>
+
+            <div v-else-if="redemptionHistory.length === 0" class="py-8 text-center">
+              <i class="fas fa-inbox text-4xl text-gray-300 dark:text-gray-600" />
+              <p class="mt-2 text-gray-500 dark:text-gray-400">暂无兑换记录</p>
+            </div>
+
+            <div v-else class="space-y-3">
+              <div
+                v-for="record in redemptionHistory"
+                :key="record.id"
+                class="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800"
+              >
+                <div class="flex items-start justify-between gap-4">
+                  <div class="min-w-0 flex-1">
+                    <div class="mb-1 flex items-center gap-2">
+                      <span
+                        :class="[
+                          'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+                          record.cardType === 'quota'
+                            ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                            : record.cardType === 'time'
+                              ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
+                              : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                        ]"
+                      >
+                        {{
+                          record.cardType === 'quota'
+                            ? '额度卡'
+                            : record.cardType === 'time'
+                              ? '时间卡'
+                              : '组合卡'
+                        }}
+                      </span>
+                      <span
+                        v-if="record.status === 'revoked'"
+                        class="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-300"
+                      >
+                        已撤销
+                      </span>
                     </div>
+                    <p class="text-sm text-gray-600 dark:text-gray-300">
+                      <span v-if="record.quotaAdded">额度 +${{ record.quotaAdded }}</span>
+                      <span v-if="record.quotaAdded && record.timeAdded"> · </span>
+                      <span v-if="record.timeAdded"
+                        >有效期 +{{ record.timeAmount
+                        }}{{
+                          record.timeUnit === 'days'
+                            ? '天'
+                            : record.timeUnit === 'hours'
+                              ? '小时'
+                              : '月'
+                        }}</span
+                      >
+                    </p>
+                  </div>
+                  <div
+                    class="whitespace-nowrap text-right text-xs text-gray-500 dark:text-gray-400"
+                  >
+                    {{ formatDateTime(record.redeemedAt) }}
                   </div>
                 </div>
               </div>
@@ -481,63 +470,63 @@
           </div>
         </div>
       </div>
-
-      <!-- API Key 测试弹窗 -->
-      <UnifiedTestModal
-        :api-key-name="statsData?.name || ''"
-        :api-key-value="apiKey"
-        mode="apikey"
-        :service-type="testServiceType"
-        :show="showTestModal"
-        @close="closeTestModal"
-      />
-
-      <!-- API Stats 通知弹框 -->
-      <Teleport to="body">
-        <Transition name="fade">
-          <div
-            v-if="showNotice"
-            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-            @click.self="dismissNotice"
-          >
-            <div
-              class="w-full max-w-md rounded-lg bg-white p-6 shadow-lg dark:bg-gray-800"
-              @click.stop
-            >
-              <div class="mb-4 flex items-center gap-3">
-                <div
-                  class="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 text-white"
-                >
-                  <i class="fas fa-bell" />
-                </div>
-                <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                  {{ oemSettings.apiStatsNotice?.title || '通知' }}
-                </h3>
-              </div>
-              <p
-                class="mb-4 whitespace-pre-wrap text-sm leading-relaxed text-gray-600 dark:text-gray-300"
-              >
-                {{ oemSettings.apiStatsNotice?.content }}
-              </p>
-              <label class="mb-4 flex cursor-pointer items-center gap-2">
-                <input
-                  v-model="dontShowAgain"
-                  class="h-4 w-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
-                  type="checkbox"
-                />
-                <span class="text-sm text-gray-600 dark:text-gray-400">本次会话不再显示</span>
-              </label>
-              <button
-                class="w-full rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 px-4 py-2.5 font-medium text-white transition-colors hover:from-blue-600 hover:to-cyan-600"
-                @click="dismissNotice"
-              >
-                知道了
-              </button>
-            </div>
-          </div>
-        </Transition>
-      </Teleport>
     </div>
+
+    <!-- API Key 测试弹窗 -->
+    <UnifiedTestModal
+      :api-key-name="statsData?.name || ''"
+      :api-key-value="apiKey"
+      mode="apikey"
+      :service-type="testServiceType"
+      :show="showTestModal"
+      @close="closeTestModal"
+    />
+
+    <!-- API Stats 通知弹框 -->
+    <Teleport to="body">
+      <Transition name="fade">
+        <div
+          v-if="showNotice"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          @click.self="dismissNotice"
+        >
+          <div
+            class="w-full max-w-md rounded-lg bg-white p-6 shadow-lg dark:bg-gray-800"
+            @click.stop
+          >
+            <div class="mb-4 flex items-center gap-3">
+              <div
+                class="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 text-white"
+              >
+                <i class="fas fa-bell" />
+              </div>
+              <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                {{ oemSettings.apiStatsNotice?.title || '通知' }}
+              </h3>
+            </div>
+            <p
+              class="mb-4 whitespace-pre-wrap text-sm leading-relaxed text-gray-600 dark:text-gray-300"
+            >
+              {{ oemSettings.apiStatsNotice?.content }}
+            </p>
+            <label class="mb-4 flex cursor-pointer items-center gap-2">
+              <input
+                v-model="dontShowAgain"
+                class="h-4 w-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
+                type="checkbox"
+              />
+              <span class="text-sm text-gray-600 dark:text-gray-400">本次会话不再显示</span>
+            </label>
+            <button
+              class="w-full rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 px-4 py-2.5 font-medium text-white transition-colors hover:from-blue-600 hover:to-cyan-600"
+              @click="dismissNotice"
+            >
+              知道了
+            </button>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 

@@ -2842,6 +2842,36 @@
             </p>
           </div>
 
+          <!-- Worker 选择（所有平台通用） -->
+          <div>
+            <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300">
+              Worker 节点 (可选)
+            </label>
+            <select
+              v-model="form.workerId"
+              class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+              :disabled="loadingWorkers"
+            >
+              <option :value="null">本地执行（不使用 Worker）</option>
+              <option
+                v-for="worker in workers"
+                :key="worker.id"
+                :disabled="worker.status !== 'online'"
+                :value="worker.id"
+              >
+                {{ worker.name }}
+                <template v-if="worker.region">({{ worker.region }})</template>
+                -
+                {{ worker.status === 'online' ? '在线' : '离线' }}
+              </option>
+            </select>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              选择远程 Worker 节点处理请求，可实现 IP 隔离和网络优化。不选择则在本地执行。
+              <br />
+              <strong>提示：</strong>Worker 离线时会自动降级到本地执行。
+            </p>
+          </div>
+
           <!-- Claude Console 和 CCR 特定字段（编辑模式）-->
           <div
             v-if="form.platform === 'claude-console' || form.platform === 'ccr'"
@@ -3795,6 +3825,10 @@ const handleCancel = () => {
 const isEdit = computed(() => !!props.account)
 const show = ref(true)
 
+// Workers 列表
+const workers = ref([])
+const loadingWorkers = ref(false)
+
 // 支持 disableAutoProtection 的平台白名单
 const autoProtectionPlatforms = [
   'claude-console',
@@ -4041,6 +4075,7 @@ const form = ref({
   apiUrl: props.account?.apiUrl || '',
   apiKey: props.account?.apiKey || '',
   priority: props.account?.priority || 50,
+  workerId: props.account?.workerId || null, // Worker 选择
   endpointType: props.account?.endpointType || 'anthropic',
   // OpenAI-Responses 特定字段
   baseApi: props.account?.baseApi || '',
@@ -4349,9 +4384,12 @@ const generateSetupTokenAuthUrl = async () => {
   setupTokenLoading.value = true
   try {
     const proxyPayload = buildProxyPayload(form.value.proxy)
-    const proxyConfig = proxyPayload ? { proxy: proxyPayload } : {}
+    const requestData = {
+      ...(proxyPayload && { proxy: proxyPayload }),
+      ...(form.value.workerId && { workerId: form.value.workerId })
+    }
 
-    const result = await accountsStore.generateClaudeSetupTokenUrl(proxyConfig)
+    const result = await accountsStore.generateClaudeSetupTokenUrl(requestData)
     setupTokenAuthUrl.value = result.authUrl
     setupTokenSessionId.value = result.sessionId
   } catch (error) {
@@ -4471,7 +4509,8 @@ const handleCookieAuth = async () => {
     try {
       const payload = {
         sessionKey: sessionKeys[i],
-        ...(proxyPayload && { proxy: proxyPayload })
+        ...(proxyPayload && { proxy: proxyPayload }),
+        ...(form.value.workerId && { workerId: form.value.workerId })
       }
 
       let result
@@ -4651,7 +4690,8 @@ const handleOAuthSuccess = async (tokenInfoOrList) => {
       groupId: form.value.accountType === 'group' ? form.value.groupId : undefined,
       groupIds: form.value.accountType === 'group' ? form.value.groupIds : undefined,
       expiresAt: form.value.expiresAt || undefined,
-      proxy: proxyPayload
+      proxy: proxyPayload,
+      workerId: form.value.workerId || null // Worker 选择
     }
 
     if (currentPlatform === 'claude') {
@@ -4929,7 +4969,8 @@ const createAccount = async () => {
       groupId: form.value.accountType === 'group' ? form.value.groupId : undefined,
       groupIds: form.value.accountType === 'group' ? form.value.groupIds : undefined,
       expiresAt: form.value.expiresAt || undefined,
-      proxy: proxyPayload
+      proxy: proxyPayload,
+      workerId: form.value.workerId || null // Worker 选择
     }
 
     if (form.value.platform === 'claude') {
@@ -5209,7 +5250,8 @@ const updateAccount = async () => {
       groupId: form.value.accountType === 'group' ? form.value.groupId : undefined,
       groupIds: form.value.accountType === 'group' ? form.value.groupIds : undefined,
       expiresAt: form.value.expiresAt || undefined,
-      proxy: proxyPayload
+      proxy: proxyPayload,
+      workerId: form.value.workerId || null // Worker 选择
     }
 
     // 只有非空时才更新token
@@ -6152,6 +6194,21 @@ const formatExpireDate = (dateString) => {
   })
 }
 
+// 获取 Workers 列表
+const fetchWorkers = async () => {
+  try {
+    loadingWorkers.value = true
+    const res = await httpApis.getWorkersApi()
+    if (res.success) {
+      workers.value = res.data || []
+    }
+  } catch (error) {
+    console.error('Failed to fetch workers:', error)
+  } finally {
+    loadingWorkers.value = false
+  }
+}
+
 // 组件挂载时获取统一 User-Agent 信息
 onMounted(() => {
   // 初始化平台分组
@@ -6164,6 +6221,9 @@ onMounted(() => {
 
   // 加载模型列表
   loadCommonModels()
+
+  // 获取 Workers 列表
+  fetchWorkers()
 
   // 获取Claude Code统一User-Agent信息
   fetchUnifiedUserAgent()

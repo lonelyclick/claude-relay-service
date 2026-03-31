@@ -157,6 +157,16 @@ async function sendAntigravityRequest({
       }
       throw err
     }
+    // Worker 离线也不能降级到本地执行
+    const offlineErr = new Error(
+      `Worker ${workerId} is offline, cannot process Antigravity request. Antigravity does not support Worker routing.`
+    )
+    offlineErr.status = 503
+    offlineErr.error = {
+      message: `Worker ${workerId} is offline. Antigravity does not support Worker routing.`,
+      type: 'worker_offline'
+    }
+    throw offlineErr
   }
 
   const { response } = await antigravityClient.request({

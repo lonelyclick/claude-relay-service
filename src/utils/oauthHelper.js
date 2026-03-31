@@ -7,6 +7,7 @@ const crypto = require('crypto')
 const ProxyHelper = require('./proxyHelper')
 const axios = require('axios')
 const logger = require('./logger')
+const workerRouter = require('../services/worker/workerRouter')
 
 // OAuth 配置常量 - 从claude-code-login.js提取
 const OAUTH_CONFIG = {
@@ -146,6 +147,7 @@ function createProxyAgent(proxyConfig) {
  * @param {string} codeVerifier - PKCE code verifier
  * @param {string} state - state 参数
  * @param {object|null} proxyConfig - 代理配置（可选）
+ * @param {string|null} workerId - Worker ID（可选，通过 Worker 执行请求）
  * @returns {Promise<object>} Claude格式的token响应
  */
 async function exchangeCodeForTokens(
@@ -167,7 +169,86 @@ async function exchangeCodeForTokens(
     state
   }
 
-  // 创建代理agent
+  // Worker 路由支持
+  if (workerId) {
+    logger.info(`🔀 Routing OAuth token exchange through Worker: ${workerId}`)
+
+    // 解析 Worker 是否在线
+    const resolvedWorkerId = await workerRouter.resolveWorker(workerId)
+
+    if (resolvedWorkerId) {
+      // Worker 在线，通过 Worker 执行
+      try {
+        const remoteWorkerProxy = require('../services/worker/remoteWorkerProxy')
+
+        const taskConfig = {
+          method: 'POST',
+          url: OAUTH_CONFIG.TOKEN_URL,
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'claude-cli/1.0.56 (external, cli)',
+            Accept: 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            Referer: 'https://claude.ai/',
+            Origin: 'https://claude.ai'
+          },
+          data: params,
+          timeout: 30000,
+          proxy: proxyConfig || null
+        }
+
+        const workerResponse = await remoteWorkerProxy.sendRequest(resolvedWorkerId, taskConfig)
+
+        if (!workerResponse || !workerResponse.data) {
+          throw new Error('Worker returned empty response')
+        }
+
+        logger.authDetail('OAuth token exchange response (via Worker)', workerResponse.data)
+        logger.info('📊 OAuth token exchange response (analyzing for subscription info):', {
+          status: workerResponse.status,
+          hasData: !!workerResponse.data,
+          dataKeys: workerResponse.data ? Object.keys(workerResponse.data) : []
+        })
+        logger.success('OAuth token exchange successful via Worker', {
+          status: workerResponse.status,
+          hasAccessToken: !!workerResponse.data?.access_token,
+          hasRefreshToken: !!workerResponse.data?.refresh_token,
+          scopes: workerResponse.data?.scope,
+          subscription: workerResponse.data?.subscription,
+          plan: workerResponse.data?.plan,
+          tier: workerResponse.data?.tier,
+          accountType: workerResponse.data?.account_type,
+          features: workerResponse.data?.features,
+          limits: workerResponse.data?.limits
+        })
+
+        const { data } = workerResponse
+        const organizationInfo = data.organization || null
+        const accountInfo = data.account || null
+        const extInfo = extractExtInfo(data)
+
+        return {
+          accessToken: data.access_token,
+          refreshToken: data.refresh_token,
+          expiresAt: (Math.floor(Date.now() / 1000) + data.expires_in) * 1000,
+          scopes: data.scope ? data.scope.split(' ') : ['user:inference', 'user:profile'],
+          isMax: true,
+          organization: organizationInfo,
+          account: accountInfo,
+          ext_info: extInfo
+        }
+      } catch (workerError) {
+        logger.error(
+          `❌ Worker OAuth token exchange failed, falling back to local: ${workerError.message}`
+        )
+        // 降级到本地执行
+      }
+    } else {
+      logger.warn(`⚠️  Worker ${workerId} offline, falling back to local OAuth token exchange`)
+    }
+  }
+
+  // 本地执行（默认或降级）
   const agent = createProxyAgent(proxyConfig)
 
   try {
@@ -179,7 +260,7 @@ async function exchangeCodeForTokens(
       logger.debug('🌐 No proxy configured for OAuth token exchange')
     }
 
-    logger.debug('🔄 Attempting OAuth token exchange', {
+    logger.debug('🔄 Attempting OAuth token exchange (local)', {
       url: OAUTH_CONFIG.TOKEN_URL,
       codeLength: cleanedCode.length,
       codePrefix: `${cleanedCode.substring(0, 10)}...`,
@@ -205,43 +286,7 @@ async function exchangeCodeForTokens(
       axiosConfig.proxy = false
     }
 
-    // 🔌 Worker 路由：如果指定了 workerId，通过 Worker 执行 OAuth token exchange
-    let response = null
-    if (workerId) {
-      const workerRouter = require('../services/worker/workerRouter')
-      const routing = workerRouter.resolve(workerId)
-
-      if (routing.mode === 'remote') {
-        const remoteWorkerProxy = require('../services/worker/remoteWorkerProxy')
-        logger.info(`🔌 [Worker] Routing OAuth token exchange through Worker: ${routing.workerId}`)
-
-        try {
-          const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
-            url: OAUTH_CONFIG.TOKEN_URL,
-            method: 'POST',
-            headers: axiosConfig.headers,
-            data: params,
-            proxy: proxyConfig || null,
-            timeout: 30000
-          })
-
-          response = {
-            status: workerResponse.statusCode,
-            data: workerResponse.body
-          }
-        } catch (workerError) {
-          logger.error(`🔌 [Worker] Worker OAuth token exchange failed: ${workerError.message}`)
-          throw new Error(`Worker OAuth token exchange failed: ${workerError.message}`)
-        }
-      } else {
-        throw new Error(`Worker ${workerId} is offline, cannot perform OAuth token exchange`)
-      }
-    }
-
-    // 本地执行（无 Worker 绑定时）
-    if (!response) {
-      response = await axios.post(OAUTH_CONFIG.TOKEN_URL, params, axiosConfig)
-    }
+    const response = await axios.post(OAUTH_CONFIG.TOKEN_URL, params, axiosConfig)
 
     // 记录完整的响应数据到专门的认证详细日志
     logger.authDetail('OAuth token exchange response', response.data)
@@ -407,6 +452,7 @@ function parseCallbackUrl(input) {
  * @param {string} codeVerifier - PKCE code verifier
  * @param {string} state - state 参数
  * @param {object|null} proxyConfig - 代理配置（可选）
+ * @param {string|null} workerId - Worker ID（可选）
  * @returns {Promise<object>} Claude格式的token响应
  */
 async function exchangeSetupTokenCode(
@@ -429,7 +475,100 @@ async function exchangeSetupTokenCode(
     expires_in: 31536000 // Setup Token 可以设置较长的过期时间
   }
 
-  // 创建代理agent
+  // Worker 路由支持
+  if (workerId) {
+    logger.info(`🔀 Routing Setup Token exchange through Worker: ${workerId}`)
+
+    const resolvedWorkerId = await workerRouter.resolveWorker(workerId)
+
+    if (resolvedWorkerId) {
+      try {
+        const remoteWorkerProxy = require('../services/worker/remoteWorkerProxy')
+
+        const taskConfig = {
+          method: 'POST',
+          url: OAUTH_CONFIG.TOKEN_URL,
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'claude-cli/1.0.56 (external, cli)',
+            Accept: 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            Referer: 'https://claude.ai/',
+            Origin: 'https://claude.ai'
+          },
+          data: params,
+          timeout: 30000,
+          proxy: proxyConfig || null
+        }
+
+        const workerResponse = await remoteWorkerProxy.sendRequest(resolvedWorkerId, taskConfig)
+
+        if (!workerResponse || !workerResponse.data) {
+          throw new Error('Worker returned empty response')
+        }
+
+        logger.authDetail('Setup Token exchange response (via Worker)', workerResponse.data)
+        logger.info('📊 Setup Token exchange response (analyzing for subscription info):', {
+          status: workerResponse.status,
+          hasData: !!workerResponse.data,
+          dataKeys: workerResponse.data ? Object.keys(workerResponse.data) : []
+        })
+        logger.success('Setup Token exchange successful via Worker', {
+          status: workerResponse.status,
+          hasAccessToken: !!workerResponse.data?.access_token,
+          scopes: workerResponse.data?.scope,
+          subscription: workerResponse.data?.subscription,
+          plan: workerResponse.data?.plan,
+          tier: workerResponse.data?.tier,
+          accountType: workerResponse.data?.account_type,
+          features: workerResponse.data?.features,
+          limits: workerResponse.data?.limits
+        })
+
+        const { data } = workerResponse
+        const organizationInfo = data.organization || null
+        const accountInfo = data.account || null
+        const extInfo = extractExtInfo(data)
+
+        const result = {
+          accessToken: data.access_token,
+          refreshToken: '',
+          expiresAt: (Math.floor(Date.now() / 1000) + data.expires_in) * 1000,
+          scopes: data.scope ? data.scope.split(' ') : ['user:inference', 'user:profile'],
+          isMax: true,
+          organization: organizationInfo,
+          account: accountInfo,
+          extInfo
+        }
+
+        if (data.subscription || data.plan || data.tier || data.account_type) {
+          result.subscriptionInfo = {
+            subscription: data.subscription,
+            plan: data.plan,
+            tier: data.tier,
+            accountType: data.account_type,
+            features: data.features,
+            limits: data.limits
+          }
+          logger.info(
+            '🎯 Found subscription info in Setup Token response:',
+            result.subscriptionInfo
+          )
+        }
+
+        return result
+      } catch (workerError) {
+        logger.error(
+          `❌ Worker Setup Token exchange failed, falling back to local: ${workerError.message}`
+        )
+        // 降级到本地执行
+      }
+    } else {
+      logger.warn(`⚠️  Worker ${workerId} offline, falling back to local Setup Token exchange`)
+    }
+  }
+
+  // 本地执行（默认或降级）
   const agent = createProxyAgent(proxyConfig)
 
   try {
@@ -441,7 +580,7 @@ async function exchangeSetupTokenCode(
       logger.debug('🌐 No proxy configured for Setup Token exchange')
     }
 
-    logger.debug('🔄 Attempting Setup Token exchange', {
+    logger.debug('🔄 Attempting Setup Token exchange (local)', {
       url: OAUTH_CONFIG.TOKEN_URL,
       codeLength: cleanedCode.length,
       codePrefix: `${cleanedCode.substring(0, 10)}...`,
@@ -467,43 +606,7 @@ async function exchangeSetupTokenCode(
       axiosConfig.proxy = false
     }
 
-    // 🔌 Worker 路由：如果指定了 workerId，通过 Worker 执行 Setup Token exchange
-    let response = null
-    if (workerId) {
-      const workerRouter = require('../services/worker/workerRouter')
-      const routing = workerRouter.resolve(workerId)
-
-      if (routing.mode === 'remote') {
-        const remoteWorkerProxy = require('../services/worker/remoteWorkerProxy')
-        logger.info(`🔌 [Worker] Routing Setup Token exchange through Worker: ${routing.workerId}`)
-
-        try {
-          const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
-            url: OAUTH_CONFIG.TOKEN_URL,
-            method: 'POST',
-            headers: axiosConfig.headers,
-            data: params,
-            proxy: proxyConfig || null,
-            timeout: 30000
-          })
-
-          response = {
-            status: workerResponse.statusCode,
-            data: workerResponse.body
-          }
-        } catch (workerError) {
-          logger.error(`🔌 [Worker] Worker Setup Token exchange failed: ${workerError.message}`)
-          throw new Error(`Worker Setup Token exchange failed: ${workerError.message}`)
-        }
-      } else {
-        throw new Error(`Worker ${workerId} is offline, cannot perform Setup Token exchange`)
-      }
-    }
-
-    // 本地执行（无 Worker 绑定时）
-    if (!response) {
-      response = await axios.post(OAUTH_CONFIG.TOKEN_URL, params, axiosConfig)
-    }
+    const response = await axios.post(OAUTH_CONFIG.TOKEN_URL, params, axiosConfig)
 
     // 记录完整的响应数据到专门的认证详细日志
     logger.authDetail('Setup Token exchange response', response.data)
@@ -690,7 +793,7 @@ function buildCookieHeaders(sessionKey) {
  * @param {object|null} proxyConfig - 代理配置（可选）
  * @returns {Promise<{organizationUuid: string, capabilities: string[]}>}
  */
-async function getOrganizationInfo(sessionKey, proxyConfig = null, workerId = null) {
+async function getOrganizationInfo(sessionKey, proxyConfig = null) {
   const headers = buildCookieHeaders(sessionKey)
   const agent = createProxyAgent(proxyConfig)
 
@@ -716,40 +819,7 @@ async function getOrganizationInfo(sessionKey, proxyConfig = null, workerId = nu
       axiosConfig.proxy = false
     }
 
-    // 🔌 Worker 路由
-    let response = null
-    if (workerId) {
-      const workerRouter = require('../services/worker/workerRouter')
-      const routing = workerRouter.resolve(workerId)
-
-      if (routing.mode === 'remote') {
-        const remoteWorkerProxy = require('../services/worker/remoteWorkerProxy')
-        logger.info(
-          `🔌 [Worker] Routing organization info fetch through Worker: ${routing.workerId}`
-        )
-
-        try {
-          const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
-            url: COOKIE_OAUTH_CONFIG.ORGANIZATIONS_URL,
-            method: 'GET',
-            headers,
-            proxy: proxyConfig || null,
-            timeout: 30000
-          })
-
-          response = { status: workerResponse.statusCode, data: workerResponse.body }
-        } catch (workerError) {
-          logger.error(`🔌 [Worker] Worker org info fetch failed: ${workerError.message}`)
-          throw new Error(`Worker org info fetch failed: ${workerError.message}`)
-        }
-      } else {
-        throw new Error(`Worker ${workerId} is offline, cannot fetch organization info`)
-      }
-    }
-
-    if (!response) {
-      response = await axios.get(COOKIE_OAUTH_CONFIG.ORGANIZATIONS_URL, axiosConfig)
-    }
+    const response = await axios.get(COOKIE_OAUTH_CONFIG.ORGANIZATIONS_URL, axiosConfig)
 
     if (!response.data || !Array.isArray(response.data)) {
       throw new Error('获取组织信息失败：响应格式无效')
@@ -816,13 +886,7 @@ async function getOrganizationInfo(sessionKey, proxyConfig = null, workerId = nu
  * @param {object|null} proxyConfig - 代理配置（可选）
  * @returns {Promise<{authorizationCode: string, codeVerifier: string, state: string}>}
  */
-async function authorizeWithCookie(
-  sessionKey,
-  organizationUuid,
-  scope,
-  proxyConfig = null,
-  workerId = null
-) {
+async function authorizeWithCookie(sessionKey, organizationUuid, scope, proxyConfig = null) {
   // 生成PKCE参数
   const codeVerifier = generateCodeVerifier()
   const codeChallenge = generateCodeChallenge(codeVerifier)
@@ -878,39 +942,7 @@ async function authorizeWithCookie(
       axiosConfig.proxy = false
     }
 
-    // 🔌 Worker 路由
-    let response = null
-    if (workerId) {
-      const workerRouter = require('../services/worker/workerRouter')
-      const routing = workerRouter.resolve(workerId)
-
-      if (routing.mode === 'remote') {
-        const remoteWorkerProxy = require('../services/worker/remoteWorkerProxy')
-        logger.info(`🔌 [Worker] Routing Cookie authorization through Worker: ${routing.workerId}`)
-
-        try {
-          const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
-            url: authorizeUrl,
-            method: 'POST',
-            headers,
-            data: payload,
-            proxy: proxyConfig || null,
-            timeout: 30000
-          })
-
-          response = { status: workerResponse.statusCode, data: workerResponse.body }
-        } catch (workerError) {
-          logger.error(`🔌 [Worker] Worker Cookie auth failed: ${workerError.message}`)
-          throw new Error(`Worker Cookie authorization failed: ${workerError.message}`)
-        }
-      } else {
-        throw new Error(`Worker ${workerId} is offline, cannot perform Cookie authorization`)
-      }
-    }
-
-    if (!response) {
-      response = await axios.post(authorizeUrl, payload, axiosConfig)
-    }
+    const response = await axios.post(authorizeUrl, payload, axiosConfig)
 
     // 从响应中获取redirect_uri
     const redirectUri = response.data?.redirect_uri
@@ -980,6 +1012,7 @@ async function authorizeWithCookie(
  * @param {string} sessionKey - sessionKey值
  * @param {object|null} proxyConfig - 代理配置（可选）
  * @param {boolean} isSetupToken - 是否为Setup Token模式
+ * @param {string|null} workerId - Worker ID（可选）
  * @returns {Promise<{claudeAiOauth: object, organizationUuid: string, capabilities: string[]}>}
  */
 async function oauthWithCookie(
@@ -991,16 +1024,12 @@ async function oauthWithCookie(
   logger.info('🍪 Starting Cookie-based OAuth flow', {
     isSetupToken,
     hasProxy: !!proxyConfig,
-    workerId: workerId || 'none'
+    hasWorkerId: !!workerId
   })
 
   // 步骤1：获取组织信息
   logger.debug('Step 1/3: Fetching organization info...')
-  const { organizationUuid, capabilities } = await getOrganizationInfo(
-    sessionKey,
-    proxyConfig,
-    workerId
-  )
+  const { organizationUuid, capabilities } = await getOrganizationInfo(sessionKey, proxyConfig)
 
   // 步骤2：确定scope并获取授权code
   const scope = isSetupToken ? OAUTH_CONFIG.SCOPES_SETUP : 'user:profile user:inference'
@@ -1010,8 +1039,7 @@ async function oauthWithCookie(
     sessionKey,
     organizationUuid,
     scope,
-    proxyConfig,
-    workerId
+    proxyConfig
   )
 
   // 步骤3：交换token

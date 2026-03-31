@@ -53,7 +53,7 @@ const normalizeTempUnavailablePolicyPayload = (payload, options = {}) => {
 // 生成OAuth授权URL
 router.post('/claude-accounts/generate-auth-url', authenticateAdmin, async (req, res) => {
   try {
-    const { proxy } = req.body // 接收代理配置
+    const { proxy, workerId } = req.body // 接收代理配置和 Worker ID
     const oauthParams = await oauthHelper.generateOAuthParams()
 
     // 将codeVerifier和state临时存储到Redis，用于后续验证
@@ -63,6 +63,7 @@ router.post('/claude-accounts/generate-auth-url', authenticateAdmin, async (req,
       state: oauthParams.state,
       codeChallenge: oauthParams.codeChallenge,
       proxy: proxy || null, // 存储代理配置
+      workerId: workerId || null, // 存储 Worker ID
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString() // 10分钟过期
     })
@@ -131,7 +132,7 @@ router.post('/claude-accounts/exchange-code', authenticateAdmin, async (req, res
       oauthSession.codeVerifier,
       oauthSession.state,
       oauthSession.proxy, // 传递代理配置
-      oauthSession.workerId || null // 传递 Worker ID
+      oauthSession.workerId // 传递 Worker ID
     )
 
     // 清理OAuth会话
@@ -169,7 +170,7 @@ router.post('/claude-accounts/exchange-code', authenticateAdmin, async (req, res
 // 生成Claude setup-token授权URL
 router.post('/claude-accounts/generate-setup-token-url', authenticateAdmin, async (req, res) => {
   try {
-    const { proxy } = req.body // 接收代理配置
+    const { proxy, workerId } = req.body // 接收代理配置和 Worker ID
     const setupTokenParams = await oauthHelper.generateSetupTokenParams()
 
     // 将codeVerifier和state临时存储到Redis，用于后续验证
@@ -180,6 +181,7 @@ router.post('/claude-accounts/generate-setup-token-url', authenticateAdmin, asyn
       state: setupTokenParams.state,
       codeChallenge: setupTokenParams.codeChallenge,
       proxy: proxy || null, // 存储代理配置
+      workerId: workerId || null, // 存储 Worker ID
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString() // 10分钟过期
     })
@@ -254,7 +256,7 @@ router.post('/claude-accounts/exchange-setup-token-code', authenticateAdmin, asy
       oauthSession.codeVerifier,
       oauthSession.state,
       oauthSession.proxy, // 传递代理配置
-      oauthSession.workerId || null // 传递 Worker ID
+      oauthSession.workerId // 传递 Worker ID
     )
 
     // 清理OAuth会话
@@ -312,16 +314,12 @@ router.post('/claude-accounts/oauth-with-cookie', authenticateAdmin, async (req,
     logger.info('🍪 Starting Cookie-based OAuth authorization', {
       sessionKeyLength: trimmedSessionKey.length,
       sessionKeyPrefix: `${trimmedSessionKey.substring(0, 10)}...`,
-      hasProxy: !!proxy
+      hasProxy: !!proxy,
+      hasWorkerId: !!workerId
     })
 
     // 执行Cookie自动授权流程
-    const result = await oauthHelper.oauthWithCookie(
-      trimmedSessionKey,
-      proxy,
-      false,
-      workerId || null
-    )
+    const result = await oauthHelper.oauthWithCookie(trimmedSessionKey, proxy, false, workerId)
 
     logger.success('🎉 Cookie-based OAuth authorization completed successfully')
 
@@ -366,16 +364,12 @@ router.post('/claude-accounts/setup-token-with-cookie', authenticateAdmin, async
     logger.info('🍪 Starting Cookie-based Setup Token authorization', {
       sessionKeyLength: trimmedSessionKey.length,
       sessionKeyPrefix: `${trimmedSessionKey.substring(0, 10)}...`,
-      hasProxy: !!proxy
+      hasProxy: !!proxy,
+      hasWorkerId: !!workerId
     })
 
     // 执行Cookie自动授权流程（Setup Token模式）
-    const result = await oauthHelper.oauthWithCookie(
-      trimmedSessionKey,
-      proxy,
-      true,
-      workerId || null
-    )
+    const result = await oauthHelper.oauthWithCookie(trimmedSessionKey, proxy, true, workerId)
 
     logger.success('🎉 Cookie-based Setup Token authorization completed successfully')
 

@@ -114,7 +114,7 @@ function buildCodexUsageSnapshot(accountData) {
 }
 
 // 刷新访问令牌
-async function refreshAccessToken(refreshToken, proxy = null, accountData = null) {
+async function refreshAccessToken(refreshToken, proxy = null, workerId = null) {
   try {
     // Codex CLI 的官方 CLIENT_ID
     const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
@@ -127,65 +127,80 @@ async function refreshAccessToken(refreshToken, proxy = null, accountData = null
       scope: 'openid profile email'
     }).toString()
 
-    // 配置请求选项
-    const requestOptions = {
-      method: 'POST',
-      url: 'https://auth.openai.com/oauth/token',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Content-Length': requestData.length
-      },
-      data: requestData,
-      timeout: config.requestTimeout || 600000 // 使用统一的请求超时配置
-    }
+    let response
 
-    // 配置代理（如果有）
-    const proxyAgent = ProxyHelper.createProxyAgent(proxy)
-    if (proxyAgent) {
-      requestOptions.httpAgent = proxyAgent
-      requestOptions.httpsAgent = proxyAgent
-      requestOptions.proxy = false
-      logger.info(
-        `🌐 Using proxy for OpenAI token refresh: ${ProxyHelper.getProxyDescription(proxy)}`
-      )
-    } else {
-      logger.debug('🌐 No proxy configured for OpenAI token refresh')
-    }
+    // Worker 路由支持
+    if (workerId) {
+      logger.info(`🔀 Routing OpenAI token refresh through Worker: ${workerId}`)
 
-    // 🔌 Worker 路由
-    let response = null
-    if (accountData && accountData.workerId) {
       const workerRouter = require('../worker/workerRouter')
-      const routing = workerRouter.resolve(accountData.workerId)
+      const resolvedWorkerId = await workerRouter.resolveWorker(workerId)
 
-      if (routing.mode === 'remote') {
-        const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
-        logger.info(`🔌 [Worker] Routing OpenAI token refresh through Worker: ${routing.workerId}`)
-
+      if (resolvedWorkerId) {
         try {
-          const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
-            url: 'https://auth.openai.com/oauth/token',
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            data: requestData,
-            proxy: accountData.proxy || null,
-            timeout: 30000
-          })
+          const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
 
-          response = { status: workerResponse.statusCode, data: workerResponse.body }
+          const taskConfig = {
+            method: 'POST',
+            url: 'https://auth.openai.com/oauth/token',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Content-Length': requestData.length
+            },
+            data: requestData,
+            timeout: config.requestTimeout || 600000,
+            proxy: proxy || null
+          }
+
+          response = await remoteWorkerProxy.sendRequest(resolvedWorkerId, taskConfig)
+
+          if (!response || !response.data) {
+            throw new Error('Worker returned empty response')
+          }
+
+          logger.success('✅ OpenAI token refresh successful via Worker')
         } catch (workerError) {
-          logger.error(`🔌 [Worker] OpenAI token refresh failed: ${workerError.message}`)
-          throw workerError
+          logger.error(
+            `❌ Worker OpenAI token refresh failed, falling back to local: ${workerError.message}`
+          )
+          response = null // 标记需要降级
         }
       } else {
-        throw new Error(`Worker ${accountData.workerId} is offline, cannot refresh OpenAI token`)
+        logger.warn(`⚠️  Worker ${workerId} offline, falling back to local OpenAI token refresh`)
       }
     }
 
-    // 本地执行（无 Worker 绑定时）
+    // 本地执行（默认或降级）
     if (!response) {
+      const requestOptions = {
+        method: 'POST',
+        url: 'https://auth.openai.com/oauth/token',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Length': requestData.length
+        },
+        data: requestData,
+        timeout: config.requestTimeout || 600000
+      }
+
+      // 配置代理（如果有）
+      const proxyAgent = ProxyHelper.createProxyAgent(proxy)
+      if (proxyAgent) {
+        requestOptions.httpAgent = proxyAgent
+        requestOptions.httpsAgent = proxyAgent
+        requestOptions.proxy = false
+        logger.info(
+          `🌐 Using proxy for OpenAI token refresh: ${ProxyHelper.getProxyDescription(proxy)}`
+        )
+      } else {
+        logger.debug('🌐 No proxy configured for OpenAI token refresh')
+      }
+
+      // 发送请求
       logger.info('🔍 发送 token 刷新请求，使用代理:', !!requestOptions.httpsAgent)
       response = await axios(requestOptions)
+
+      logger.success('✅ OpenAI token refresh successful (local)')
     }
 
     if (response.status === 200 && response.data) {
@@ -364,7 +379,7 @@ async function refreshAccountToken(accountId) {
       }
     }
 
-    const newTokens = await refreshAccessToken(refreshToken, proxy, account)
+    const newTokens = await refreshAccessToken(refreshToken, proxy, account.workerId)
     if (!newTokens) {
       throw new Error('Failed to refresh token')
     }

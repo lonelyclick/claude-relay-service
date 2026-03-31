@@ -635,9 +635,7 @@ class CcrRelayService {
         }
 
         // Worker 离线，直接报错
-        throw new Error(
-          `Worker ${account.workerId} is offline, cannot process CCR stream request`
-        )
+        throw new Error(`Worker ${account.workerId} is offline, cannot process CCR stream request`)
       }
 
       // 本地执行（无 Worker 绑定时）— 发送流式请求

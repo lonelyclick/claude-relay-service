@@ -43,7 +43,7 @@ function generateOpenAIPKCE() {
 // 生成 OpenAI OAuth 授权 URL
 router.post('/generate-auth-url', authenticateAdmin, async (req, res) => {
   try {
-    const { proxy } = req.body
+    const { proxy, workerId } = req.body
 
     // 生成 PKCE 参数
     const pkce = generateOpenAIPKCE()
@@ -54,12 +54,13 @@ router.post('/generate-auth-url', authenticateAdmin, async (req, res) => {
     // 创建会话 ID
     const sessionId = crypto.randomUUID()
 
-    // 将 PKCE 参数和代理配置存储到 Redis
+    // 将 PKCE 参数、代理配置和 Worker ID 存储到 Redis
     await redis.setOAuthSession(sessionId, {
       codeVerifier: pkce.codeVerifier,
       codeChallenge: pkce.codeChallenge,
       state,
       proxy: proxy || null,
+      workerId: workerId || null,
       platform: 'openai',
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString()
@@ -139,30 +140,78 @@ router.post('/exchange-code', authenticateAdmin, async (req, res) => {
     logger.info('Exchanging OpenAI authorization code:', {
       sessionId,
       codeLength: code.length,
-      hasCodeVerifier: !!sessionData.codeVerifier
+      hasCodeVerifier: !!sessionData.codeVerifier,
+      hasWorkerId: !!sessionData.workerId
     })
 
-    // 配置代理（如果有）
-    const axiosConfig = {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
+    let tokenResponse
+
+    // Worker 路由支持
+    if (sessionData.workerId) {
+      logger.info(`🔀 Routing OpenAI token exchange through Worker: ${sessionData.workerId}`)
+
+      const workerRouter = require('../../services/worker/workerRouter')
+      const resolvedWorkerId = await workerRouter.resolveWorker(sessionData.workerId)
+
+      if (resolvedWorkerId) {
+        try {
+          const remoteWorkerProxy = require('../../services/worker/remoteWorkerProxy')
+
+          const taskConfig = {
+            method: 'POST',
+            url: `${OPENAI_CONFIG.BASE_URL}/oauth/token`,
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            data: new URLSearchParams(tokenData).toString(),
+            timeout: 30000,
+            proxy: sessionData.proxy || null
+          }
+
+          tokenResponse = await remoteWorkerProxy.sendRequest(resolvedWorkerId, taskConfig)
+
+          if (!tokenResponse || !tokenResponse.data) {
+            throw new Error('Worker returned empty response')
+          }
+
+          logger.success('OpenAI token exchange successful via Worker')
+        } catch (workerError) {
+          logger.error(
+            `❌ Worker OpenAI token exchange failed, falling back to local: ${workerError.message}`
+          )
+          // 降级到本地执行
+          tokenResponse = null
+        }
+      } else {
+        logger.warn(
+          `⚠️  Worker ${sessionData.workerId} offline, falling back to local OpenAI token exchange`
+        )
       }
     }
 
-    // 配置代理（如果有）
-    const proxyAgent = ProxyHelper.createProxyAgent(sessionData.proxy)
-    if (proxyAgent) {
-      axiosConfig.httpAgent = proxyAgent
-      axiosConfig.httpsAgent = proxyAgent
-      axiosConfig.proxy = false
-    }
+    // 本地执行（默认或降级）
+    if (!tokenResponse) {
+      const axiosConfig = {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      }
 
-    // 交换 authorization code 获取 tokens
-    const tokenResponse = await axios.post(
-      `${OPENAI_CONFIG.BASE_URL}/oauth/token`,
-      new URLSearchParams(tokenData).toString(),
-      axiosConfig
-    )
+      const proxyAgent = ProxyHelper.createProxyAgent(sessionData.proxy)
+      if (proxyAgent) {
+        axiosConfig.httpAgent = proxyAgent
+        axiosConfig.httpsAgent = proxyAgent
+        axiosConfig.proxy = false
+      }
+
+      tokenResponse = await axios.post(
+        `${OPENAI_CONFIG.BASE_URL}/oauth/token`,
+        new URLSearchParams(tokenData).toString(),
+        axiosConfig
+      )
+
+      logger.success('OpenAI token exchange successful (local)')
+    }
 
     const { id_token, access_token, refresh_token, expires_in } = tokenResponse.data
 
