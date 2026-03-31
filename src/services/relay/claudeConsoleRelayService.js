@@ -328,8 +328,52 @@ class ClaudeConsoleRelayService {
         )
       }
 
-      // 发送请求
-      const response = await axios(requestConfig)
+      // 🔌 Worker 路由：如果账户绑定了在线的远程 Worker，通过 WebSocket 下发
+      let response = null
+      if (account.workerId) {
+        const workerRouter = require('../worker/workerRouter')
+        const routing = workerRouter.resolve(account.workerId)
+
+        if (routing.mode === 'remote') {
+          const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
+          logger.info(
+            `🔌 [Worker] Routing Console non-stream request to remote worker ${routing.workerId} for account ${accountId}`
+          )
+
+          try {
+            const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
+              url: apiEndpoint,
+              method: 'POST',
+              headers: requestConfig.headers,
+              data: modifiedRequestBody,
+              proxy: account.proxy || null,
+              timeout: requestConfig.timeout
+            })
+
+            response = {
+              status: workerResponse.statusCode,
+              statusText: workerResponse.statusMessage || 'OK',
+              headers: workerResponse.headers || {},
+              data: workerResponse.body
+            }
+
+            logger.info(
+              `🔌 [Worker] Received response from worker ${routing.workerId}, status: ${response.status}`
+            )
+          } catch (error) {
+            logger.error(`🔌 [Worker] Worker request failed: ${error.message}`)
+            throw error
+          }
+        } else {
+          // Worker 离线，直接报错
+          throw new Error(`Worker ${account.workerId} is offline, cannot process request`)
+        }
+      }
+
+      // 本地执行（无 Worker 绑定时）
+      if (!response) {
+        response = await axios(requestConfig)
+      }
 
       // 📬 请求已发送成功，立即释放队列锁（无需等待响应处理完成）
       // 因为 Claude API 限流基于请求发送时刻计算（RPM），不是请求完成时刻
@@ -851,449 +895,635 @@ class ClaudeConsoleRelayService {
     onResponseHeaderReceived = null
   ) {
     return new Promise((resolve, reject) => {
-      let aborted = false
+      ;(async () => {
+        let aborted = false
 
-      // 构建完整的API URL
-      const cleanUrl = account.apiUrl.replace(/\/$/, '') // 移除末尾斜杠
-      const apiEndpoint = cleanUrl.endsWith('/v1/messages') ? cleanUrl : `${cleanUrl}/v1/messages`
+        // 构建完整的API URL
+        const cleanUrl = account.apiUrl.replace(/\/$/, '') // 移除末尾斜杠
+        const apiEndpoint = cleanUrl.endsWith('/v1/messages') ? cleanUrl : `${cleanUrl}/v1/messages`
 
-      logger.debug(`🎯 Final API endpoint for stream: ${apiEndpoint}`)
+        logger.debug(`🎯 Final API endpoint for stream: ${apiEndpoint}`)
 
-      // 过滤客户端请求头
-      const filteredHeaders = this._filterClientHeaders(clientHeaders)
-      logger.debug(`[DEBUG] Filtered client headers: ${JSON.stringify(filteredHeaders)}`)
+        // 过滤客户端请求头
+        const filteredHeaders = this._filterClientHeaders(clientHeaders)
+        logger.debug(`[DEBUG] Filtered client headers: ${JSON.stringify(filteredHeaders)}`)
 
-      // 决定使用的 User-Agent：优先使用账户自定义的，否则透传客户端的，最后才使用默认值
-      const userAgent =
-        account.userAgent ||
-        clientHeaders?.['user-agent'] ||
-        clientHeaders?.['User-Agent'] ||
-        this.defaultUserAgent
+        // 决定使用的 User-Agent：优先使用账户自定义的，否则透传客户端的，最后才使用默认值
+        const userAgent =
+          account.userAgent ||
+          clientHeaders?.['user-agent'] ||
+          clientHeaders?.['User-Agent'] ||
+          this.defaultUserAgent
 
-      // 如果账户配置了自定义 userAgent，从 filteredHeaders 中移除 user-agent 以防覆盖
-      if (account.userAgent) {
-        delete filteredHeaders['user-agent']
-        delete filteredHeaders['User-Agent']
-      }
+        // 如果账户配置了自定义 userAgent，从 filteredHeaders 中移除 user-agent 以防覆盖
+        if (account.userAgent) {
+          delete filteredHeaders['user-agent']
+          delete filteredHeaders['User-Agent']
+        }
 
-      logger.info(
-        `🔍 User-Agent selection: account.userAgent="${account.userAgent}", client ua="${clientHeaders?.['user-agent']}", final="${userAgent}"`
-      )
+        logger.info(
+          `🔍 User-Agent selection: account.userAgent="${account.userAgent}", client ua="${clientHeaders?.['user-agent']}", final="${userAgent}"`
+        )
 
-      // 准备请求配置
-      const requestConfig = {
-        method: 'POST',
-        url: apiEndpoint,
-        data: body,
-        headers: {
-          'Content-Type': 'application/json',
-          'anthropic-version': '2023-06-01',
-          'User-Agent': userAgent,
-          ...filteredHeaders
-        },
-        timeout: config.requestTimeout || 600000,
-        responseType: 'stream',
-        validateStatus: () => true // 接受所有状态码
-      }
+        // 准备请求配置
+        const requestConfig = {
+          method: 'POST',
+          url: apiEndpoint,
+          data: body,
+          headers: {
+            'Content-Type': 'application/json',
+            'anthropic-version': '2023-06-01',
+            'User-Agent': userAgent,
+            ...filteredHeaders
+          },
+          timeout: config.requestTimeout || 600000,
+          responseType: 'stream',
+          validateStatus: () => true // 接受所有状态码
+        }
 
-      // Factory.ai 检测（用于后续 header 处理和调试）
-      const isFactoryAiStream = account.apiUrl && account.apiUrl.includes('api.factory.ai')
+        // Factory.ai 检测（用于后续 header 处理和调试）
+        const isFactoryAiStream = account.apiUrl && account.apiUrl.includes('api.factory.ai')
 
-      if (proxyAgent) {
-        requestConfig.httpAgent = proxyAgent
-        requestConfig.httpsAgent = proxyAgent
-        requestConfig.proxy = false
-      }
+        if (proxyAgent) {
+          requestConfig.httpAgent = proxyAgent
+          requestConfig.httpsAgent = proxyAgent
+          requestConfig.proxy = false
+        }
 
-      // 根据 API Key 格式选择认证方式
-      if (account.apiKey && account.apiKey.startsWith('sk-ant-')) {
-        // Anthropic 官方 API Key 使用 x-api-key
-        requestConfig.headers['x-api-key'] = account.apiKey
-        logger.debug('[DEBUG] Using x-api-key authentication for sk-ant-* API key')
-      } else {
-        // 其他 API Key 使用 Authorization Bearer
-        requestConfig.headers['Authorization'] = `Bearer ${account.apiKey}`
-        logger.debug('[DEBUG] Using Authorization Bearer authentication')
-      }
+        // 根据 API Key 格式选择认证方式
+        if (account.apiKey && account.apiKey.startsWith('sk-ant-')) {
+          // Anthropic 官方 API Key 使用 x-api-key
+          requestConfig.headers['x-api-key'] = account.apiKey
+          logger.debug('[DEBUG] Using x-api-key authentication for sk-ant-* API key')
+        } else {
+          // 其他 API Key 使用 Authorization Bearer
+          requestConfig.headers['Authorization'] = `Bearer ${account.apiKey}`
+          logger.debug('[DEBUG] Using Authorization Bearer authentication')
+        }
 
-      // 添加beta header如果需要
-      if (requestOptions.betaHeader) {
-        requestConfig.headers['anthropic-beta'] = requestOptions.betaHeader
-      }
+        // 添加beta header如果需要
+        if (requestOptions.betaHeader) {
+          requestConfig.headers['anthropic-beta'] = requestOptions.betaHeader
+        }
 
-      // Factory.ai: 过滤 headers（beta + 多余 headers）
-      if (isFactoryAiStream) {
-        if (requestConfig.headers['anthropic-beta']) {
-          const originalBeta = requestConfig.headers['anthropic-beta']
-          requestConfig.headers['anthropic-beta'] = this._filterBetaForFactoryAi(originalBeta)
-          if (requestConfig.headers['anthropic-beta'] !== originalBeta) {
+        // Factory.ai: 过滤 headers（beta + 多余 headers）
+        if (isFactoryAiStream) {
+          if (requestConfig.headers['anthropic-beta']) {
+            const originalBeta = requestConfig.headers['anthropic-beta']
+            requestConfig.headers['anthropic-beta'] = this._filterBetaForFactoryAi(originalBeta)
+            if (requestConfig.headers['anthropic-beta'] !== originalBeta) {
+              logger.info(
+                `🔧 [Stream] Factory.ai: filtered anthropic-beta: "${originalBeta}" → "${requestConfig.headers['anthropic-beta']}"`
+              )
+            }
+            if (!requestConfig.headers['anthropic-beta']) {
+              delete requestConfig.headers['anthropic-beta']
+            }
+          }
+          this._cleanHeadersForFactoryAi(requestConfig.headers, accountId)
+        }
+
+        // [DEBUG] dump Factory.ai 完整请求到文件（绕过 logger 截断）
+        if (isFactoryAiStream) {
+          try {
+            const dump = {
+              ts: new Date().toISOString(),
+              path: 'stream',
+              url: requestConfig.url,
+              method: requestConfig.method,
+              headers: requestConfig.headers,
+              body:
+                typeof requestConfig.data === 'string'
+                  ? JSON.parse(requestConfig.data)
+                  : requestConfig.data
+            }
+            require('fs').appendFileSync('/tmp/factory-ai-debug.json', `${JSON.stringify(dump)}\n`)
+            logger.info('🔍 [DEBUG-FAI] stream request dumped to /tmp/factory-ai-debug.json')
+          } catch (_e) {
+            /* ignore */
+          }
+        }
+
+        // 🔌 Worker 路由：如果账户绑定了在线的远程 Worker，流式请求也通过 Worker 下发
+        if (account.workerId) {
+          const workerRouter = require('../worker/workerRouter')
+          const routing = workerRouter.resolve(account.workerId)
+
+          if (routing.mode === 'remote') {
+            const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
             logger.info(
-              `🔧 [Stream] Factory.ai: filtered anthropic-beta: "${originalBeta}" → "${requestConfig.headers['anthropic-beta']}"`
-            )
-          }
-          if (!requestConfig.headers['anthropic-beta']) {
-            delete requestConfig.headers['anthropic-beta']
-          }
-        }
-        this._cleanHeadersForFactoryAi(requestConfig.headers, accountId)
-      }
-
-      // [DEBUG] dump Factory.ai 完整请求到文件（绕过 logger 截断）
-      if (isFactoryAiStream) {
-        try {
-          const dump = {
-            ts: new Date().toISOString(),
-            path: 'stream',
-            url: requestConfig.url,
-            method: requestConfig.method,
-            headers: requestConfig.headers,
-            body:
-              typeof requestConfig.data === 'string'
-                ? JSON.parse(requestConfig.data)
-                : requestConfig.data
-          }
-          require('fs').appendFileSync('/tmp/factory-ai-debug.json', `${JSON.stringify(dump)}\n`)
-          logger.info('🔍 [DEBUG-FAI] stream request dumped to /tmp/factory-ai-debug.json')
-        } catch (_e) {
-          /* ignore */
-        }
-      }
-
-      // 发送请求
-      const request = axios(requestConfig)
-
-      // 注意：使用 .then(async ...) 模式处理响应
-      // - 内部的 releaseQueueLock 有独立的 try-catch，不会导致未捕获异常
-      // - queueLockAcquired = false 的赋值会在 finally 执行前完成（JS 单线程保证）
-      request
-        .then(async (response) => {
-          logger.debug(`🌊 Claude Console Claude stream response status: ${response.status}`)
-
-          // 错误响应处理
-          if (response.status !== 200) {
-            logger.error(
-              `❌ Claude Console API returned error status: ${response.status} | Account: ${account?.name || accountId}`
+              `🔌 [Worker] Routing Console stream request to remote worker ${routing.workerId} for account ${accountId}`
             )
 
-            // 收集错误数据用于检测
-            let errorDataForCheck = ''
-            const errorChunks = []
-
-            response.data.on('data', (chunk) => {
-              errorChunks.push(chunk)
-              errorDataForCheck += chunk.toString()
-            })
-
-            response.data.on('end', async () => {
-              const autoProtectionDisabled = account.disableAutoProtection === true
-              // 记录原始错误消息到日志（方便调试，包含供应商信息）
-              logger.error(
-                `📝 [Stream] Upstream error response from ${account?.name || accountId}: ${errorDataForCheck.substring(0, 500)}`
-              )
-
-              // 检查是否为账户禁用错误
-              const accountDisabledError = isAccountDisabledError(
-                response.status,
-                errorDataForCheck
-              )
-
-              if (response.status === 401) {
-                logger.warn(
-                  `🚫 [Stream] Unauthorized error detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
-                )
-                if (!autoProtectionDisabled) {
-                  await upstreamErrorHelper
-                    .markTempUnavailable(accountId, 'claude-console', 401)
-                    .catch(() => {})
-                }
-              } else if (accountDisabledError) {
-                logger.error(
-                  `🚫 [Stream] Account disabled error (400) detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
-                )
-                // 传入完整的错误详情到 webhook
-                if (!autoProtectionDisabled) {
-                  await claudeConsoleAccountService.markConsoleAccountBlocked(
-                    accountId,
-                    errorDataForCheck
-                  )
-                }
-              } else if (response.status === 429) {
-                logger.warn(
-                  `🚫 [Stream] Rate limit detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
-                )
-                // 检查是否因为超过每日额度
-                claudeConsoleAccountService.checkQuotaUsage(accountId).catch((err) => {
-                  logger.error('❌ Failed to check quota after 429 error:', err)
-                })
-                if (!autoProtectionDisabled) {
-                  await claudeConsoleAccountService.markAccountRateLimited(accountId)
-                  await upstreamErrorHelper
-                    .markTempUnavailable(
-                      accountId,
-                      'claude-console',
-                      429,
-                      upstreamErrorHelper.parseRetryAfter(response.headers)
+            try {
+              await remoteWorkerProxy.sendStreamRequest(
+                routing.workerId,
+                {
+                  url: apiEndpoint,
+                  method: 'POST',
+                  headers: requestConfig.headers,
+                  data: requestConfig.data,
+                  proxy: account.proxy || null,
+                  timeout: requestConfig.timeout
+                },
+                {
+                  onData: (chunk) => {
+                    if (isStreamWritable(responseStream)) {
+                      responseStream.write(chunk)
+                    }
+                  },
+                  onStatus: (statusCode, headers) => {
+                    if (statusCode !== 200) {
+                      logger.warn(
+                        `🔌 [Worker] Stream response status: ${statusCode} from worker ${routing.workerId}`
+                      )
+                    }
+                    if (onResponseHeaderReceived) {
+                      onResponseHeaderReceived()
+                    }
+                  },
+                  onError: (err) => {
+                    logger.error(
+                      `🔌 [Worker] Stream error from worker ${routing.workerId}: ${err.message}`
                     )
-                    .catch(() => {})
+                    if (isStreamWritable(responseStream)) {
+                      responseStream.end()
+                    }
+                  }
                 }
-              } else if (response.status === 529) {
-                logger.warn(
-                  `🚫 [Stream] Overload error detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
-                )
-                if (!autoProtectionDisabled) {
-                  await claudeConsoleAccountService.markAccountOverloaded(accountId)
-                  await upstreamErrorHelper
-                    .markTempUnavailable(accountId, 'claude-console', 529)
-                    .catch(() => {})
-                }
-              } else if (response.status >= 500) {
-                logger.warn(
-                  `🔥 [Stream] Server error (${response.status}) detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
-                )
-                if (!autoProtectionDisabled) {
-                  await upstreamErrorHelper
-                    .markTempUnavailable(accountId, 'claude-console', response.status)
-                    .catch(() => {})
-                }
+              )
+
+              if (isStreamWritable(responseStream)) {
+                responseStream.end()
               }
-
-              // 设置响应头
-              if (!responseStream.headersSent) {
-                responseStream.writeHead(response.status, {
-                  'Content-Type': 'application/json',
-                  'Cache-Control': 'no-cache'
-                })
+              resolve()
+              return
+            } catch (workerError) {
+              logger.error(`🔌 [Worker] Worker stream failed: ${workerError.message}`)
+              if (isStreamWritable(responseStream)) {
+                responseStream.end()
               }
-
-              // 清理并发送错误响应
-              try {
-                const fullErrorData = Buffer.concat(errorChunks).toString()
-                const errorJson = JSON.parse(fullErrorData)
-                const sanitizedError = sanitizeUpstreamError(errorJson)
-
-                // 记录清理后的错误消息（发送给客户端的，完整记录）
-                logger.error(
-                  `🧹 [Stream] [SANITIZED] Error response to client: ${JSON.stringify(sanitizedError)}`
-                )
-
-                if (isStreamWritable(responseStream)) {
-                  responseStream.write(JSON.stringify(sanitizedError))
-                  responseStream.end()
-                }
-              } catch (parseError) {
-                const sanitizedText = sanitizeErrorMessage(errorDataForCheck)
-                logger.error(`🧹 [Stream] [SANITIZED] Error response to client: ${sanitizedText}`)
-
-                if (isStreamWritable(responseStream)) {
-                  responseStream.write(sanitizedText)
-                  responseStream.end()
-                }
-              }
-              resolve() // 不抛出异常，正常完成流处理
-            })
-
+              reject(workerError)
+              return
+            }
+          } else {
+            // Worker 离线，直接报错
+            const offlineErr = new Error(
+              `Worker ${account.workerId} is offline, cannot process stream request`
+            )
+            if (isStreamWritable(responseStream)) {
+              responseStream.end()
+            }
+            reject(offlineErr)
             return
           }
+        }
 
-          // 📬 收到成功响应头（HTTP 200），调用回调释放队列锁
-          // 此时请求已被 Claude API 接受并计入 RPM 配额，无需等待响应完成
-          if (onResponseHeaderReceived && typeof onResponseHeaderReceived === 'function') {
-            try {
-              await onResponseHeaderReceived()
-            } catch (callbackError) {
+        // 本地执行（无 Worker 绑定时）— 发送请求
+        const request = axios(requestConfig)
+
+        // 注意：使用 .then(async ...) 模式处理响应
+        // - 内部的 releaseQueueLock 有独立的 try-catch，不会导致未捕获异常
+        // - queueLockAcquired = false 的赋值会在 finally 执行前完成（JS 单线程保证）
+        request
+          .then(async (response) => {
+            logger.debug(`🌊 Claude Console Claude stream response status: ${response.status}`)
+
+            // 错误响应处理
+            if (response.status !== 200) {
               logger.error(
-                `❌ Failed to execute onResponseHeaderReceived callback for console stream account ${accountId}:`,
-                callbackError.message
+                `❌ Claude Console API returned error status: ${response.status} | Account: ${account?.name || accountId}`
               )
-            }
-          }
 
-          // 成功响应，检查并移除错误状态
-          claudeConsoleAccountService.isAccountRateLimited(accountId).then((isRateLimited) => {
-            if (isRateLimited) {
-              claudeConsoleAccountService.removeAccountRateLimit(accountId)
-            }
-          })
-          claudeConsoleAccountService.isAccountOverloaded(accountId).then((isOverloaded) => {
-            if (isOverloaded) {
-              claudeConsoleAccountService.removeAccountOverload(accountId)
-            }
-          })
+              // 收集错误数据用于检测
+              let errorDataForCheck = ''
+              const errorChunks = []
 
-          // 设置响应头
-          // ⚠️ 关键修复：尊重 auth.js 提前设置的 Connection: close
-          // 当并发队列功能启用时，auth.js 会设置 Connection: close 来禁用 Keep-Alive
-          if (!responseStream.headersSent) {
-            const existingConnection = responseStream.getHeader
-              ? responseStream.getHeader('Connection')
-              : null
-            const connectionHeader = existingConnection || 'keep-alive'
-            if (existingConnection) {
-              logger.debug(
-                `🔌 [Console Stream] Preserving existing Connection header: ${existingConnection}`
-              )
-            }
-            responseStream.writeHead(200, {
-              'Content-Type': 'text/event-stream',
-              'Cache-Control': 'no-cache',
-              Connection: connectionHeader,
-              'X-Accel-Buffering': 'no'
-            })
-          }
+              response.data.on('data', (chunk) => {
+                errorChunks.push(chunk)
+                errorDataForCheck += chunk.toString()
+              })
 
-          let buffer = ''
-          let finalUsageReported = false
-          const collectedUsageData = {
-            model: body.model || account?.defaultModel || null
-          }
+              response.data.on('end', async () => {
+                const autoProtectionDisabled = account.disableAutoProtection === true
+                // 记录原始错误消息到日志（方便调试，包含供应商信息）
+                logger.error(
+                  `📝 [Stream] Upstream error response from ${account?.name || accountId}: ${errorDataForCheck.substring(0, 500)}`
+                )
 
-          // 处理流数据
-          response.data.on('data', (chunk) => {
-            try {
-              if (aborted) {
-                return
-              }
+                // 检查是否为账户禁用错误
+                const accountDisabledError = isAccountDisabledError(
+                  response.status,
+                  errorDataForCheck
+                )
 
-              const chunkStr = chunk.toString()
-              buffer += chunkStr
-
-              // 处理完整的SSE行
-              const lines = buffer.split('\n')
-              buffer = lines.pop() || ''
-
-              // 转发数据并解析usage
-              if (lines.length > 0) {
-                // 检查流是否可写（客户端连接是否有效）
-                if (isStreamWritable(responseStream)) {
-                  const linesToForward = lines.join('\n') + (lines.length > 0 ? '\n' : '')
-
-                  // 应用流转换器如果有
-                  let dataToWrite = linesToForward
-                  if (streamTransformer) {
-                    const transformed = streamTransformer(linesToForward)
-                    if (transformed) {
-                      dataToWrite = transformed
-                    } else {
-                      dataToWrite = null
-                    }
-                  }
-
-                  if (dataToWrite) {
-                    responseStream.write(dataToWrite)
-                  }
-                } else {
-                  // 客户端连接已断开，记录警告（但仍继续解析usage）
+                if (response.status === 401) {
                   logger.warn(
-                    `⚠️ [Console] Client disconnected during stream, skipping ${lines.length} lines for account: ${account?.name || accountId}`
+                    `🚫 [Stream] Unauthorized error detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
                   )
+                  if (!autoProtectionDisabled) {
+                    await upstreamErrorHelper
+                      .markTempUnavailable(accountId, 'claude-console', 401)
+                      .catch(() => {})
+                  }
+                } else if (accountDisabledError) {
+                  logger.error(
+                    `🚫 [Stream] Account disabled error (400) detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
+                  )
+                  // 传入完整的错误详情到 webhook
+                  if (!autoProtectionDisabled) {
+                    await claudeConsoleAccountService.markConsoleAccountBlocked(
+                      accountId,
+                      errorDataForCheck
+                    )
+                  }
+                } else if (response.status === 429) {
+                  logger.warn(
+                    `🚫 [Stream] Rate limit detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
+                  )
+                  // 检查是否因为超过每日额度
+                  claudeConsoleAccountService.checkQuotaUsage(accountId).catch((err) => {
+                    logger.error('❌ Failed to check quota after 429 error:', err)
+                  })
+                  if (!autoProtectionDisabled) {
+                    await claudeConsoleAccountService.markAccountRateLimited(accountId)
+                    await upstreamErrorHelper
+                      .markTempUnavailable(
+                        accountId,
+                        'claude-console',
+                        429,
+                        upstreamErrorHelper.parseRetryAfter(response.headers)
+                      )
+                      .catch(() => {})
+                  }
+                } else if (response.status === 529) {
+                  logger.warn(
+                    `🚫 [Stream] Overload error detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
+                  )
+                  if (!autoProtectionDisabled) {
+                    await claudeConsoleAccountService.markAccountOverloaded(accountId)
+                    await upstreamErrorHelper
+                      .markTempUnavailable(accountId, 'claude-console', 529)
+                      .catch(() => {})
+                  }
+                } else if (response.status >= 500) {
+                  logger.warn(
+                    `🔥 [Stream] Server error (${response.status}) detected for Claude Console account ${accountId}${autoProtectionDisabled ? ' (auto-protection disabled, skipping status change)' : ''}`
+                  )
+                  if (!autoProtectionDisabled) {
+                    await upstreamErrorHelper
+                      .markTempUnavailable(accountId, 'claude-console', response.status)
+                      .catch(() => {})
+                  }
                 }
 
-                // 解析SSE数据寻找usage信息（无论连接状态如何）
-                for (const line of lines) {
-                  if (line.startsWith('data:')) {
-                    const jsonStr = line.slice(5).trimStart()
-                    if (!jsonStr || jsonStr === '[DONE]') {
-                      continue
-                    }
-                    try {
-                      const data = JSON.parse(jsonStr)
+                // 设置响应头
+                if (!responseStream.headersSent) {
+                  responseStream.writeHead(response.status, {
+                    'Content-Type': 'application/json',
+                    'Cache-Control': 'no-cache'
+                  })
+                }
 
-                      // 收集usage数据
-                      if (data.type === 'message_start' && data.message && data.message.usage) {
-                        collectedUsageData.input_tokens = data.message.usage.input_tokens || 0
-                        collectedUsageData.cache_creation_input_tokens =
-                          data.message.usage.cache_creation_input_tokens || 0
-                        collectedUsageData.cache_read_input_tokens =
-                          data.message.usage.cache_read_input_tokens || 0
-                        collectedUsageData.model = data.message.model
+                // 清理并发送错误响应
+                try {
+                  const fullErrorData = Buffer.concat(errorChunks).toString()
+                  const errorJson = JSON.parse(fullErrorData)
+                  const sanitizedError = sanitizeUpstreamError(errorJson)
 
-                        // 检查是否有详细的 cache_creation 对象
-                        if (
-                          data.message.usage.cache_creation &&
-                          typeof data.message.usage.cache_creation === 'object'
-                        ) {
-                          collectedUsageData.cache_creation = {
-                            ephemeral_5m_input_tokens:
-                              data.message.usage.cache_creation.ephemeral_5m_input_tokens || 0,
-                            ephemeral_1h_input_tokens:
-                              data.message.usage.cache_creation.ephemeral_1h_input_tokens || 0
-                          }
-                          logger.info(
-                            '📊 Collected detailed cache creation data:',
-                            JSON.stringify(collectedUsageData.cache_creation)
-                          )
-                        }
+                  // 记录清理后的错误消息（发送给客户端的，完整记录）
+                  logger.error(
+                    `🧹 [Stream] [SANITIZED] Error response to client: ${JSON.stringify(sanitizedError)}`
+                  )
+
+                  if (isStreamWritable(responseStream)) {
+                    responseStream.write(JSON.stringify(sanitizedError))
+                    responseStream.end()
+                  }
+                } catch (parseError) {
+                  const sanitizedText = sanitizeErrorMessage(errorDataForCheck)
+                  logger.error(`🧹 [Stream] [SANITIZED] Error response to client: ${sanitizedText}`)
+
+                  if (isStreamWritable(responseStream)) {
+                    responseStream.write(sanitizedText)
+                    responseStream.end()
+                  }
+                }
+                resolve() // 不抛出异常，正常完成流处理
+              })
+
+              return
+            }
+
+            // 📬 收到成功响应头（HTTP 200），调用回调释放队列锁
+            // 此时请求已被 Claude API 接受并计入 RPM 配额，无需等待响应完成
+            if (onResponseHeaderReceived && typeof onResponseHeaderReceived === 'function') {
+              try {
+                await onResponseHeaderReceived()
+              } catch (callbackError) {
+                logger.error(
+                  `❌ Failed to execute onResponseHeaderReceived callback for console stream account ${accountId}:`,
+                  callbackError.message
+                )
+              }
+            }
+
+            // 成功响应，检查并移除错误状态
+            claudeConsoleAccountService.isAccountRateLimited(accountId).then((isRateLimited) => {
+              if (isRateLimited) {
+                claudeConsoleAccountService.removeAccountRateLimit(accountId)
+              }
+            })
+            claudeConsoleAccountService.isAccountOverloaded(accountId).then((isOverloaded) => {
+              if (isOverloaded) {
+                claudeConsoleAccountService.removeAccountOverload(accountId)
+              }
+            })
+
+            // 设置响应头
+            // ⚠️ 关键修复：尊重 auth.js 提前设置的 Connection: close
+            // 当并发队列功能启用时，auth.js 会设置 Connection: close 来禁用 Keep-Alive
+            if (!responseStream.headersSent) {
+              const existingConnection = responseStream.getHeader
+                ? responseStream.getHeader('Connection')
+                : null
+              const connectionHeader = existingConnection || 'keep-alive'
+              if (existingConnection) {
+                logger.debug(
+                  `🔌 [Console Stream] Preserving existing Connection header: ${existingConnection}`
+                )
+              }
+              responseStream.writeHead(200, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                Connection: connectionHeader,
+                'X-Accel-Buffering': 'no'
+              })
+            }
+
+            let buffer = ''
+            let finalUsageReported = false
+            const collectedUsageData = {
+              model: body.model || account?.defaultModel || null
+            }
+
+            // 处理流数据
+            response.data.on('data', (chunk) => {
+              try {
+                if (aborted) {
+                  return
+                }
+
+                const chunkStr = chunk.toString()
+                buffer += chunkStr
+
+                // 处理完整的SSE行
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                // 转发数据并解析usage
+                if (lines.length > 0) {
+                  // 检查流是否可写（客户端连接是否有效）
+                  if (isStreamWritable(responseStream)) {
+                    const linesToForward = lines.join('\n') + (lines.length > 0 ? '\n' : '')
+
+                    // 应用流转换器如果有
+                    let dataToWrite = linesToForward
+                    if (streamTransformer) {
+                      const transformed = streamTransformer(linesToForward)
+                      if (transformed) {
+                        dataToWrite = transformed
+                      } else {
+                        dataToWrite = null
                       }
+                    }
 
-                      if (data.type === 'message_delta' && data.usage) {
-                        // 提取所有usage字段，message_delta可能包含完整的usage信息
-                        if (data.usage.output_tokens !== undefined) {
-                          collectedUsageData.output_tokens = data.usage.output_tokens || 0
-                        }
+                    if (dataToWrite) {
+                      responseStream.write(dataToWrite)
+                    }
+                  } else {
+                    // 客户端连接已断开，记录警告（但仍继续解析usage）
+                    logger.warn(
+                      `⚠️ [Console] Client disconnected during stream, skipping ${lines.length} lines for account: ${account?.name || accountId}`
+                    )
+                  }
 
-                        // 提取input_tokens（如果存在）
-                        if (data.usage.input_tokens !== undefined) {
-                          collectedUsageData.input_tokens = data.usage.input_tokens || 0
-                        }
+                  // 解析SSE数据寻找usage信息（无论连接状态如何）
+                  for (const line of lines) {
+                    if (line.startsWith('data:')) {
+                      const jsonStr = line.slice(5).trimStart()
+                      if (!jsonStr || jsonStr === '[DONE]') {
+                        continue
+                      }
+                      try {
+                        const data = JSON.parse(jsonStr)
 
-                        // 提取cache相关的tokens
-                        if (data.usage.cache_creation_input_tokens !== undefined) {
+                        // 收集usage数据
+                        if (data.type === 'message_start' && data.message && data.message.usage) {
+                          collectedUsageData.input_tokens = data.message.usage.input_tokens || 0
                           collectedUsageData.cache_creation_input_tokens =
-                            data.usage.cache_creation_input_tokens || 0
-                        }
-                        if (data.usage.cache_read_input_tokens !== undefined) {
+                            data.message.usage.cache_creation_input_tokens || 0
                           collectedUsageData.cache_read_input_tokens =
-                            data.usage.cache_read_input_tokens || 0
-                        }
+                            data.message.usage.cache_read_input_tokens || 0
+                          collectedUsageData.model = data.message.model
 
-                        // 检查是否有详细的 cache_creation 对象
-                        if (
-                          data.usage.cache_creation &&
-                          typeof data.usage.cache_creation === 'object'
-                        ) {
-                          collectedUsageData.cache_creation = {
-                            ephemeral_5m_input_tokens:
-                              data.usage.cache_creation.ephemeral_5m_input_tokens || 0,
-                            ephemeral_1h_input_tokens:
-                              data.usage.cache_creation.ephemeral_1h_input_tokens || 0
+                          // 检查是否有详细的 cache_creation 对象
+                          if (
+                            data.message.usage.cache_creation &&
+                            typeof data.message.usage.cache_creation === 'object'
+                          ) {
+                            collectedUsageData.cache_creation = {
+                              ephemeral_5m_input_tokens:
+                                data.message.usage.cache_creation.ephemeral_5m_input_tokens || 0,
+                              ephemeral_1h_input_tokens:
+                                data.message.usage.cache_creation.ephemeral_1h_input_tokens || 0
+                            }
+                            logger.info(
+                              '📊 Collected detailed cache creation data:',
+                              JSON.stringify(collectedUsageData.cache_creation)
+                            )
                           }
                         }
 
-                        logger.info(
-                          '📊 [Console] Collected usage data from message_delta:',
-                          JSON.stringify(collectedUsageData)
-                        )
-
-                        // 如果已经收集到了完整数据，触发回调
-                        if (
-                          collectedUsageData.input_tokens !== undefined &&
-                          collectedUsageData.output_tokens !== undefined &&
-                          !finalUsageReported
-                        ) {
-                          if (!collectedUsageData.model) {
-                            collectedUsageData.model = body.model || account?.defaultModel || null
+                        if (data.type === 'message_delta' && data.usage) {
+                          // 提取所有usage字段，message_delta可能包含完整的usage信息
+                          if (data.usage.output_tokens !== undefined) {
+                            collectedUsageData.output_tokens = data.usage.output_tokens || 0
                           }
+
+                          // 提取input_tokens（如果存在）
+                          if (data.usage.input_tokens !== undefined) {
+                            collectedUsageData.input_tokens = data.usage.input_tokens || 0
+                          }
+
+                          // 提取cache相关的tokens
+                          if (data.usage.cache_creation_input_tokens !== undefined) {
+                            collectedUsageData.cache_creation_input_tokens =
+                              data.usage.cache_creation_input_tokens || 0
+                          }
+                          if (data.usage.cache_read_input_tokens !== undefined) {
+                            collectedUsageData.cache_read_input_tokens =
+                              data.usage.cache_read_input_tokens || 0
+                          }
+
+                          // 检查是否有详细的 cache_creation 对象
+                          if (
+                            data.usage.cache_creation &&
+                            typeof data.usage.cache_creation === 'object'
+                          ) {
+                            collectedUsageData.cache_creation = {
+                              ephemeral_5m_input_tokens:
+                                data.usage.cache_creation.ephemeral_5m_input_tokens || 0,
+                              ephemeral_1h_input_tokens:
+                                data.usage.cache_creation.ephemeral_1h_input_tokens || 0
+                            }
+                          }
+
                           logger.info(
-                            '🎯 [Console] Complete usage data collected:',
+                            '📊 [Console] Collected usage data from message_delta:',
                             JSON.stringify(collectedUsageData)
                           )
-                          if (usageCallback && typeof usageCallback === 'function') {
-                            usageCallback({ ...collectedUsageData, accountId })
-                          }
-                          finalUsageReported = true
-                        }
-                      }
 
-                      // 不再因为模型不支持而block账号
-                    } catch (e) {
-                      // 忽略解析错误
+                          // 如果已经收集到了完整数据，触发回调
+                          if (
+                            collectedUsageData.input_tokens !== undefined &&
+                            collectedUsageData.output_tokens !== undefined &&
+                            !finalUsageReported
+                          ) {
+                            if (!collectedUsageData.model) {
+                              collectedUsageData.model = body.model || account?.defaultModel || null
+                            }
+                            logger.info(
+                              '🎯 [Console] Complete usage data collected:',
+                              JSON.stringify(collectedUsageData)
+                            )
+                            if (usageCallback && typeof usageCallback === 'function') {
+                              usageCallback({ ...collectedUsageData, accountId })
+                            }
+                            finalUsageReported = true
+                          }
+                        }
+
+                        // 不再因为模型不支持而block账号
+                      } catch (e) {
+                        // 忽略解析错误
+                      }
                     }
                   }
                 }
+              } catch (error) {
+                logger.error(
+                  `❌ Error processing Claude Console stream data (Account: ${account?.name || accountId}):`,
+                  error
+                )
+                if (isStreamWritable(responseStream)) {
+                  // 如果有 streamTransformer（如测试请求），使用前端期望的格式
+                  if (streamTransformer) {
+                    responseStream.write(
+                      `data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`
+                    )
+                  } else {
+                    responseStream.write('event: error\n')
+                    responseStream.write(
+                      `data: ${JSON.stringify({
+                        error: 'Stream processing error',
+                        message: error.message,
+                        timestamp: new Date().toISOString()
+                      })}\n\n`
+                    )
+                  }
+                }
               }
-            } catch (error) {
+            })
+
+            response.data.on('end', () => {
+              try {
+                // 处理缓冲区中剩余的数据
+                if (buffer.trim() && isStreamWritable(responseStream)) {
+                  if (streamTransformer) {
+                    const transformed = streamTransformer(buffer)
+                    if (transformed) {
+                      responseStream.write(transformed)
+                    }
+                  } else {
+                    responseStream.write(buffer)
+                  }
+                }
+
+                // 🔧 兜底逻辑：确保所有未保存的usage数据都不会丢失
+                if (!finalUsageReported) {
+                  if (
+                    collectedUsageData.input_tokens !== undefined ||
+                    collectedUsageData.output_tokens !== undefined
+                  ) {
+                    // 补全缺失的字段
+                    if (collectedUsageData.input_tokens === undefined) {
+                      collectedUsageData.input_tokens = 0
+                      logger.warn(
+                        '⚠️ [Console] message_delta missing input_tokens, setting to 0. This may indicate incomplete usage data.'
+                      )
+                    }
+                    if (collectedUsageData.output_tokens === undefined) {
+                      collectedUsageData.output_tokens = 0
+                      logger.warn(
+                        '⚠️ [Console] message_delta missing output_tokens, setting to 0. This may indicate incomplete usage data.'
+                      )
+                    }
+                    // 确保有 model 字段
+                    if (!collectedUsageData.model) {
+                      collectedUsageData.model = body.model || account?.defaultModel || null
+                    }
+                    logger.info(
+                      `📊 [Console] Saving incomplete usage data via fallback: ${JSON.stringify(collectedUsageData)}`
+                    )
+                    if (usageCallback && typeof usageCallback === 'function') {
+                      usageCallback({ ...collectedUsageData, accountId })
+                    }
+                    finalUsageReported = true
+                  } else {
+                    logger.warn(
+                      '⚠️ [Console] Stream completed but no usage data was captured! This indicates a problem with SSE parsing or API response format.'
+                    )
+                  }
+                }
+
+                // 确保流正确结束
+                if (isStreamWritable(responseStream)) {
+                  // 📊 诊断日志：流结束前状态
+                  logger.info(
+                    `📤 [STREAM] Ending response | destroyed: ${responseStream.destroyed}, ` +
+                      `socketDestroyed: ${responseStream.socket?.destroyed}, ` +
+                      `socketBytesWritten: ${responseStream.socket?.bytesWritten || 0}`
+                  )
+
+                  // 禁用 Nagle 算法确保数据立即发送
+                  if (responseStream.socket && !responseStream.socket.destroyed) {
+                    responseStream.socket.setNoDelay(true)
+                  }
+
+                  // 等待数据完全 flush 到客户端后再 resolve
+                  responseStream.end(() => {
+                    logger.info(
+                      `✅ [STREAM] Response ended and flushed | socketBytesWritten: ${responseStream.socket?.bytesWritten || 'unknown'}`
+                    )
+                    resolve()
+                  })
+                } else {
+                  // 连接已断开，记录警告
+                  logger.warn(
+                    `⚠️ [Console] Client disconnected before stream end, data may not have been received | account: ${account?.name || accountId}`
+                  )
+                  resolve()
+                }
+              } catch (error) {
+                logger.error('❌ Error processing stream end:', error)
+                reject(error)
+              }
+            })
+
+            response.data.on('error', (error) => {
               logger.error(
-                `❌ Error processing Claude Console stream data (Account: ${account?.name || accountId}):`,
+                `❌ Claude Console stream error (Account: ${account?.name || accountId}):`,
                 error
               )
               if (isStreamWritable(responseStream)) {
@@ -1306,106 +1536,75 @@ class ClaudeConsoleRelayService {
                   responseStream.write('event: error\n')
                   responseStream.write(
                     `data: ${JSON.stringify({
-                      error: 'Stream processing error',
+                      error: 'Stream error',
                       message: error.message,
                       timestamp: new Date().toISOString()
                     })}\n\n`
                   )
                 }
+                responseStream.end()
               }
-            }
-          })
-
-          response.data.on('end', () => {
-            try {
-              // 处理缓冲区中剩余的数据
-              if (buffer.trim() && isStreamWritable(responseStream)) {
-                if (streamTransformer) {
-                  const transformed = streamTransformer(buffer)
-                  if (transformed) {
-                    responseStream.write(transformed)
-                  }
-                } else {
-                  responseStream.write(buffer)
-                }
-              }
-
-              // 🔧 兜底逻辑：确保所有未保存的usage数据都不会丢失
-              if (!finalUsageReported) {
-                if (
-                  collectedUsageData.input_tokens !== undefined ||
-                  collectedUsageData.output_tokens !== undefined
-                ) {
-                  // 补全缺失的字段
-                  if (collectedUsageData.input_tokens === undefined) {
-                    collectedUsageData.input_tokens = 0
-                    logger.warn(
-                      '⚠️ [Console] message_delta missing input_tokens, setting to 0. This may indicate incomplete usage data.'
-                    )
-                  }
-                  if (collectedUsageData.output_tokens === undefined) {
-                    collectedUsageData.output_tokens = 0
-                    logger.warn(
-                      '⚠️ [Console] message_delta missing output_tokens, setting to 0. This may indicate incomplete usage data.'
-                    )
-                  }
-                  // 确保有 model 字段
-                  if (!collectedUsageData.model) {
-                    collectedUsageData.model = body.model || account?.defaultModel || null
-                  }
-                  logger.info(
-                    `📊 [Console] Saving incomplete usage data via fallback: ${JSON.stringify(collectedUsageData)}`
-                  )
-                  if (usageCallback && typeof usageCallback === 'function') {
-                    usageCallback({ ...collectedUsageData, accountId })
-                  }
-                  finalUsageReported = true
-                } else {
-                  logger.warn(
-                    '⚠️ [Console] Stream completed but no usage data was captured! This indicates a problem with SSE parsing or API response format.'
-                  )
-                }
-              }
-
-              // 确保流正确结束
-              if (isStreamWritable(responseStream)) {
-                // 📊 诊断日志：流结束前状态
-                logger.info(
-                  `📤 [STREAM] Ending response | destroyed: ${responseStream.destroyed}, ` +
-                    `socketDestroyed: ${responseStream.socket?.destroyed}, ` +
-                    `socketBytesWritten: ${responseStream.socket?.bytesWritten || 0}`
-                )
-
-                // 禁用 Nagle 算法确保数据立即发送
-                if (responseStream.socket && !responseStream.socket.destroyed) {
-                  responseStream.socket.setNoDelay(true)
-                }
-
-                // 等待数据完全 flush 到客户端后再 resolve
-                responseStream.end(() => {
-                  logger.info(
-                    `✅ [STREAM] Response ended and flushed | socketBytesWritten: ${responseStream.socket?.bytesWritten || 'unknown'}`
-                  )
-                  resolve()
-                })
-              } else {
-                // 连接已断开，记录警告
-                logger.warn(
-                  `⚠️ [Console] Client disconnected before stream end, data may not have been received | account: ${account?.name || accountId}`
-                )
-                resolve()
-              }
-            } catch (error) {
-              logger.error('❌ Error processing stream end:', error)
               reject(error)
-            }
+            })
           })
+          .catch((error) => {
+            if (aborted) {
+              return
+            }
 
-          response.data.on('error', (error) => {
             logger.error(
-              `❌ Claude Console stream error (Account: ${account?.name || accountId}):`,
-              error
+              `❌ Claude Console stream request error (Account: ${account?.name || accountId}):`,
+              error.message
             )
+
+            // 检查错误状态
+            if (error.response) {
+              const catchAutoProtectionDisabled =
+                account?.disableAutoProtection === true || account?.disableAutoProtection === 'true'
+              if (error.response.status === 401) {
+                if (!catchAutoProtectionDisabled) {
+                  upstreamErrorHelper
+                    .markTempUnavailable(accountId, 'claude-console', 401)
+                    .catch(() => {})
+                }
+              } else if (error.response.status === 429) {
+                if (!catchAutoProtectionDisabled) {
+                  claudeConsoleAccountService.markAccountRateLimited(accountId)
+                  // 检查是否因为超过每日额度
+                  claudeConsoleAccountService.checkQuotaUsage(accountId).catch((err) => {
+                    logger.error('❌ Failed to check quota after 429 error:', err)
+                  })
+                  upstreamErrorHelper
+                    .markTempUnavailable(
+                      accountId,
+                      'claude-console',
+                      429,
+                      upstreamErrorHelper.parseRetryAfter(error.response.headers)
+                    )
+                    .catch(() => {})
+                }
+              } else if (error.response.status === 529) {
+                if (!catchAutoProtectionDisabled) {
+                  claudeConsoleAccountService.markAccountOverloaded(accountId)
+                  upstreamErrorHelper
+                    .markTempUnavailable(accountId, 'claude-console', 529)
+                    .catch(() => {})
+                }
+              }
+            }
+
+            // 发送错误响应
+            if (!responseStream.headersSent) {
+              const existingConnection = responseStream.getHeader
+                ? responseStream.getHeader('Connection')
+                : null
+              responseStream.writeHead(error.response?.status || 500, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                Connection: existingConnection || 'keep-alive'
+              })
+            }
+
             if (isStreamWritable(responseStream)) {
               // 如果有 streamTransformer（如测试请求），使用前端期望的格式
               if (streamTransformer) {
@@ -1416,101 +1615,25 @@ class ClaudeConsoleRelayService {
                 responseStream.write('event: error\n')
                 responseStream.write(
                   `data: ${JSON.stringify({
-                    error: 'Stream error',
-                    message: error.message,
+                    error: error.message,
+                    code: error.code,
                     timestamp: new Date().toISOString()
                   })}\n\n`
                 )
               }
               responseStream.end()
             }
+
             reject(error)
           })
+
+        // 处理客户端断开连接
+        responseStream.on('close', () => {
+          logger.debug('🔌 Client disconnected, cleaning up Claude Console stream')
+          aborted = true
         })
-        .catch((error) => {
-          if (aborted) {
-            return
-          }
-
-          logger.error(
-            `❌ Claude Console stream request error (Account: ${account?.name || accountId}):`,
-            error.message
-          )
-
-          // 检查错误状态
-          if (error.response) {
-            const catchAutoProtectionDisabled =
-              account?.disableAutoProtection === true || account?.disableAutoProtection === 'true'
-            if (error.response.status === 401) {
-              if (!catchAutoProtectionDisabled) {
-                upstreamErrorHelper
-                  .markTempUnavailable(accountId, 'claude-console', 401)
-                  .catch(() => {})
-              }
-            } else if (error.response.status === 429) {
-              if (!catchAutoProtectionDisabled) {
-                claudeConsoleAccountService.markAccountRateLimited(accountId)
-                // 检查是否因为超过每日额度
-                claudeConsoleAccountService.checkQuotaUsage(accountId).catch((err) => {
-                  logger.error('❌ Failed to check quota after 429 error:', err)
-                })
-                upstreamErrorHelper
-                  .markTempUnavailable(
-                    accountId,
-                    'claude-console',
-                    429,
-                    upstreamErrorHelper.parseRetryAfter(error.response.headers)
-                  )
-                  .catch(() => {})
-              }
-            } else if (error.response.status === 529) {
-              if (!catchAutoProtectionDisabled) {
-                claudeConsoleAccountService.markAccountOverloaded(accountId)
-                upstreamErrorHelper
-                  .markTempUnavailable(accountId, 'claude-console', 529)
-                  .catch(() => {})
-              }
-            }
-          }
-
-          // 发送错误响应
-          if (!responseStream.headersSent) {
-            const existingConnection = responseStream.getHeader
-              ? responseStream.getHeader('Connection')
-              : null
-            responseStream.writeHead(error.response?.status || 500, {
-              'Content-Type': 'text/event-stream',
-              'Cache-Control': 'no-cache',
-              Connection: existingConnection || 'keep-alive'
-            })
-          }
-
-          if (isStreamWritable(responseStream)) {
-            // 如果有 streamTransformer（如测试请求），使用前端期望的格式
-            if (streamTransformer) {
-              responseStream.write(
-                `data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`
-              )
-            } else {
-              responseStream.write('event: error\n')
-              responseStream.write(
-                `data: ${JSON.stringify({
-                  error: error.message,
-                  code: error.code,
-                  timestamp: new Date().toISOString()
-                })}\n\n`
-              )
-            }
-            responseStream.end()
-          }
-
-          reject(error)
-        })
-
-      // 处理客户端断开连接
-      responseStream.on('close', () => {
-        logger.debug('🔌 Client disconnected, cleaning up Claude Console stream')
-        aborted = true
+      })().catch((error) => {
+        reject(error)
       })
     })
   }

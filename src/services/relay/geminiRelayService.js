@@ -230,7 +230,8 @@ async function sendGeminiRequest({
   signal,
   projectId,
   location = 'us-central1',
-  accountId = null
+  accountId = null,
+  workerId = null
 }) {
   // 确保模型名称格式正确
   if (!model.startsWith('models/')) {
@@ -298,6 +299,115 @@ async function sendGeminiRequest({
     axiosConfig.responseType = 'stream'
   }
 
+  // 🔌 Worker 路由：如果账户绑定了在线的远程 Worker，通过 WebSocket 下发
+  if (workerId) {
+    const workerRouter = require('../worker/workerRouter')
+    const routing = workerRouter.resolve(workerId)
+
+    if (routing.mode === 'remote') {
+      const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
+      logger.info(
+        `🔌 [Worker] Routing Gemini ${stream ? 'stream' : 'non-stream'} request to remote worker ${routing.workerId} for account ${accountId}`
+      )
+
+      if (stream) {
+        // 流式请求
+        return remoteWorkerProxy.sendStreamRequest(
+          routing.workerId,
+          {
+            url: apiUrl,
+            method: 'POST',
+            headers: axiosConfig.headers,
+            data: axiosConfig.data,
+            proxy: proxy || null,
+            timeout: axiosConfig.timeout
+          },
+          {
+            onData: (chunk) => {
+              // Worker 返回的流式数据已经是处理好的格式，直接返回
+              return chunk
+            },
+            onStatus: (statusCode, headers) => {
+              if (statusCode !== 200) {
+                logger.warn(
+                  `🔌 [Worker] Stream response status: ${statusCode} from worker ${routing.workerId}`
+                )
+              }
+            },
+            onError: (err) => {
+              logger.error(
+                `🔌 [Worker] Stream error from worker ${routing.workerId}: ${err.message}`
+              )
+              const error = new Error(err.message || 'Worker stream error')
+              error.status = 502
+              error.error = {
+                message: err.message || 'Worker stream error',
+                type: 'worker_error'
+              }
+              throw error
+            }
+          }
+        )
+      } else {
+        // 非流式请求
+        const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
+          url: apiUrl,
+          method: 'POST',
+          headers: axiosConfig.headers,
+          data: axiosConfig.data,
+          proxy: proxy || null,
+          timeout: axiosConfig.timeout
+        })
+
+        // 处理 Worker 返回的响应
+        if (workerResponse.statusCode !== 200) {
+          const error = new Error(
+            workerResponse.body?.error?.message || 'Gemini API request failed'
+          )
+          error.status = workerResponse.statusCode
+          error.error = workerResponse.body?.error || {
+            message: 'Gemini API request failed',
+            type: 'api_error'
+          }
+          throw error
+        }
+
+        // 转换 Gemini 响应为 OpenAI 格式
+        const openaiResponse = convertGeminiResponse(workerResponse.body, model, false)
+
+        // 记录使用量
+        if (apiKeyId && openaiResponse.usage) {
+          await apiKeyService
+            .recordUsage(
+              apiKeyId,
+              openaiResponse.usage.prompt_tokens || 0,
+              openaiResponse.usage.completion_tokens || 0,
+              0, // cacheCreateTokens
+              0, // cacheReadTokens
+              model,
+              accountId,
+              'gemini'
+            )
+            .catch((error) => {
+              logger.error('❌ Failed to record Gemini usage:', error)
+            })
+        }
+
+        return openaiResponse
+      }
+    }
+
+    // Worker 离线，直接报错
+    const offlineErr = new Error(`Worker ${workerId} is offline, cannot process request`)
+    offlineErr.status = 503
+    offlineErr.error = {
+      message: `Worker ${workerId} is offline, cannot process request`,
+      type: 'worker_offline'
+    }
+    throw offlineErr
+  }
+
+  // 本地执行（无 Worker 绑定时）
   try {
     logger.debug('Sending request to Gemini API')
     const response = await axios(axiosConfig)

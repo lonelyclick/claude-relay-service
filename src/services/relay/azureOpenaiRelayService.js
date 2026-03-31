@@ -133,8 +133,91 @@ async function handleAzureOpenAIRequest({
     const requestStartTime = Date.now()
     logger.debug(`🔄 Starting Azure OpenAI HTTP request at ${new Date().toISOString()}`)
 
-    // 发送请求
-    const response = await axios(axiosConfig)
+    // 🔌 Worker 路由：如果账户绑定了在线的远程 Worker，通过 WebSocket 下发
+    let response = null
+    if (account.workerId) {
+      const workerRouter = require('../worker/workerRouter')
+      const routing = workerRouter.resolve(account.workerId)
+
+      if (routing.mode === 'remote') {
+        const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
+        logger.info(
+          `🔌 [Worker] Routing Azure OpenAI ${isStream ? 'stream' : 'non-stream'} request to remote worker ${routing.workerId} for account ${account.id}`
+        )
+
+        try {
+          if (isStream) {
+            // 流式请求也通过 Worker 的 sendStreamRequest 下发
+            const workerStreamResult = await remoteWorkerProxy.sendStreamRequest(
+              routing.workerId,
+              {
+                url: requestUrl,
+                method: 'POST',
+                headers: requestHeaders,
+                data: processedBody,
+                proxy: account.proxy || null,
+                timeout: axiosConfig.timeout
+              },
+              {
+                onData: (chunk) => chunk,
+                onStatus: (statusCode) => {
+                  if (statusCode !== 200) {
+                    logger.warn(
+                      `🔌 [Worker] Azure stream response status: ${statusCode} from worker ${routing.workerId}`
+                    )
+                  }
+                },
+                onError: (err) => {
+                  logger.error(
+                    `🔌 [Worker] Azure stream error from worker ${routing.workerId}: ${err.message}`
+                  )
+                  throw err
+                }
+              }
+            )
+            // 封装为与 axios stream 兼容的结构
+            response = workerStreamResult
+          } else {
+            // 非流式请求
+            const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
+              url: requestUrl,
+              method: 'POST',
+              headers: requestHeaders,
+              data: processedBody,
+              proxy: account.proxy || null,
+              timeout: axiosConfig.timeout
+            })
+
+            // 模拟 axios response 结构
+            response = {
+              status: workerResponse.statusCode,
+              statusText: workerResponse.statusMessage || 'OK',
+              headers: workerResponse.headers || {},
+              data: workerResponse.body
+            }
+
+            logger.info(
+              `🔌 [Worker] Received response from worker ${routing.workerId}, status: ${response.status}`
+            )
+          }
+        } catch (error) {
+          logger.error(`🔌 [Worker] Worker request failed: ${error.message}`)
+          throw error
+        }
+      } else {
+        // Worker 离线，直接报错
+        const offlineErr = new Error(
+          `Worker ${account.workerId} is offline, cannot process request`
+        )
+        offlineErr.status = 503
+        throw offlineErr
+      }
+    }
+
+    // 本地执行（无 Worker 绑定时）
+    if (!response) {
+      response = await axios(axiosConfig)
+    }
 
     const requestDuration = Date.now() - requestStartTime
     logger.debug(`✅ Azure OpenAI HTTP request completed at ${new Date().toISOString()}`)

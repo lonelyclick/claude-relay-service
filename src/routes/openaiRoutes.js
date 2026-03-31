@@ -379,16 +379,62 @@ const handleResponses = async (req, res) => {
       ? 'https://chatgpt.com/backend-api/codex/responses/compact'
       : 'https://chatgpt.com/backend-api/codex/responses'
 
-    // 根据 stream 参数决定请求类型
-    if (isStream) {
-      // 流式请求
-      upstream = await axios.post(codexEndpoint, req.body, {
-        ...axiosConfig,
-        responseType: 'stream'
-      })
-    } else {
-      // 非流式请求
-      upstream = await axios.post(codexEndpoint, req.body, axiosConfig)
+    // 🔌 Worker 路由：如果账户绑定了在线的远程 Worker，通过 WebSocket 下发 Codex 请求
+    if (account.workerId) {
+      const workerRouter = require('../services/worker/workerRouter')
+      const routing = workerRouter.resolve(account.workerId)
+
+      if (routing.mode === 'remote') {
+        const remoteWorkerProxy = require('../services/worker/remoteWorkerProxy')
+        logger.info(
+          `🔌 [Worker] Routing Codex ${isStream ? 'stream' : 'non-stream'} request to remote worker ${routing.workerId} for account ${accountId}`
+        )
+
+        try {
+          const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
+            url: codexEndpoint,
+            method: 'POST',
+            headers: {
+              ...axiosConfig.headers,
+              'Content-Type': 'application/json'
+            },
+            data: req.body,
+            proxy: proxy || null,
+            timeout: axiosConfig.timeout || config.requestTimeout || 600000
+          })
+
+          // 模拟 axios response 结构
+          upstream = {
+            status: workerResponse.statusCode,
+            statusText: workerResponse.statusMessage || 'OK',
+            headers: workerResponse.headers || {},
+            data: workerResponse.body
+          }
+
+          logger.info(
+            `🔌 [Worker] Received Codex response from worker ${routing.workerId}, status: ${upstream.status}`
+          )
+        } catch (workerError) {
+          logger.error(`🔌 [Worker] Worker Codex request failed: ${workerError.message}`)
+          throw workerError
+        }
+      } else {
+        throw new Error(`Worker ${account.workerId} is offline, cannot process Codex request`)
+      }
+    }
+
+    // 本地执行（无 Worker 绑定时）— 根据 stream 参数决定请求类型
+    if (!upstream) {
+      if (isStream) {
+        // 流式请求
+        upstream = await axios.post(codexEndpoint, req.body, {
+          ...axiosConfig,
+          responseType: 'stream'
+        })
+      } else {
+        // 非流式请求
+        upstream = await axios.post(codexEndpoint, req.body, axiosConfig)
+      }
     }
 
     const codexUsageSnapshot = extractCodexUsageHeaders(upstream.headers)

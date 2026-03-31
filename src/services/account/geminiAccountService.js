@@ -339,19 +339,18 @@ async function pollAuthorizationStatus(sessionId, maxAttempts = 60, interval = 2
   }
 }
 
-// 交换授权码获取 tokens (支持 PKCE 和代理)
+// 交换授权码获取 tokens (支持 PKCE、代理和 Worker 路由)
 async function exchangeCodeForTokens(
   code,
   redirectUri = null,
   codeVerifier = null,
   proxyConfig = null,
-  oauthProvider = null
+  oauthProvider = null,
+  workerId = null
 ) {
   try {
     const normalizedProvider = normalizeOauthProvider(oauthProvider)
     const oauthConfig = getOauthProviderConfig(normalizedProvider)
-    // 创建带代理配置的 OAuth2Client
-    const oAuth2Client = createOAuth2Client(redirectUri, proxyConfig, normalizedProvider)
 
     if (proxyConfig) {
       logger.info(
@@ -360,6 +359,56 @@ async function exchangeCodeForTokens(
     } else {
       logger.debug('🌐 No proxy configured for Gemini token exchange')
     }
+
+    // 🔌 Worker 路由
+    if (workerId) {
+      const workerRouter = require('../worker/workerRouter')
+      const routing = workerRouter.resolve(workerId)
+
+      if (routing.mode === 'remote') {
+        const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
+        logger.info(`🔌 [Worker] Routing Gemini token exchange through Worker: ${routing.workerId}`)
+
+        try {
+          const postData = {
+            client_id: oauthConfig.clientId,
+            client_secret: oauthConfig.clientSecret,
+            code,
+            redirect_uri: redirectUri || 'http://localhost:45462',
+            grant_type: 'authorization_code'
+          }
+          if (codeVerifier) {
+            postData.code_verifier = codeVerifier
+          }
+
+          const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
+            url: 'https://oauth2.googleapis.com/token',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            data: new URLSearchParams(postData).toString(),
+            proxy: proxyConfig || null,
+            timeout: 30000
+          })
+
+          const tokens = workerResponse.data || workerResponse
+          return {
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+            scope: tokens.scope || oauthConfig.scopes.join(' '),
+            token_type: tokens.token_type || 'Bearer',
+            expiry_date: tokens.expiry_date || Date.now() + (tokens.expires_in || 3600) * 1000
+          }
+        } catch (workerError) {
+          logger.error(`🔌 [Worker] Gemini token exchange failed: ${workerError.message}`)
+          throw workerError
+        }
+      } else {
+        throw new Error(`Worker ${workerId} is offline, cannot exchange Gemini token`)
+      }
+    }
+
+    // 本地执行（无 Worker 绑定时）
+    const oAuth2Client = createOAuth2Client(redirectUri, proxyConfig, normalizedProvider)
 
     const tokenParams = {
       code,
@@ -387,19 +436,17 @@ async function exchangeCodeForTokens(
   }
 }
 
-// 刷新访问令牌
-async function refreshAccessToken(refreshToken, proxyConfig = null, oauthProvider = null) {
+// 刷新访问令牌（支持 Worker 路由）
+async function refreshAccessToken(
+  refreshToken,
+  proxyConfig = null,
+  oauthProvider = null,
+  workerId = null
+) {
   const normalizedProvider = normalizeOauthProvider(oauthProvider)
   const oauthConfig = getOauthProviderConfig(normalizedProvider)
-  // 创建带代理配置的 OAuth2Client
-  const oAuth2Client = createOAuth2Client(null, proxyConfig, normalizedProvider)
 
   try {
-    // 设置 refresh_token
-    oAuth2Client.setCredentials({
-      refresh_token: refreshToken
-    })
-
     if (proxyConfig) {
       logger.info(
         `🔄 Using proxy for Gemini token refresh: ${ProxyHelper.maskProxyInfo(proxyConfig)}`
@@ -407,6 +454,67 @@ async function refreshAccessToken(refreshToken, proxyConfig = null, oauthProvide
     } else {
       logger.debug('🔄 No proxy configured for Gemini token refresh')
     }
+
+    // 🔌 Worker 路由
+    if (workerId) {
+      const workerRouter = require('../worker/workerRouter')
+      const routing = workerRouter.resolve(workerId)
+
+      if (routing.mode === 'remote') {
+        const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
+        logger.info(`🔌 [Worker] Routing Gemini token refresh through Worker: ${routing.workerId}`)
+
+        try {
+          const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
+            url: 'https://oauth2.googleapis.com/token',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            data: new URLSearchParams({
+              client_id: oauthConfig.clientId,
+              client_secret: oauthConfig.clientSecret,
+              refresh_token: refreshToken,
+              grant_type: 'refresh_token'
+            }).toString(),
+            proxy: proxyConfig || null,
+            timeout: 30000
+          })
+
+          const tokens = workerResponse.data || workerResponse
+
+          // 检查是否成功获取了新的 access_token
+          if (!tokens || !tokens.access_token) {
+            throw new Error('No access token returned from Worker refresh')
+          }
+
+          const expiryDate = tokens.expiry_date || Date.now() + (tokens.expires_in || 3600) * 1000
+
+          logger.info(
+            `🔄 Successfully refreshed Gemini token via Worker. New expiry: ${new Date(expiryDate).toISOString()}`
+          )
+
+          return {
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token || refreshToken,
+            scope: tokens.scope || oauthConfig.scopes.join(' '),
+            token_type: tokens.token_type || 'Bearer',
+            expiry_date: expiryDate
+          }
+        } catch (workerError) {
+          logger.error(`🔌 [Worker] Gemini token refresh failed: ${workerError.message}`)
+          throw workerError
+        }
+      } else {
+        throw new Error(`Worker ${workerId} is offline, cannot refresh Gemini token`)
+      }
+    }
+
+    // 本地执行（无 Worker 绑定时）
+    const oAuth2Client = createOAuth2Client(null, proxyConfig, normalizedProvider)
+
+    // 设置 refresh_token
+    oAuth2Client.setCredentials({
+      refresh_token: refreshToken
+    })
 
     // 调用 refreshAccessToken 获取新的 tokens
     const response = await oAuth2Client.refreshAccessToken()
@@ -1042,11 +1150,12 @@ async function refreshAccountToken(accountId) {
     logger.info(`🔄 Starting token refresh for Gemini account: ${account.name} (${accountId})`)
 
     // account.refreshToken 已经是解密后的值（从 getAccount 返回）
-    // 传入账户的代理配置
+    // 传入账户的代理配置和 Worker ID
     const newTokens = await refreshAccessToken(
       account.refreshToken,
       account.proxy,
-      account.oauthProvider
+      account.oauthProvider,
+      account.workerId || null
     )
 
     // 更新账户信息

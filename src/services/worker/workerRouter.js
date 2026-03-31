@@ -28,8 +28,8 @@ class WorkerRouter {
       return { mode: 'remote', workerId }
     }
 
-    // Worker 不在线，回退到本地
-    logger.warn(`Worker ${workerId} not online, falling back to local`)
+    // Worker 不在线
+    logger.warn(`Worker ${workerId} not online`)
     return { mode: 'local', workerId: null }
   }
 }

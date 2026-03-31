@@ -222,7 +222,54 @@ class CcrRelayService {
         '📤 Sending request to CCR API with headers:',
         JSON.stringify(requestConfig.headers, null, 2)
       )
-      const response = await axios(requestConfig)
+
+      // 🔌 Worker 路由：如果账户绑定了在线的远程 Worker，通过 WebSocket 下发
+      let response = null
+      if (account.workerId) {
+        const workerRouter = require('../worker/workerRouter')
+        const routing = workerRouter.resolve(account.workerId)
+
+        if (routing.mode === 'remote') {
+          const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
+          logger.info(
+            `🔌 [Worker] Routing CCR ${requestBody.stream ? 'stream' : 'non-stream'} request to remote worker ${routing.workerId} for account ${accountId}`
+          )
+
+          try {
+            const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
+              url: apiEndpoint,
+              method: 'POST',
+              headers: requestConfig.headers,
+              data: modifiedRequestBody,
+              proxy: account.proxy || null,
+              timeout: requestConfig.timeout
+            })
+
+            // 模拟 axios response 结构
+            response = {
+              status: workerResponse.statusCode,
+              statusText: workerResponse.statusMessage || 'OK',
+              headers: workerResponse.headers || {},
+              data: workerResponse.body
+            }
+
+            logger.info(
+              `🔌 [Worker] Received response from worker ${routing.workerId}, status: ${response.status}`
+            )
+          } catch (error) {
+            logger.error(`🔌 [Worker] Worker request failed: ${error.message}`)
+            throw error
+          }
+        } else {
+          // Worker 离线，直接报错
+          throw new Error(`Worker ${account.workerId} is offline, cannot process request`)
+        }
+      }
+
+      // 本地执行（无 Worker 绑定时）
+      if (!response) {
+        response = await axios(requestConfig)
+      }
 
       // 📬 请求已发送成功，立即释放队列锁（无需等待响应处理完成）
       // 因为 Claude API 限流基于请求发送时刻计算（RPM），不是请求完成时刻

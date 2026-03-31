@@ -130,7 +130,8 @@ router.post('/claude-accounts/exchange-code', authenticateAdmin, async (req, res
       finalAuthCode,
       oauthSession.codeVerifier,
       oauthSession.state,
-      oauthSession.proxy // 传递代理配置
+      oauthSession.proxy, // 传递代理配置
+      oauthSession.workerId || null // 传递 Worker ID
     )
 
     // 清理OAuth会话
@@ -252,7 +253,8 @@ router.post('/claude-accounts/exchange-setup-token-code', authenticateAdmin, asy
       finalAuthCode,
       oauthSession.codeVerifier,
       oauthSession.state,
-      oauthSession.proxy // 传递代理配置
+      oauthSession.proxy, // 传递代理配置
+      oauthSession.workerId || null // 传递 Worker ID
     )
 
     // 清理OAuth会话
@@ -294,7 +296,7 @@ router.post('/claude-accounts/exchange-setup-token-code', authenticateAdmin, asy
 // 普通OAuth的Cookie自动授权
 router.post('/claude-accounts/oauth-with-cookie', authenticateAdmin, async (req, res) => {
   try {
-    const { sessionKey, proxy } = req.body
+    const { sessionKey, proxy, workerId } = req.body
 
     // 验证sessionKey参数
     if (!sessionKey || typeof sessionKey !== 'string' || sessionKey.trim().length === 0) {
@@ -314,7 +316,12 @@ router.post('/claude-accounts/oauth-with-cookie', authenticateAdmin, async (req,
     })
 
     // 执行Cookie自动授权流程
-    const result = await oauthHelper.oauthWithCookie(trimmedSessionKey, proxy, false)
+    const result = await oauthHelper.oauthWithCookie(
+      trimmedSessionKey,
+      proxy,
+      false,
+      workerId || null
+    )
 
     logger.success('🎉 Cookie-based OAuth authorization completed successfully')
 
@@ -343,7 +350,7 @@ router.post('/claude-accounts/oauth-with-cookie', authenticateAdmin, async (req,
 // Setup Token的Cookie自动授权
 router.post('/claude-accounts/setup-token-with-cookie', authenticateAdmin, async (req, res) => {
   try {
-    const { sessionKey, proxy } = req.body
+    const { sessionKey, proxy, workerId } = req.body
 
     // 验证sessionKey参数
     if (!sessionKey || typeof sessionKey !== 'string' || sessionKey.trim().length === 0) {
@@ -363,7 +370,12 @@ router.post('/claude-accounts/setup-token-with-cookie', authenticateAdmin, async
     })
 
     // 执行Cookie自动授权流程（Setup Token模式）
-    const result = await oauthHelper.oauthWithCookie(trimmedSessionKey, proxy, true)
+    const result = await oauthHelper.oauthWithCookie(
+      trimmedSessionKey,
+      proxy,
+      true,
+      workerId || null
+    )
 
     logger.success('🎉 Cookie-based Setup Token authorization completed successfully')
 

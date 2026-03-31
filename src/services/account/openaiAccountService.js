@@ -114,7 +114,7 @@ function buildCodexUsageSnapshot(accountData) {
 }
 
 // 刷新访问令牌
-async function refreshAccessToken(refreshToken, proxy = null) {
+async function refreshAccessToken(refreshToken, proxy = null, accountData = null) {
   try {
     // Codex CLI 的官方 CLIENT_ID
     const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
@@ -152,9 +152,41 @@ async function refreshAccessToken(refreshToken, proxy = null) {
       logger.debug('🌐 No proxy configured for OpenAI token refresh')
     }
 
-    // 发送请求
-    logger.info('🔍 发送 token 刷新请求，使用代理:', !!requestOptions.httpsAgent)
-    const response = await axios(requestOptions)
+    // 🔌 Worker 路由
+    let response = null
+    if (accountData && accountData.workerId) {
+      const workerRouter = require('../worker/workerRouter')
+      const routing = workerRouter.resolve(accountData.workerId)
+
+      if (routing.mode === 'remote') {
+        const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
+        logger.info(`🔌 [Worker] Routing OpenAI token refresh through Worker: ${routing.workerId}`)
+
+        try {
+          const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
+            url: 'https://auth.openai.com/oauth/token',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            data: requestData,
+            proxy: accountData.proxy || null,
+            timeout: 30000
+          })
+
+          response = { status: workerResponse.statusCode, data: workerResponse.body }
+        } catch (workerError) {
+          logger.error(`🔌 [Worker] OpenAI token refresh failed: ${workerError.message}`)
+          throw workerError
+        }
+      } else {
+        throw new Error(`Worker ${accountData.workerId} is offline, cannot refresh OpenAI token`)
+      }
+    }
+
+    // 本地执行（无 Worker 绑定时）
+    if (!response) {
+      logger.info('🔍 发送 token 刷新请求，使用代理:', !!requestOptions.httpsAgent)
+      response = await axios(requestOptions)
+    }
 
     if (response.status === 200 && response.data) {
       const result = response.data
@@ -332,7 +364,7 @@ async function refreshAccountToken(accountId) {
       }
     }
 
-    const newTokens = await refreshAccessToken(refreshToken, proxy)
+    const newTokens = await refreshAccessToken(refreshToken, proxy, account)
     if (!newTokens) {
       throw new Error('Failed to refresh token')
     }

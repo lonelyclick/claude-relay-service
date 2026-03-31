@@ -182,6 +182,13 @@ class BedrockRelayService {
 
       logger.debug(`🚀 Bedrock非流式请求 - 模型: ${modelId}, 区域: ${region}`)
 
+      // 🔌 Worker 路由检查：Bedrock 使用 AWS SDK（SigV4 签名），不兼容 Worker 路由
+      if (bedrockAccount?.workerId) {
+        throw new Error(
+          `Bedrock does not support Worker routing (requires AWS SDK SigV4 signature). Account ${bedrockAccount.id || 'unknown'} should not bind Worker for Bedrock requests.`
+        )
+      }
+
       const startTime = Date.now()
       const response = await client.send(command)
       const duration = Date.now() - startTime
@@ -322,6 +329,13 @@ class BedrockRelayService {
       })
 
       logger.debug(`🌊 Bedrock流式请求 - 模型: ${modelId}, 区域: ${region}`)
+
+      // 🔌 Worker 路由检查：Bedrock 使用 AWS SDK（SigV4 签名），不兼容 Worker 路由
+      if (bedrockAccount?.workerId) {
+        throw new Error(
+          `Bedrock does not support Worker routing (requires AWS SDK SigV4 signature). Account ${bedrockAccount.id || 'unknown'} should not bind Worker for Bedrock requests.`
+        )
+      }
 
       const startTime = Date.now()
       const response = await client.send(command)

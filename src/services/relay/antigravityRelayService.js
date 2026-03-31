@@ -122,7 +122,8 @@ async function sendAntigravityRequest({
   apiKeyId,
   signal,
   projectId,
-  accountId = null
+  accountId = null,
+  workerId = null
 }) {
   const requestedModel = normalizeAntigravityModelInput(model)
 
@@ -133,6 +134,30 @@ async function sendAntigravityRequest({
     maxTokens,
     sessionId: apiKeyId
   })
+
+  // 🔌 Worker 路由检查：Antigravity 使用动态 endpoint + 多 baseUrl 重试，
+  // 不兼容简单的 HTTP 代理模式。如果账户绑定了 Worker，直接报错。
+  if (workerId) {
+    const workerRouter = require('../worker/workerRouter')
+    const logger = require('../../utils/logger')
+    const routing = workerRouter.resolve(workerId)
+
+    if (routing.mode === 'remote') {
+      logger.error(
+        `🔌 [Worker] Antigravity does not support Worker routing (multi-endpoint retry architecture). Account ${accountId} should not bind Worker for Antigravity requests.`
+      )
+      const err = new Error(
+        'Antigravity does not support Worker routing due to multi-endpoint retry architecture'
+      )
+      err.status = 501
+      err.error = {
+        message:
+          'Antigravity does not support Worker routing due to multi-endpoint retry architecture',
+        type: 'worker_not_supported'
+      }
+      throw err
+    }
+  }
 
   const { response } = await antigravityClient.request({
     accessToken,

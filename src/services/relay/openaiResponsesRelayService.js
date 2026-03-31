@@ -171,8 +171,130 @@ class OpenAIResponsesRelayService {
         userAgent: headers['User-Agent'] || 'not set'
       })
 
-      // 发送请求
-      const response = await axios(requestOptions)
+      // 🔌 Worker 路由：如果账户绑定了在线的远程 Worker，通过 WebSocket 下发
+      let response = null
+      if (fullAccount.workerId) {
+        const workerRouter = require('../worker/workerRouter')
+        const routing = workerRouter.resolve(fullAccount.workerId)
+
+        if (routing.mode === 'remote') {
+          const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
+          logger.info(
+            `🔌 [Worker] Routing OpenAI-Responses ${req.body?.stream ? 'stream' : 'non-stream'} request to remote worker ${routing.workerId} for account ${account.id}`
+          )
+
+          if (req.body?.stream) {
+            // 流式请求 - 直接 pipe 到响应流
+            try {
+              await remoteWorkerProxy.sendStreamRequest(
+                routing.workerId,
+                {
+                  url: targetUrl,
+                  method: req.method,
+                  headers,
+                  data: req.body,
+                  proxy: fullAccount.proxy || null,
+                  timeout: this.defaultTimeout
+                },
+                {
+                  onData: (chunk) => {
+                    if (!res.headersSent) {
+                      res.writeHead(200, {
+                        'Content-Type': 'text/event-stream',
+                        'Cache-Control': 'no-cache',
+                        Connection: 'keep-alive'
+                      })
+                    }
+                    res.write(chunk)
+                  },
+                  onStatus: (statusCode, headers) => {
+                    if (statusCode !== 200) {
+                      logger.warn(
+                        `🔌 [Worker] Stream response status: ${statusCode} from worker ${routing.workerId}`
+                      )
+                    }
+                  },
+                  onError: (err) => {
+                    logger.error(
+                      `🔌 [Worker] Stream error from worker ${routing.workerId}: ${err.message}`
+                    )
+                    if (!res.headersSent) {
+                      res.writeHead(502, { 'Content-Type': 'application/json' })
+                    }
+                    if (!res.writableEnded) {
+                      res.end(
+                        JSON.stringify({ error: { message: err.message, type: 'worker_error' } })
+                      )
+                    }
+                  }
+                }
+              )
+
+              // 移除客户端断开监听器
+              req.removeListener('close', handleClientDisconnect)
+              res.removeListener('close', handleClientDisconnect)
+
+              // 更新最后使用时间
+              await this._throttledUpdateLastUsedAt(account.id)
+
+              return // 流式响应已完成
+            } catch (error) {
+              logger.error(`🔌 [Worker] Worker stream failed: ${error.message}`)
+              // 移除客户端断开监听器
+              req.removeListener('close', handleClientDisconnect)
+              res.removeListener('close', handleClientDisconnect)
+              if (!res.headersSent) {
+                return res.status(502).json({
+                  error: {
+                    message: `Worker stream request failed: ${error.message}`,
+                    type: 'worker_error'
+                  }
+                })
+              }
+              return res.end()
+            }
+          } else {
+            // 非流式请求
+            try {
+              const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
+                url: targetUrl,
+                method: req.method,
+                headers,
+                data: req.body,
+                proxy: fullAccount.proxy || null,
+                timeout: this.defaultTimeout
+              })
+
+              // 模拟 axios response 结构
+              response = {
+                status: workerResponse.statusCode,
+                statusText: workerResponse.statusMessage || 'OK',
+                headers: workerResponse.headers || {},
+                data: workerResponse.body
+              }
+
+              logger.info(
+                `🔌 [Worker] Received response from worker ${routing.workerId}, status: ${response.status}`
+              )
+            } catch (error) {
+              logger.error(`🔌 [Worker] Worker request failed: ${error.message}`)
+              throw error
+            }
+          }
+        } else {
+          // Worker 离线，直接报错
+          const offlineErr = new Error(
+            `Worker ${fullAccount.workerId} is offline, cannot process request`
+          )
+          offlineErr.status = 503
+          throw offlineErr
+        }
+      }
+
+      // 本地执行（无 Worker 绑定时）
+      if (!response) {
+        response = await axios(requestOptions)
+      }
 
       // 处理 429 限流错误
       if (response.status === 429) {

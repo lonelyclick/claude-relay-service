@@ -327,15 +327,56 @@ class ClaudeAccountService {
         axiosConfig.proxy = false
       }
 
-      const response = await axios.post(
-        this.claudeApiUrl,
-        {
-          grant_type: 'refresh_token',
-          refresh_token: refreshToken,
-          client_id: this.claudeOauthClientId
-        },
-        axiosConfig
-      )
+      // 🔌 Worker 路由
+      let response = null
+      if (accountData.workerId) {
+        const workerRouter = require('../worker/workerRouter')
+        const routing = workerRouter.resolve(accountData.workerId)
+
+        if (routing.mode === 'remote') {
+          const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
+          logger.info(`🔌 [Worker] Routing token refresh through Worker: ${routing.workerId}`)
+
+          try {
+            const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
+              url: this.claudeApiUrl,
+              method: 'POST',
+              headers: axiosConfig.headers,
+              data: {
+                grant_type: 'refresh_token',
+                refresh_token: refreshToken,
+                client_id: this.claudeOauthClientId
+              },
+              proxy: accountData.proxy || null,
+              timeout: 30000
+            })
+
+            response = {
+              status: workerResponse.statusCode,
+              data: workerResponse.body,
+              headers: workerResponse.headers || {}
+            }
+          } catch (workerError) {
+            logger.error(`🔌 [Worker] Token refresh failed: ${workerError.message}`)
+            throw workerError
+          }
+        } else {
+          throw new Error(`Worker ${accountData.workerId} is offline, cannot refresh token`)
+        }
+      }
+
+      // 本地执行（无 Worker 绑定时）
+      if (!response) {
+        response = await axios.post(
+          this.claudeApiUrl,
+          {
+            grant_type: 'refresh_token',
+            refresh_token: refreshToken,
+            client_id: this.claudeOauthClientId
+          },
+          axiosConfig
+        )
+      }
 
       if (response.status === 200) {
         // 记录完整的响应数据到专门的认证详细日志
@@ -2065,7 +2106,43 @@ class ClaudeAccountService {
         axiosConfig.proxy = false
       }
 
-      const response = await axios.get('https://api.anthropic.com/api/oauth/usage', axiosConfig)
+      // 🔌 Worker 路由
+      let response = null
+      if (accountData.workerId) {
+        const workerRouter = require('../worker/workerRouter')
+        const routing = workerRouter.resolve(accountData.workerId)
+
+        if (routing.mode === 'remote') {
+          const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
+          logger.info(`🔌 [Worker] Routing usage fetch through Worker: ${routing.workerId}`)
+
+          try {
+            const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
+              url: 'https://api.anthropic.com/api/oauth/usage',
+              method: 'GET',
+              headers: axiosConfig.headers,
+              proxy: accountData.proxy || null,
+              timeout: 15000
+            })
+
+            response = {
+              status: workerResponse.statusCode,
+              data: workerResponse.body,
+              headers: workerResponse.headers || {}
+            }
+          } catch (workerError) {
+            logger.error(`🔌 [Worker] Usage fetch failed: ${workerError.message}`)
+            throw workerError
+          }
+        } else {
+          throw new Error(`Worker ${accountData.workerId} is offline, cannot fetch usage`)
+        }
+      }
+
+      // 本地执行（无 Worker 绑定时）
+      if (!response) {
+        response = await axios.get('https://api.anthropic.com/api/oauth/usage', axiosConfig)
+      }
 
       if (response.status === 200 && response.data) {
         logger.debug('✅ Successfully fetched OAuth usage data:', {
@@ -2250,7 +2327,43 @@ class ClaudeAccountService {
         axiosConfig.proxy = false
       }
 
-      const response = await axios.get('https://api.anthropic.com/api/oauth/profile', axiosConfig)
+      // 🔌 Worker 路由
+      let response = null
+      if (accountData.workerId) {
+        const workerRouter = require('../worker/workerRouter')
+        const routing = workerRouter.resolve(accountData.workerId)
+
+        if (routing.mode === 'remote') {
+          const remoteWorkerProxy = require('../worker/remoteWorkerProxy')
+          logger.info(`🔌 [Worker] Routing profile fetch through Worker: ${routing.workerId}`)
+
+          try {
+            const workerResponse = await remoteWorkerProxy.sendRequest(routing.workerId, {
+              url: 'https://api.anthropic.com/api/oauth/profile',
+              method: 'GET',
+              headers: axiosConfig.headers,
+              proxy: accountData.proxy || null,
+              timeout: 15000
+            })
+
+            response = {
+              status: workerResponse.statusCode,
+              data: workerResponse.body,
+              headers: workerResponse.headers || {}
+            }
+          } catch (workerError) {
+            logger.error(`🔌 [Worker] Profile fetch failed: ${workerError.message}`)
+            throw workerError
+          }
+        } else {
+          throw new Error(`Worker ${accountData.workerId} is offline, cannot fetch profile`)
+        }
+      }
+
+      // 本地执行（无 Worker 绑定时）
+      if (!response) {
+        response = await axios.get('https://api.anthropic.com/api/oauth/profile', axiosConfig)
+      }
 
       if (response.status === 200 && response.data) {
         const profileData = response.data
