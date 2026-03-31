@@ -259,7 +259,7 @@
                   :class="shouldShowCheckboxes ? 'left-[50px]' : 'left-0'"
                   @click="sortAccounts('name')"
                 >
-                  账户 & 状态
+                  账户信息
                   <i
                     v-if="accountsSortBy === 'name'"
                     :class="[
@@ -269,6 +269,11 @@
                     ]"
                   />
                   <i v-else class="fas fa-sort ml-1 text-gray-400" />
+                </th>
+                <th
+                  class="min-w-[160px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
+                >
+                  状态
                 </th>
                 <th
                   class="min-w-[280px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
@@ -357,7 +362,7 @@
                       >
                         {{ account.id }}
                       </div>
-                      <!-- 平台/类型 + 状态标签 -->
+                      <!-- 平台/类型标签 -->
                       <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
                         <div
                           v-if="account.platform === 'gemini'"
@@ -477,56 +482,61 @@
                           <i class="fas fa-question text-[10px] text-gray-700" />
                           <span class="text-[11px] font-semibold text-gray-800">未知</span>
                         </div>
-                        <!-- 状态徽章 -->
-                        <span
-                          :class="[
-                            'inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold',
-                            account.status === 'blocked'
-                              ? 'bg-orange-100 text-orange-800'
-                              : account.status === 'unauthorized'
-                                ? 'bg-red-100 text-red-800'
-                                : account.status === 'temp_error'
-                                  ? 'bg-orange-100 text-orange-800'
-                                  : account.isActive
-                                    ? 'bg-green-100 text-green-800'
-                                    : 'bg-red-100 text-red-800'
-                          ]"
-                        >
-                          {{
-                            account.status === 'blocked'
-                              ? '✅ 已封锁'
-                              : account.status === 'unauthorized'
-                                ? '❌ 异常'
-                                : account.status === 'temp_error'
-                                  ? '⚠️ 临时异常'
-                                  : account.isActive
-                                    ? '✅ 正常'
-                                    : '❌ 异常'
-                          }}
-                        </span>
                       </div>
-                      <!-- 今日使用 + 到期时间 -->
-                      <div class="mt-1 text-xs text-gray-600 dark:text-gray-400">
-                        <span v-if="account.usage && account.usage.daily">
-                          📊 今日 {{ account.usage.daily.requests || 0 }} 次
+                    </div>
+                  </div>
+                </td>
+                <td class="min-w-[160px] px-3 py-4">
+                  <!-- 状态信息列 -->
+                  <div>
+                    <!-- 状态徽章 -->
+                    <div class="flex items-center gap-1">
+                      <span
+                        :class="[
+                          'inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold',
+                          account.status === 'blocked'
+                            ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400'
+                            : account.status === 'unauthorized'
+                              ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
+                              : account.status === 'temp_error'
+                                ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400'
+                                : account.isActive
+                                  ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+                                  : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
+                        ]"
+                      >
+                        {{
+                          account.status === 'blocked'
+                            ? '✅ 已封锁'
+                            : account.status === 'unauthorized'
+                              ? '❌ 异常'
+                              : account.status === 'temp_error'
+                                ? '⚠️ 临时异常'
+                                : account.isActive
+                                  ? '✅ 正常'
+                                  : '❌ 异常'
+                        }}
+                      </span>
+                    </div>
+                    <!-- 今日使用次数 -->
+                    <div class="mt-1 text-xs text-gray-600 dark:text-gray-400">
+                      <span v-if="account.usage && account.usage.daily">
+                        📊 今日 {{ account.usage.daily.requests || 0 }} 次
+                      </span>
+                      <span v-else> 📊 今日 0 次 </span>
+                    </div>
+                    <!-- 到期时间 -->
+                    <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-500">
+                      <span v-if="account.expiresAt">
+                        <span v-if="isExpired(account.expiresAt)" class="text-red-600">
+                          ⏰ 已过期
                         </span>
-                        <span v-if="account.usage && account.usage.daily && account.expiresAt">
-                          ·
+                        <span v-else-if="isExpiringSoon(account.expiresAt)" class="text-orange-600">
+                          ⏰ {{ formatExpireDate(account.expiresAt) }}
                         </span>
-                        <span v-if="account.expiresAt">
-                          <span v-if="isExpired(account.expiresAt)" class="text-red-600">
-                            ⏰ 已过期
-                          </span>
-                          <span
-                            v-else-if="isExpiringSoon(account.expiresAt)"
-                            class="text-orange-600"
-                          >
-                            ⏰ {{ formatExpireDate(account.expiresAt) }}
-                          </span>
-                          <span v-else> ⏰ {{ formatExpireDate(account.expiresAt) }} </span>
-                        </span>
-                        <span v-else> ⏰ 永不过期 </span>
-                      </div>
+                        <span v-else> ⏰ {{ formatExpireDate(account.expiresAt) }} </span>
+                      </span>
+                      <span v-else> ⏰ 永不过期 </span>
                     </div>
                   </div>
                 </td>
