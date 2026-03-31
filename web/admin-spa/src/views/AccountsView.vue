@@ -255,28 +255,13 @@
                   </div>
                 </th>
                 <th
-                  class="name-column sticky z-20 min-w-[200px] cursor-pointer px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-600"
+                  class="name-column sticky z-20 min-w-[240px] cursor-pointer px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-600"
                   :class="shouldShowCheckboxes ? 'left-[50px]' : 'left-0'"
                   @click="sortAccounts('name')"
                 >
-                  账户信息
+                  账户 & 状态
                   <i
                     v-if="accountsSortBy === 'name'"
-                    :class="[
-                      'fas',
-                      accountsSortOrder === 'asc' ? 'fa-sort-up' : 'fa-sort-down',
-                      'ml-1'
-                    ]"
-                  />
-                  <i v-else class="fas fa-sort ml-1 text-gray-400" />
-                </th>
-                <th
-                  class="min-w-[220px] cursor-pointer px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-600"
-                  @click="sortAccounts('status')"
-                >
-                  状态信息
-                  <i
-                    v-if="accountsSortBy === 'status'"
                     :class="[
                       'fas',
                       accountsSortOrder === 'asc' ? 'fa-sort-up' : 'fa-sort-down',
@@ -372,8 +357,8 @@
                       >
                         {{ account.id }}
                       </div>
-                      <!-- 平台/类型标签 -->
-                      <div class="mt-1.5 flex items-center gap-1.5">
+                      <!-- 平台/类型 + 状态标签 -->
+                      <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
                         <div
                           v-if="account.platform === 'gemini'"
                           class="flex items-center gap-1.5 rounded-lg border border-yellow-200 bg-gradient-to-r from-yellow-100 to-amber-100 px-2.5 py-1"
@@ -488,186 +473,63 @@
                           <i class="fas fa-question text-xs text-gray-700" />
                           <span class="text-xs font-semibold text-gray-800">未知</span>
                         </div>
+                        <!-- 状态徽章 -->
+                        <span
+                          :class="[
+                            'inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold',
+                            account.status === 'blocked'
+                              ? 'bg-orange-100 text-orange-800'
+                              : account.status === 'unauthorized'
+                                ? 'bg-red-100 text-red-800'
+                                : account.status === 'temp_error'
+                                  ? 'bg-orange-100 text-orange-800'
+                                  : account.isActive
+                                    ? 'bg-green-100 text-green-800'
+                                    : 'bg-red-100 text-red-800'
+                          ]"
+                        >
+                          {{
+                            account.status === 'blocked'
+                              ? '✅ 已封锁'
+                              : account.status === 'unauthorized'
+                                ? '❌ 异常'
+                                : account.status === 'temp_error'
+                                  ? '⚠️ 临时异常'
+                                  : account.isActive
+                                    ? '✅ 正常'
+                                    : '❌ 异常'
+                          }}
+                        </span>
+                      </div>
+                      <!-- 今日使用 + 到期时间 -->
+                      <div class="mt-1 text-xs text-gray-600 dark:text-gray-400">
+                        <span v-if="account.usage && account.usage.daily">
+                          📊 今日 {{ account.usage.daily.requests || 0 }} 次
+                        </span>
+                        <span v-if="account.usage && account.usage.daily && account.expiresAt">
+                          ·
+                        </span>
+                        <span v-if="account.expiresAt">
+                          <span v-if="isExpired(account.expiresAt)" class="text-red-600">
+                            ⏰ 已过期
+                          </span>
+                          <span
+                            v-else-if="isExpiringSoon(account.expiresAt)"
+                            class="text-orange-600"
+                          >
+                            ⏰ {{ formatExpireDate(account.expiresAt) }}
+                          </span>
+                          <span v-else> ⏰ {{ formatExpireDate(account.expiresAt) }} </span>
+                        </span>
+                        <span v-else> ⏰ 永不过期 </span>
                       </div>
                     </div>
                   </div>
                 </td>
-                <td class="w-[100px] min-w-[100px] max-w-[100px] whitespace-nowrap px-3 py-4">
-                  <div class="flex flex-col gap-1">
-                    <span
-                      :class="[
-                        'inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold',
-                        account.status === 'blocked'
-                          ? 'bg-orange-100 text-orange-800'
-                          : account.status === 'unauthorized'
-                            ? 'bg-red-100 text-red-800'
-                            : account.status === 'temp_error'
-                              ? 'bg-orange-100 text-orange-800'
-                              : account.isActive
-                                ? 'bg-green-100 text-green-800'
-                                : 'bg-red-100 text-red-800'
-                      ]"
-                    >
-                      <div
-                        :class="[
-                          'mr-2 h-2 w-2 rounded-full',
-                          account.status === 'blocked'
-                            ? 'bg-orange-500'
-                            : account.status === 'unauthorized'
-                              ? 'bg-red-500'
-                              : account.status === 'temp_error'
-                                ? 'bg-orange-500'
-                                : account.isActive
-                                  ? 'bg-green-500'
-                                  : 'bg-red-500'
-                        ]"
-                      />
-                      {{
-                        account.status === 'blocked'
-                          ? '已封锁'
-                          : account.status === 'unauthorized'
-                            ? '异常'
-                            : account.status === 'temp_error'
-                              ? '临时异常'
-                              : account.isActive
-                                ? '正常'
-                                : '异常'
-                      }}
-                    </span>
-                    <span
-                      v-if="
-                        (account.rateLimitStatus && account.rateLimitStatus.isRateLimited) ||
-                        account.rateLimitStatus === 'limited'
-                      "
-                      class="inline-flex items-center rounded-full bg-yellow-100 px-3 py-1 text-xs font-semibold text-yellow-800"
-                    >
-                      <i class="fas fa-exclamation-triangle mr-1" />
-                      限流中
-                      <span
-                        v-if="
-                          account.rateLimitStatus &&
-                          typeof account.rateLimitStatus === 'object' &&
-                          account.rateLimitStatus.minutesRemaining > 0
-                        "
-                        >({{ formatRateLimitTime(account.rateLimitStatus.minutesRemaining) }})</span
-                      >
-                    </span>
-                    <span
-                      v-if="account.tempUnavailable"
-                      class="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
-                    >
-                      <i class="fas fa-clock mr-1" />
-                      临时暂停
-                      <span v-if="getTempUnavailableRemainingSeconds(account.tempUnavailable) > 0">
-                        ({{
-                          formatTempUnavailableTime(
-                            getTempUnavailableRemainingSeconds(account.tempUnavailable)
-                          )
-                        }}
-                        <span v-if="getTempUnavailableCooldownSeconds(account.tempUnavailable) > 0"
-                          >/
-                          {{
-                            formatTempUnavailableTime(
-                              getTempUnavailableCooldownSeconds(account.tempUnavailable)
-                            )
-                          }}</span
-                        >)
-                      </span>
-                      <el-tooltip
-                        :content="getTempUnavailableTooltipContent(account.tempUnavailable)"
-                        effect="dark"
-                        placement="top"
-                      >
-                        <i class="fas fa-info-circle ml-1 cursor-help" />
-                      </el-tooltip>
-                    </span>
-                    <span
-                      v-if="account.schedulable === false"
-                      class="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700"
-                    >
-                      <i class="fas fa-pause-circle mr-1" />
-                      不可调度
-                      <el-tooltip
-                        v-if="getSchedulableReason(account)"
-                        :content="getSchedulableReason(account)"
-                        effect="dark"
-                        placement="top"
-                      >
-                        <i class="fas fa-question-circle ml-1 cursor-help text-gray-500" />
-                      </el-tooltip>
-                    </span>
-                    <span
-                      v-if="
-                        account.opusRateLimitStatus && account.opusRateLimitStatus.isRateLimited
-                      "
-                      class="inline-flex items-center rounded-full bg-purple-100 px-3 py-1 text-xs font-semibold text-purple-800"
-                    >
-                      <i class="fas fa-hourglass-half mr-1" />
-                      Opus限流
-                      <span
-                        v-if="
-                          Number.isFinite(account.opusRateLimitStatus.minutesRemaining) &&
-                          account.opusRateLimitStatus.minutesRemaining > 0
-                        "
-                      >
-                        ({{ formatRateLimitTime(account.opusRateLimitStatus.minutesRemaining) }})
-                      </span>
-                    </span>
-                    <span
-                      v-if="account.status === 'blocked' && account.errorMessage"
-                      class="mt-1 max-w-xs truncate text-xs text-gray-500 dark:text-gray-400"
-                      :title="account.errorMessage"
-                    >
-                      {{ account.errorMessage }}
-                    </span>
-                    <span
-                      v-if="isAccountRoutingBlocked(account)"
-                      class="mt-1 block max-w-xl truncate text-xs font-medium text-red-600 dark:text-red-300"
-                      :title="`不可路由：${getRoutingBlockReasonSummary(account)}`"
-                    >
-                      不可路由：{{ getRoutingBlockReasonSummary(account) }}
-                    </span>
-                    <span
-                      v-if="account.accountType === 'dedicated'"
-                      class="text-xs text-gray-500 dark:text-gray-400"
-                    >
-                      绑定: {{ account.boundApiKeysCount || 0 }} 个API Key
-                    </span>
-                  </div>
-                  <!-- 今日使用信息 -->
-                  <div
-                    v-if="account.usage && account.usage.daily"
-                    class="mt-2 flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400"
-                  >
-                    <span>📊 今日使用</span>
-                    <span class="font-medium text-gray-900 dark:text-gray-100">
-                      {{ account.usage.daily.requests || 0 }}
-                    </span>
-                    <span>次</span>
-                  </div>
-                  <!-- 到期时间 + 代理信息 -->
-                  <div
-                    class="mt-1 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-500"
-                  >
-                    <span v-if="account.expiresAt">
-                      <span v-if="isExpired(account.expiresAt)" class="text-red-600">
-                        ⏰ 已过期
-                      </span>
-                      <span v-else-if="isExpiringSoon(account.expiresAt)" class="text-orange-600">
-                        ⏰ {{ formatExpireDate(account.expiresAt) }}
-                      </span>
-                      <span v-else class="text-gray-600 dark:text-gray-400">
-                        ⏰ {{ formatExpireDate(account.expiresAt) }}
-                      </span>
-                    </span>
-                    <span v-else class="text-gray-400 dark:text-gray-500"> ⏰ 永不过期 </span>
-                    <span class="mx-1">·</span>
-                    <span v-if="formatProxyDisplay(account.proxy)">
-                      🔗 {{ formatProxyDisplay(account.proxy) }}
-                    </span>
-                    <span v-else class="text-gray-400">直连</span>
-                  </div>
+                <td class="min-w-[280px] px-3 py-4">
+                  <!-- 使用统计列 -->
                 </td>
+
                 <td class="min-w-[280px] px-3 py-4">
                   <!-- 余额/配额信息 -->
                   <div class="text-xs">
@@ -3114,6 +2976,7 @@ function normalizeProxyData(proxy) {
 }
 
 // 格式化代理信息显示
+// eslint-disable-next-line no-unused-vars
 const formatProxyDisplay = (proxy) => {
   const parsed = normalizeProxyData(proxy)
   if (!parsed) {
@@ -3279,7 +3142,9 @@ const formatTempUnavailableRecoveryAt = (tempUnavailable) => {
   return `${month}-${day} ${hours}:${minutes}:${seconds}`
 }
 
+// eslint-disable-next-line no-unused-vars
 const getTempUnavailableTooltipContent = (tempUnavailable) => {
+  // eslint-disable-next-line no-unused-vars
   if (!tempUnavailable) return ''
 
   const details = []
