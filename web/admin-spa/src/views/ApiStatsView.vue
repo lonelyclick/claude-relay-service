@@ -1,54 +1,62 @@
 <template>
   <div class="min-h-screen bg-gray-50 p-2 dark:bg-gray-900 sm:p-3 md:p-4">
-    <!-- 顶部导航 -->
+    <!-- 顶部导航 - 全宽背景 -->
     <div
-      class="glass-strong mb-4 rounded-lg p-3 shadow-md sm:mb-4 sm:rounded-lg sm:p-3 md:mb-6 md:rounded-lg md:p-4"
-      style="z-index: 10; position: relative"
+      class="glass-strong mb-4 shadow-md sm:mb-4 md:mb-6"
+      style="
+        z-index: 10;
+        position: relative;
+        width: 100vw;
+        margin-left: 50%;
+        transform: translateX(-50%);
+      "
     >
-      <div class="flex flex-col items-center justify-between gap-3 sm:flex-row sm:gap-3">
-        <LogoTitle
-          :loading="oemLoading"
-          :logo-src="oemSettings.siteIconData || oemSettings.siteIcon"
-          :subtitle="
-            currentTab === 'stats'
-              ? 'API Key 使用统计'
-              : currentTab === 'quota'
-                ? '额度卡'
-                : '使用教程'
-          "
-          :title="oemSettings.siteName"
-          title-class="text-white dark:text-gray-100"
-        />
-        <div class="flex items-center gap-2 md:gap-4">
-          <!-- 主题切换按钮 -->
-          <div class="flex items-center">
-            <ThemeToggle mode="dropdown" />
-          </div>
-
-          <!-- 分隔线 -->
-          <div
-            v-if="oemSettings.ldapEnabled || oemSettings.showAdminButton !== false"
-            class="h-8 w-px bg-gradient-to-b from-transparent via-gray-300 to-transparent opacity-50 dark:via-gray-600"
+      <div class="mx-auto max-w-[1440px] px-4 py-3 sm:px-6 sm:py-3 md:px-8 md:py-3">
+        <div class="flex flex-col items-center justify-between gap-3 sm:flex-row sm:gap-3">
+          <LogoTitle
+            :loading="oemLoading"
+            :logo-src="oemSettings.siteIconData || oemSettings.siteIcon"
+            :subtitle="
+              currentTab === 'stats'
+                ? 'API Key 使用统计'
+                : currentTab === 'quota'
+                  ? '额度卡'
+                  : '使用教程'
+            "
+            :title="oemSettings.siteName"
+            title-class="text-white dark:text-gray-100"
           />
+          <div class="flex items-center gap-2 md:gap-4">
+            <!-- 主题切换按钮 -->
+            <div class="flex items-center">
+              <ThemeToggle mode="dropdown" />
+            </div>
 
-          <!-- 用户登录按钮 (仅在 LDAP 启用时显示) -->
-          <router-link
-            v-if="oemSettings.ldapEnabled"
-            class="user-login-button flex items-center gap-2 rounded-lg px-4 py-2 text-white transition-colors duration-150 md:px-5 md:py-2.5"
-            to="/user-login"
-          >
-            <i class="fas fa-user text-sm md:text-base" />
-            <span class="text-xs font-semibold tracking-wide md:text-sm">用户登录</span>
-          </router-link>
-          <!-- 管理后台按钮 -->
-          <router-link
-            v-if="oemSettings.showAdminButton !== false"
-            class="admin-button-refined flex items-center gap-2 rounded-lg px-4 py-2 transition-colors duration-150 md:px-5 md:py-2.5"
-            to="/dashboard"
-          >
-            <i class="fas fa-shield-alt text-sm md:text-base" />
-            <span class="text-xs font-semibold tracking-wide md:text-sm">管理后台</span>
-          </router-link>
+            <!-- 分隔线 -->
+            <div
+              v-if="oemSettings.ldapEnabled || oemSettings.showAdminButton !== false"
+              class="h-8 w-px bg-gradient-to-b from-transparent via-gray-300 to-transparent opacity-50 dark:via-gray-600"
+            />
+
+            <!-- 用户登录按钮 (仅在 LDAP 启用时显示) -->
+            <router-link
+              v-if="oemSettings.ldapEnabled"
+              class="user-login-button flex items-center gap-2 rounded-lg px-4 py-2 text-white transition-colors duration-150 md:px-5 md:py-2.5"
+              to="/user-login"
+            >
+              <i class="fas fa-user text-sm md:text-base" />
+              <span class="text-xs font-semibold tracking-wide md:text-sm">用户登录</span>
+            </router-link>
+            <!-- 管理后台按钮 -->
+            <router-link
+              v-if="oemSettings.showAdminButton !== false"
+              class="admin-button-refined flex items-center gap-2 rounded-lg px-4 py-2 transition-colors duration-150 md:px-5 md:py-2.5"
+              to="/dashboard"
+            >
+              <i class="fas fa-shield-alt text-sm md:text-base" />
+              <span class="text-xs font-semibold tracking-wide md:text-sm">管理后台</span>
+            </router-link>
+          </div>
         </div>
       </div>
     </div>

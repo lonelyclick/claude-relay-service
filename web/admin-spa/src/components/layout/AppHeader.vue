@@ -1,147 +1,155 @@
 <template>
-  <!-- 顶部导航 -->
+  <!-- 顶部导航 - 全宽背景 -->
   <div
-    class="glass-strong mb-4 rounded-lg p-3 shadow-md sm:mb-4 sm:rounded-lg sm:p-3 md:mb-6 md:rounded-lg md:p-4"
-    style="z-index: 10; position: relative"
+    class="glass-strong mb-4 shadow-md sm:mb-4 md:mb-6"
+    style="
+      z-index: 10;
+      position: relative;
+      width: 100vw;
+      margin-left: 50%;
+      transform: translateX(-50%);
+    "
   >
-    <div class="flex flex-col items-center justify-between gap-3 sm:flex-row sm:gap-3">
-      <div
-        class="flex w-full items-center justify-center gap-2 sm:w-auto sm:justify-start sm:gap-3 md:gap-4"
-      >
-        <LogoTitle
-          :loading="oemLoading"
-          :logo-src="oemSettings.siteIconData || oemSettings.siteIcon"
-          subtitle="管理后台"
-          :title="oemSettings.siteName"
-          title-class="text-white dark:text-gray-100"
-        >
-          <template #after-title>
-            <!-- 版本信息 -->
-            <div class="flex items-center gap-1 sm:gap-2">
-              <span class="font-mono text-xs text-gray-400 dark:text-gray-500 sm:text-sm"
-                >v{{ versionInfo.current || '...' }}</span
-              >
-              <!-- 更新提示 -->
-              <a
-                v-if="versionInfo.hasUpdate"
-                class="inline-flex animate-pulse items-center gap-1 rounded-full border border-green-600 bg-green-500 px-2 py-0.5 text-xs text-white transition-colors hover:bg-green-600"
-                :href="versionInfo.releaseInfo?.htmlUrl || '#'"
-                target="_blank"
-                title="有新版本可用"
-              >
-                <i class="fas fa-arrow-up text-[10px]" />
-                <span>新版本</span>
-              </a>
-            </div>
-          </template>
-        </LogoTitle>
-      </div>
-      <!-- 主题切换和用户菜单 -->
-      <div class="flex items-center gap-2 sm:gap-3">
-        <!-- 主题切换按钮 -->
-        <div class="flex items-center">
-          <ThemeToggle mode="dropdown" />
-        </div>
-
-        <!-- 分隔线（仅管理员登录时显示） -->
+    <div class="mx-auto max-w-[1440px] px-4 py-3 sm:px-6 sm:py-3 md:px-8 md:py-3">
+      <div class="flex flex-col items-center justify-between gap-3 sm:flex-row sm:gap-3">
         <div
-          v-if="authStore.isAuthenticated"
-          class="h-8 w-px bg-gradient-to-b from-transparent via-gray-300 to-transparent opacity-50 dark:via-gray-600"
-        />
-
-        <!-- 用户菜单（仅管理员登录时显示） -->
-        <div v-if="authStore.isAuthenticated" class="user-menu-container relative">
-          <button
-            class="user-menu-button flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors duration-150 hover:shadow active:scale-95 sm:px-4 sm:py-2.5"
-            @click="userMenuOpen = !userMenuOpen"
+          class="flex w-full items-center justify-center gap-2 sm:w-auto sm:justify-start sm:gap-3 md:gap-4"
+        >
+          <LogoTitle
+            :loading="oemLoading"
+            :logo-src="oemSettings.siteIconData || oemSettings.siteIcon"
+            subtitle="管理后台"
+            :title="oemSettings.siteName"
+            title-class="text-white dark:text-gray-100"
           >
-            <i class="fas fa-user-circle text-sm sm:text-base" />
-            <span class="hidden sm:inline">{{ currentUser.username || 'Admin' }}</span>
-            <i
-              class="fas fa-chevron-down ml-1 text-xs transition-transform duration-200"
-              :class="{ 'rotate-180': userMenuOpen }"
-            />
-          </button>
-
-          <!-- 悬浮菜单 -->
-          <div
-            v-if="userMenuOpen"
-            class="user-menu-dropdown absolute right-0 top-full mt-2 w-48 rounded-lg border border-gray-200 bg-white py-2 shadow-md dark:border-gray-700 dark:bg-gray-800 sm:w-56"
-            style="z-index: 999999"
-            @click.stop
-          >
-            <!-- 版本信息 -->
-            <div class="border-b border-gray-100 px-4 py-3 dark:border-gray-700">
-              <div class="flex items-center justify-between text-sm">
-                <span class="text-gray-500 dark:text-gray-400">当前版本</span>
-                <span class="font-mono text-gray-700 dark:text-gray-300"
+            <template #after-title>
+              <!-- 版本信息 -->
+              <div class="flex items-center gap-1 sm:gap-2">
+                <span class="font-mono text-xs text-gray-400 dark:text-gray-500 sm:text-sm"
                   >v{{ versionInfo.current || '...' }}</span
                 >
-              </div>
-              <div v-if="versionInfo.hasUpdate" class="mt-2">
-                <div class="mb-2 flex items-center justify-between text-sm">
-                  <span class="font-medium text-green-600 dark:text-green-400">
-                    <i class="fas fa-arrow-up mr-1" />有新版本
-                  </span>
-                  <span class="font-mono text-green-600 dark:text-green-400"
-                    >v{{ versionInfo.latest }}</span
-                  >
-                </div>
+                <!-- 更新提示 -->
                 <a
-                  class="block w-full rounded-lg bg-green-500 px-3 py-1.5 text-center text-sm text-white transition-colors hover:bg-green-600"
+                  v-if="versionInfo.hasUpdate"
+                  class="inline-flex animate-pulse items-center gap-1 rounded-full border border-green-600 bg-green-500 px-2 py-0.5 text-xs text-white transition-colors hover:bg-green-600"
                   :href="versionInfo.releaseInfo?.htmlUrl || '#'"
                   target="_blank"
+                  title="有新版本可用"
                 >
-                  <i class="fas fa-external-link-alt mr-1" />查看更新
+                  <i class="fas fa-arrow-up text-[10px]" />
+                  <span>新版本</span>
                 </a>
               </div>
-              <div
-                v-else-if="versionInfo.checkingUpdate"
-                class="mt-2 text-center text-xs text-gray-500 dark:text-gray-400"
-              >
-                <i class="fas fa-spinner fa-spin mr-1" />检查更新中...
-              </div>
-              <div v-else class="mt-2 text-center">
-                <!-- 已是最新版提醒 -->
-                <transition mode="out-in" name="fade">
-                  <div
-                    v-if="versionInfo.noUpdateMessage"
-                    key="message"
-                    class="inline-block rounded-lg border border-green-200 bg-green-100 px-3 py-1.5 dark:border-green-800 dark:bg-green-900/30"
+            </template>
+          </LogoTitle>
+        </div>
+        <!-- 主题切换和用户菜单 -->
+        <div class="flex items-center gap-2 sm:gap-3">
+          <!-- 主题切换按钮 -->
+          <div class="flex items-center">
+            <ThemeToggle mode="dropdown" />
+          </div>
+
+          <!-- 分隔线（仅管理员登录时显示） -->
+          <div
+            v-if="authStore.isAuthenticated"
+            class="h-8 w-px bg-gradient-to-b from-transparent via-gray-300 to-transparent opacity-50 dark:via-gray-600"
+          />
+
+          <!-- 用户菜单（仅管理员登录时显示） -->
+          <div v-if="authStore.isAuthenticated" class="user-menu-container relative">
+            <button
+              class="user-menu-button flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors duration-150 hover:shadow active:scale-95 sm:px-4 sm:py-2.5"
+              @click="userMenuOpen = !userMenuOpen"
+            >
+              <i class="fas fa-user-circle text-sm sm:text-base" />
+              <span class="hidden sm:inline">{{ currentUser.username || 'Admin' }}</span>
+              <i
+                class="fas fa-chevron-down ml-1 text-xs transition-transform duration-200"
+                :class="{ 'rotate-180': userMenuOpen }"
+              />
+            </button>
+
+            <!-- 悬浮菜单 -->
+            <div
+              v-if="userMenuOpen"
+              class="user-menu-dropdown absolute right-0 top-full mt-2 w-48 rounded-lg border border-gray-200 bg-white py-2 shadow-md dark:border-gray-700 dark:bg-gray-800 sm:w-56"
+              style="z-index: 999999"
+              @click.stop
+            >
+              <!-- 版本信息 -->
+              <div class="border-b border-gray-100 px-4 py-3 dark:border-gray-700">
+                <div class="flex items-center justify-between text-sm">
+                  <span class="text-gray-500 dark:text-gray-400">当前版本</span>
+                  <span class="font-mono text-gray-700 dark:text-gray-300"
+                    >v{{ versionInfo.current || '...' }}</span
                   >
-                    <p class="text-xs font-medium text-green-700 dark:text-green-400">
-                      <i class="fas fa-check-circle mr-1" />当前已是最新版本
-                    </p>
+                </div>
+                <div v-if="versionInfo.hasUpdate" class="mt-2">
+                  <div class="mb-2 flex items-center justify-between text-sm">
+                    <span class="font-medium text-green-600 dark:text-green-400">
+                      <i class="fas fa-arrow-up mr-1" />有新版本
+                    </span>
+                    <span class="font-mono text-green-600 dark:text-green-400"
+                      >v{{ versionInfo.latest }}</span
+                    >
                   </div>
-                  <button
-                    v-else
-                    key="button"
-                    class="text-xs text-blue-500 transition-colors hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                    @click="checkForUpdates()"
+                  <a
+                    class="block w-full rounded-lg bg-green-500 px-3 py-1.5 text-center text-sm text-white transition-colors hover:bg-green-600"
+                    :href="versionInfo.releaseInfo?.htmlUrl || '#'"
+                    target="_blank"
                   >
-                    <i class="fas fa-sync-alt mr-1" />检查更新
-                  </button>
-                </transition>
+                    <i class="fas fa-external-link-alt mr-1" />查看更新
+                  </a>
+                </div>
+                <div
+                  v-else-if="versionInfo.checkingUpdate"
+                  class="mt-2 text-center text-xs text-gray-500 dark:text-gray-400"
+                >
+                  <i class="fas fa-spinner fa-spin mr-1" />检查更新中...
+                </div>
+                <div v-else class="mt-2 text-center">
+                  <!-- 已是最新版提醒 -->
+                  <transition mode="out-in" name="fade">
+                    <div
+                      v-if="versionInfo.noUpdateMessage"
+                      key="message"
+                      class="inline-block rounded-lg border border-green-200 bg-green-100 px-3 py-1.5 dark:border-green-800 dark:bg-green-900/30"
+                    >
+                      <p class="text-xs font-medium text-green-700 dark:text-green-400">
+                        <i class="fas fa-check-circle mr-1" />当前已是最新版本
+                      </p>
+                    </div>
+                    <button
+                      v-else
+                      key="button"
+                      class="text-xs text-blue-500 transition-colors hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                      @click="checkForUpdates()"
+                    >
+                      <i class="fas fa-sync-alt mr-1" />检查更新
+                    </button>
+                  </transition>
+                </div>
               </div>
+
+              <button
+                class="flex w-full items-center gap-3 px-4 py-3 text-left text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700"
+                @click="openChangePasswordModal"
+              >
+                <i class="fas fa-key text-blue-500" />
+                <span>修改账户信息</span>
+              </button>
+
+              <hr class="my-2 border-gray-200 dark:border-gray-700" />
+
+              <button
+                class="flex w-full items-center gap-3 px-4 py-3 text-left text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700"
+                @click="logout"
+              >
+                <i class="fas fa-sign-out-alt text-red-500" />
+                <span>退出登录</span>
+              </button>
             </div>
-
-            <button
-              class="flex w-full items-center gap-3 px-4 py-3 text-left text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700"
-              @click="openChangePasswordModal"
-            >
-              <i class="fas fa-key text-blue-500" />
-              <span>修改账户信息</span>
-            </button>
-
-            <hr class="my-2 border-gray-200 dark:border-gray-700" />
-
-            <button
-              class="flex w-full items-center gap-3 px-4 py-3 text-left text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700"
-              @click="logout"
-            >
-              <i class="fas fa-sign-out-alt text-red-500" />
-              <span>退出登录</span>
-            </button>
           </div>
         </div>
       </div>

@@ -1621,6 +1621,34 @@ async function handleGenerateContent(req, res) {
       })
     }
 
+    // 🔌 Worker 路由检查：v1internal cloudcode-pa 路径不支持 Worker 路由
+    if (account.workerId) {
+      const workerRouter = require('../services/worker/workerRouter')
+      const routing = workerRouter.resolve(account.workerId)
+      if (routing.mode === 'remote') {
+        logger.error(
+          `🔌 [Worker] v1internal generateContent does not support Worker routing. Account ${accountId} should not bind Worker for cloudcode-pa requests.`
+        )
+        return res.status(501).json({
+          error: {
+            message:
+              'v1internal generateContent does not support Worker routing (cloudcode-pa architecture)',
+            type: 'worker_not_supported'
+          }
+        })
+      }
+      // Worker 离线也不能降级到本地执行
+      logger.error(
+        `🔌 [Worker] Worker ${account.workerId} is offline, cannot process v1internal generateContent. Account ${accountId}`
+      )
+      return res.status(503).json({
+        error: {
+          message: `Worker ${account.workerId} is offline. v1internal generateContent does not support Worker routing.`,
+          type: 'worker_offline'
+        }
+      })
+    }
+
     const { accessToken, refreshToken } = account
 
     const version = req.path.includes('v1beta') ? 'v1beta' : 'v1internal'
@@ -1855,6 +1883,34 @@ async function handleStreamGenerateContent(req, res) {
         error: {
           message: 'Gemini account not found',
           type: 'account_not_found'
+        }
+      })
+    }
+
+    // 🔌 Worker 路由检查：v1internal cloudcode-pa 路径不支持 Worker 路由
+    if (account.workerId) {
+      const workerRouter = require('../services/worker/workerRouter')
+      const routing = workerRouter.resolve(account.workerId)
+      if (routing.mode === 'remote') {
+        logger.error(
+          `🔌 [Worker] v1internal streamGenerateContent does not support Worker routing. Account ${accountId} should not bind Worker for cloudcode-pa requests.`
+        )
+        return res.status(501).json({
+          error: {
+            message:
+              'v1internal streamGenerateContent does not support Worker routing (cloudcode-pa architecture)',
+            type: 'worker_not_supported'
+          }
+        })
+      }
+      // Worker 离线也不能降级到本地执行
+      logger.error(
+        `🔌 [Worker] Worker ${account.workerId} is offline, cannot process v1internal streamGenerateContent. Account ${accountId}`
+      )
+      return res.status(503).json({
+        error: {
+          message: `Worker ${account.workerId} is offline. v1internal streamGenerateContent does not support Worker routing.`,
+          type: 'worker_offline'
         }
       })
     }
