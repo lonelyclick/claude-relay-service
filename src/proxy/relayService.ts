@@ -2284,9 +2284,6 @@ export class RelayService {
     if (this.isOpenAICodexResponsesPath(pathname)) {
       return OPENAI_CODEX_PROVIDER.id
     }
-    if (this.isOpenAICompatibleChatCompletionsPath(pathname)) {
-      return 'openai-compatible'
-    }
 
     const accounts = await this.oauthService.listAccounts()
     const visibleAccounts = routingGroupId
@@ -2295,11 +2292,17 @@ export class RelayService {
     const hasClaudeOfficial = visibleAccounts.some(
       (account) => account.provider === CLAUDE_OFFICIAL_PROVIDER.id,
     )
-    if (!hasClaudeOfficial && this.isOpenAICompatibleChatCompletionsPath(pathname)) {
+
+    if (this.isOpenAICompatibleChatCompletionsPath(pathname)) {
+      if (visibleAccounts.some(isOpenAICompatibleAccount)) {
+        return 'openai-compatible'
+      }
       if (visibleAccounts.some(isGeminiOauthAccount)) {
         return GOOGLE_GEMINI_OAUTH_PROVIDER.id
       }
+      return 'openai-compatible'
     }
+
     if (!hasClaudeOfficial && visibleAccounts.some(isOpenAICodexAccount)) {
       return OPENAI_CODEX_PROVIDER.id
     }
