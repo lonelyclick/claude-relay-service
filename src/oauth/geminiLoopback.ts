@@ -126,6 +126,71 @@ export class GeminiLoopbackController {
     }
   }
 
+  async manualExchange(input: {
+    callbackUrl: string
+    sessionId?: string
+    label?: string | null
+    proxyUrl?: string | null
+    modelName?: string | null
+    routingGroupId?: string | null
+    group?: string | null
+    accountId?: string | null
+  }): Promise<{ sessionId: string; account: StoredAccount }> {
+    this.evictExpired()
+    const trimmed = input.callbackUrl.trim()
+    if (!trimmed) {
+      throw new Error('callbackUrl is required')
+    }
+    let stateFromUrl: string | null = null
+    try {
+      let queryString = trimmed
+      if (trimmed.startsWith('http')) {
+        queryString = new URL(trimmed).search.slice(1)
+      } else if (trimmed.startsWith('?')) {
+        queryString = trimmed.slice(1)
+      }
+      stateFromUrl = new URLSearchParams(queryString).get('state')
+    } catch (error) {
+      throw new Error(`callbackUrl parse failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+
+    let sessionId = input.sessionId?.trim() || ''
+    let pending = sessionId ? this.pending.get(sessionId) : null
+    if (!pending && stateFromUrl) {
+      const found = this.stateToSession.get(stateFromUrl)
+      if (found) {
+        sessionId = found
+        pending = this.pending.get(found) ?? null
+      }
+    }
+    if (!pending) {
+      throw new Error(
+        'No matching pending Gemini login session found. Click "Start Google OAuth Login" first; the callback URL must be used within 10 minutes of the same start request.',
+      )
+    }
+    if (pending.status === 'completed' && pending.account) {
+      return { sessionId: pending.sessionId, account: pending.account }
+    }
+    if (pending.status === 'failed') {
+      throw new Error(`Login session is already in failed state: ${pending.error ?? 'unknown error'}`)
+    }
+
+    const options = pending.options
+    const account = await this.oauthService.exchangeCode({
+      sessionId: pending.sessionId,
+      authorizationInput: trimmed,
+      label: input.label ?? options.label ?? undefined,
+      accountId: input.accountId ?? options.accountId ?? undefined,
+      modelName: input.modelName ?? options.modelName ?? undefined,
+      proxyUrl: input.proxyUrl ?? options.proxyUrl ?? undefined,
+      routingGroupId: input.routingGroupId ?? options.routingGroupId ?? undefined,
+      group: input.group ?? options.group ?? undefined,
+    })
+    pending.status = 'completed'
+    pending.account = account
+    return { sessionId: pending.sessionId, account }
+  }
+
   private evictExpired(): void {
     const now = Date.now()
     for (const [sessionId, pending] of this.pending) {

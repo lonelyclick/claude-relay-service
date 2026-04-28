@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { generateAuthUrl, exchangeCode, loginWithSessionKey, importTokens, createOpenAICompatibleAccount, createClaudeCompatibleAccount, startGeminiLogin, getGeminiLoginStatus } from '~/api/accounts'
+import { generateAuthUrl, exchangeCode, loginWithSessionKey, importTokens, createOpenAICompatibleAccount, createClaudeCompatibleAccount, startGeminiLogin, getGeminiLoginStatus, manualExchangeGemini } from '~/api/accounts'
 import { listRoutingGroups } from '~/api/routing'
 import { listProxies } from '~/api/proxies'
 import type { Proxy } from '~/api/types'
@@ -613,45 +613,6 @@ function GeminiForm() {
     onError: (e) => toast.error(e.message),
   })
 
-  useEffect(() => {
-    if (step !== 'pending' || !sessionId) return
-    let cancelled = false
-    let timer: ReturnType<typeof setTimeout> | null = null
-    const tick = async () => {
-      try {
-        const res = await getGeminiLoginStatus(sessionId)
-        if (cancelled) return
-        if (res.status === 'completed') {
-          setStep('completed')
-          setStatusMessage(`登录成功：${res.account?.label ?? res.account?.id ?? ''}`)
-          toast.success('Gemini account created')
-          qc.invalidateQueries({ queryKey: ['accounts'] })
-          return
-        }
-        if (res.status === 'failed') {
-          setStep('failed')
-          setStatusMessage(res.error ?? '登录失败')
-          return
-        }
-        if (res.status === 'unknown') {
-          setStep('failed')
-          setStatusMessage('登录会话已失效（可能超过 10 分钟未完成）')
-          return
-        }
-        timer = setTimeout(tick, 2000)
-      } catch (err) {
-        if (cancelled) return
-        setStatusMessage(err instanceof Error ? err.message : String(err))
-        timer = setTimeout(tick, 4000)
-      }
-    }
-    void tick()
-    return () => {
-      cancelled = true
-      if (timer) clearTimeout(timer)
-    }
-  }, [step, sessionId, qc, toast])
-
   const reset = () => {
     setStep('idle')
     setSessionId('')
@@ -694,40 +655,19 @@ function GeminiForm() {
         </form>
       )}
 
-      {step === 'pending' && (
-        <div className="space-y-3">
-          <div className="text-sm text-slate-300">{statusMessage}</div>
-          <div className="text-xs text-slate-500 break-all">授权 URL（如未自动打开请复制）：</div>
-          <div className="flex gap-2 items-start">
-            <a
-              href={authUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-blue-400 hover:underline break-all"
-            >
-              {authUrl}
-            </a>
-            <button
-              type="button"
-              onClick={() => {
-                navigator.clipboard.writeText(authUrl).then(
-                  () => toast.success('已复制 authUrl'),
-                  (err) => toast.error(err instanceof Error ? err.message : String(err)),
-                )
-              }}
-              className="text-xs text-slate-400 hover:text-slate-200 shrink-0"
-            >
-              Copy
-            </button>
-          </div>
-          <div className="text-xs text-slate-500">
-            Google 完成后会跳到 <code className="text-slate-300">{redirectUri}</code>，cor 内部接住后立即落库。
-          </div>
-          <button type="button" onClick={reset} className="px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-slate-200">
-            Cancel
-          </button>
-        </div>
-      )}
+      {step === 'pending' && <GeminiPendingPanel
+        authUrl={authUrl}
+        redirectUri={redirectUri}
+        sessionId={sessionId}
+        statusMessage={statusMessage}
+        onCancel={reset}
+        onCompleted={(account) => {
+          setStep('completed')
+          setStatusMessage(`登录成功：${account.label ?? account.id}`)
+          toast.success('Gemini account created')
+          qc.invalidateQueries({ queryKey: ['accounts'] })
+        }}
+      />}
 
       {step === 'completed' && (
         <div className="space-y-3">
@@ -746,6 +686,135 @@ function GeminiForm() {
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+function GeminiPendingPanel(props: {
+  authUrl: string
+  redirectUri: string
+  sessionId: string
+  statusMessage: string | null
+  onCancel: () => void
+  onCompleted: (account: import('~/api/types').Account) => void
+}) {
+  const toast = useToast()
+  const [callbackUrl, setCallbackUrl] = useState('')
+  const [autoStatus, setAutoStatus] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!props.sessionId) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const tick = async () => {
+      try {
+        const res = await getGeminiLoginStatus(props.sessionId)
+        if (cancelled) return
+        if (res.status === 'completed' && res.account) {
+          props.onCompleted(res.account)
+          return
+        }
+        if (res.status === 'failed') {
+          setAutoStatus(`自动接收失败：${res.error ?? '未知错误'}`)
+          return
+        }
+        if (res.status === 'unknown') {
+          setAutoStatus('登录会话已失效（可能超过 10 分钟）')
+          return
+        }
+        timer = setTimeout(tick, 2500)
+      } catch (err) {
+        if (cancelled) return
+        timer = setTimeout(tick, 5000)
+      }
+    }
+    void tick()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.sessionId])
+
+  const manualMut = useMutation({
+    mutationFn: () =>
+      manualExchangeGemini({
+        callbackUrl: callbackUrl.trim(),
+        sessionId: props.sessionId,
+      }),
+    onSuccess: (data) => {
+      props.onCompleted(data.account)
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : String(err)),
+  })
+
+  return (
+    <div className="space-y-4">
+      <div className="text-sm text-slate-300">{props.statusMessage}</div>
+
+      <div className="rounded-lg border border-ccdash-border bg-ccdash-bg/40 p-3 space-y-2">
+        <div className="text-xs text-slate-400 font-medium">1. 在浏览器打开授权 URL（如未自动打开请复制）</div>
+        <div className="flex gap-2 items-start">
+          <a
+            href={props.authUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-blue-400 hover:underline break-all flex-1"
+          >
+            {props.authUrl}
+          </a>
+          <button
+            type="button"
+            onClick={() => {
+              navigator.clipboard.writeText(props.authUrl).then(
+                () => toast.success('已复制 authUrl'),
+                (err) => toast.error(err instanceof Error ? err.message : String(err)),
+              )
+            }}
+            className="text-xs text-slate-400 hover:text-slate-200 shrink-0"
+          >
+            Copy
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 space-y-2">
+        <div className="text-xs text-blue-300 font-medium">2A. 同机模式（推荐）</div>
+        <div className="text-xs text-slate-400">
+          如果你在 cor 主机本身的浏览器登录，Google 跳到 <code className="text-slate-300">{props.redirectUri}</code> 后 cor 进程内部的
+          loopback server 会自动接住并完成登录，无需任何额外操作。
+        </div>
+        {autoStatus && <div className="text-xs text-rose-400">{autoStatus}</div>}
+      </div>
+
+      <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 space-y-2">
+        <div className="text-xs text-amber-300 font-medium">2B. 异机模式（你正在远程访问 ccdash 时用这个）</div>
+        <div className="text-xs text-slate-400">
+          浏览器在 ncu 之外的机器上登录时，Google 跳到 <code>http://127.0.0.1:8085/...</code> 会"无法访问"——这是正常的，复制浏览器地址栏的完整 URL
+          粘到下面，cor 会从中解析出 code 并完成登录。
+        </div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            manualMut.mutate()
+          }}
+          className="space-y-2"
+        >
+          <Field label="完整回调 URL（包含 ?code=...&state=...）">
+            <Input
+              value={callbackUrl}
+              onChange={(e) => setCallbackUrl(e.target.value)}
+              placeholder="http://127.0.0.1:8085/oauth/callback?state=...&code=..."
+              required
+            />
+          </Field>
+          <SubmitButton loading={manualMut.isPending}>Submit Callback URL</SubmitButton>
+        </form>
+      </div>
+
+      <button type="button" onClick={props.onCancel} className="px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-slate-200">
+        Cancel
+      </button>
     </div>
   )
 }

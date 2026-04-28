@@ -1176,6 +1176,34 @@ export function createServer(services) {
             error: status.error ?? null,
         });
     }));
+    app.post('/admin/oauth/gemini/manual-exchange', asyncRoute(async (req, res) => {
+        if (!services.geminiLoopback) {
+            res.status(503).json({ error: 'gemini_loopback_unavailable' });
+            return;
+        }
+        const callbackUrl = getOptionalString(req.body?.callbackUrl) ?? '';
+        if (!callbackUrl) {
+            res.status(400).json({ error: 'missing_callback_url', message: 'callbackUrl is required' });
+            return;
+        }
+        try {
+            const result = await services.geminiLoopback.manualExchange({
+                callbackUrl,
+                sessionId: getOptionalString(req.body?.sessionId) ?? undefined,
+                label: getOptionalString(req.body?.label),
+                proxyUrl: getOptionalString(req.body?.proxyUrl),
+                modelName: getOptionalString(req.body?.modelName),
+                routingGroupId: getFirstDefinedNullableString(req.body, ['routingGroupId', 'group']),
+                accountId: getOptionalString(req.body?.accountId),
+            });
+            res.json({ ok: true, sessionId: result.sessionId, account: sanitizeAccount(result.account) });
+        } catch (error) {
+            res.status(400).json({
+                error: 'gemini_manual_exchange_failed',
+                message: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }));
     app.post('/admin/accounts/:accountId/settings', asyncRoute(async (req, res) => {
         const accountId = getRouteParam(req.params.accountId);
         const settings = {};

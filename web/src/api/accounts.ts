@@ -102,4 +102,15 @@ export const getGeminiLoginStatus = (sessionId: string) =>
     error: string | null
   }>(`/admin/oauth/gemini/status?sessionId=${enc(sessionId)}`)
 
+export const manualExchangeGemini = (payload: {
+  callbackUrl: string
+  sessionId?: string
+  label?: string
+  modelName?: string
+  proxyUrl?: string
+  routingGroupId?: string
+  accountId?: string
+}) =>
+  post<{ sessionId: string; account: Account }>('/admin/oauth/gemini/manual-exchange', payload)
+
 function enc(v: string) { return encodeURIComponent(v) }
