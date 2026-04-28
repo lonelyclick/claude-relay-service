@@ -196,12 +196,14 @@ export class AccountScheduler {
     preferredAccountIds?: Set<string>,
   ): SchedulerAccountStats[] {
     const sessionCounts = activeSessionCounts ?? this.countSessionsPerAccount(stickySessions)
+    const groupTotalsByAccount = computeGroupTotalsByAccount(accounts, sessionCounts)
 
     return accounts.map((account) => {
       const maxSessions = account.maxSessions ?? this.config.defaultMaxSessions
       const activeSessions = sessionCounts.get(account.id) ?? 0
+      const groupTotalActive = groupTotalsByAccount.get(account.id) ?? activeSessions
       const blockedReason = this.getBlockedReason(account, now, 'new')
-      const score = this.scoreAccount(account, activeSessions, maxSessions, preferredAccountIds?.has(account.id) ?? false, now)
+      const score = this.scoreAccount(account, activeSessions, groupTotalActive, preferredAccountIds?.has(account.id) ?? false, now)
       return {
         accountId: account.id,
         emailAddress: account.emailAddress,
@@ -369,15 +371,16 @@ export class AccountScheduler {
       )
     }
 
+    const groupTotalsByAccount = computeGroupTotalsByAccount(selectable, sessionCounts)
     const scored = selectable.map((account) => {
-      const maxSessions = account.maxSessions ?? this.config.defaultMaxSessions
       const activeSessions = sessionCounts.get(account.id) ?? 0
+      const groupTotalActive = groupTotalsByAccount.get(account.id) ?? activeSessions
       return {
         account,
         score: this.scoreAccount(
           account,
           activeSessions,
-          maxSessions,
+          groupTotalActive,
           options.preferredAccountIds.has(account.id),
           options.now,
         ),
@@ -531,7 +534,7 @@ export class AccountScheduler {
   private scoreAccount(
     account: StoredAccount,
     activeSessions: number,
-    maxSessions: number,
+    groupTotalActive: number,
     preferredForSession: boolean,
     now: number = Date.now(),
   ): ScoreBreakdown {
@@ -559,7 +562,7 @@ export class AccountScheduler {
     }
     const sessionAffinityScore = preferredForSession ? 1 : 0
     const healthScore = clamp01(this.healthTracker.getHealthScore(account.id))
-    const capacityScore = maxSessions > 0 ? clamp01(1 - activeSessions / maxSessions) : 0
+    const capacityScore = groupTotalActive > 0 ? clamp01(1 - activeSessions / groupTotalActive) : 1
     const proxyScore = providerRequiresProxy(account.provider)
       ? (account.proxyUrl ? 1 : 0)
       : 1
@@ -568,10 +571,10 @@ export class AccountScheduler {
       account.planMultiplier ?? getDefaultPlanMultiplier(account.provider, account.planType, account.subscriptionType),
     )
     const totalScore =
-      0.45 * quotaScore +
+      0.3 * quotaScore +
       0.15 * sessionAffinityScore +
       0.15 * healthScore +
-      0.1 * capacityScore +
+      0.25 * capacityScore +
       0.05 * proxyScore +
       0.05 * manualWeightScore +
       0.05 * planMultiplierScore
@@ -699,4 +702,21 @@ function normalizeWeight(weight: number | null): number {
     return 0.5
   }
   return clamp01(weight / 2)
+}
+
+function computeGroupTotalsByAccount(
+  accounts: StoredAccount[],
+  sessionCounts: Map<string, number>,
+): Map<string, number> {
+  const totalsByGroup = new Map<string, number>()
+  for (const account of accounts) {
+    const key = account.group ?? account.provider
+    totalsByGroup.set(key, (totalsByGroup.get(key) ?? 0) + (sessionCounts.get(account.id) ?? 0))
+  }
+  const result = new Map<string, number>()
+  for (const account of accounts) {
+    const key = account.group ?? account.provider
+    result.set(account.id, totalsByGroup.get(key) ?? 0)
+  }
+  return result
 }
