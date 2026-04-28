@@ -1,0 +1,89 @@
+{
+  "topLevelKeys": [
+    "model",
+    "messages",
+    "system",
+    "tools",
+    "metadata",
+    "max_tokens",
+    "thinking",
+    "context_management",
+    "output_config"
+  ],
+  "model": "claude-opus-4-6",
+  "max_tokens": 64000,
+  "thinking": {
+    "type": "adaptive"
+  },
+  "context_management": {
+    "edits": [
+      {
+        "type": "clear_thinking_20251015",
+        "keep": "all"
+      }
+    ]
+  },
+  "output_config": {
+    "effort": "high"
+  },
+  "metadata": {
+    "user_id": "{\"device_id\":\"ee93c999d097847decfa902df9dd3e060f55ebca9fdf78d1b2013a5669d58458\",\"account_uuid\":\"5f693786-c215-460f-89a7-3c3140b2ad9e\",\"session_id\":\"f5650856-2142-42b1-9931-0b307e9c8726\"}"
+  },
+  "systemBlockCount": 3,
+  "systemBlocks": [
+    {
+      "index": 0,
+      "type": "text",
+      "cache_control": null,
+      "textLength": 83,
+      "textPreview": "x-anthropic-billing-header: cc_version=2.1.98.e54; cc_entrypoint=sdk-ts; cch=00000;"
+    },
+    {
+      "index": 1,
+      "type": "text",
+      "cache_control": {
+        "type": "ephemeral",
+        "ttl": "1h"
+      },
+      "textLength": 62,
+      "textPreview": "You are a Claude agent, built on Anthropic's Claude Agent SDK."
+    },
+    {
+      "index": 2,
+      "type": "text",
+      "cache_control": {
+        "type": "ephemeral",
+        "ttl": "1h"
+      },
+      "textLength": 26646,
+      "textPreview": "\nYou are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.\n\nIMPORTANT: Assist with authorized securit"
+    }
+  ],
+  "toolCount": 24,
+  "toolNames": [
+    "Agent",
+    "AskUserQuestion",
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "Edit",
+    "EnterPlanMode",
+    "EnterWorktree",
+    "ExitPlanMode",
+    "ExitWorktree",
+    "Glob",
+    "Grep",
+    "Monitor",
+    "NotebookEdit",
+    "Read",
+    "RemoteTrigger",
+    "Skill",
+    "TaskOutput",
+    "TaskStop",
+    "TodoWrite",
+    "WebFetch",
+    "WebSearch",
+    "Write"
+  ]
+}

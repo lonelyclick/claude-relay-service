@@ -1,0 +1,216 @@
+=================================================================================
+YOHO-REMOTE MCP FLOW - COMPLETE SUMMARY
+=================================================================================
+
+QUESTION: How does yoho-remote daemon load and pass MCP servers to Claude Code?
+
+ANSWER: Using standard Claude Code SDK's --mcp-config CLI argument. NOT proprietary.
+
+=================================================================================
+KEY MECHANISM (Single Point of Truth)
+=================================================================================
+
+File: cli/src/claude/sdk/query.ts, Line 336
+Function: query() → appendMcpConfigArg(spawnArgs, mcpServers)
+
+This line:
+  1. Takes the assembled mcpServers object
+  2. Serializes it to JSON (or writes to temp file on Windows)
+  3. Appends --mcp-config CLI argument to spawn command
+  4. Spawns: claude --mcp-config '{"mcpServers":{...}}'
+
+The Claude Code SDK then parses this JSON and connects to all servers.
+
+=================================================================================
+COMPLETE ASSEMBLY FLOW
+=================================================================================
+
+1. runClaude() [runClaude.ts:66]
+   
+   ├─ getYohoAuxMcpServers('claude', {...}) [runClaude.ts:499]
+   │  Returns: { 'yoho-vault': {...}, 'skill': {...} }
+   │
+   └─ startYohoRemoteServer(session, {...}) [runClaude.ts:190]
+      Returns: { url: 'http://localhost:9999', toolNames: [...] }
+
+2. Build mcpServers object [runClaude.ts:581-587]
+   
+   mcpServers = {
+     'yoho_remote': { type: 'http', url: '...' },
+     ...auxMcpServers  // Merges vault + skill
+   }
+
+3. Pass to loop() [runClaude.ts:506]
+   → Creates Session with mcpServers [session.ts:68]
+   → Session stores as readonly property [session.ts:18]
+
+4. Choose launcher (remote for daemon) [loop.ts:79-85]
+   → claudeRemoteLauncher(session) [loop.ts:84]
+
+5. claudeRemote() receives mcpServers [claudeRemote.ts:25]
+   → Puts in sdkOptions [claudeRemote.ts:155]
+   → Passes to query() [claudeRemote.ts:194]
+
+6. query() function [query.ts:256-434]
+   → Extracts mcpServers from options [query.ts:269]
+   → Builds CLI args array [query.ts:288]
+   → Calls appendMcpConfigArg(args, mcpServers) [query.ts:336]
+      ├─ Serializes to JSON [mcpConfig.ts:19]
+      ├─ On Windows: writes to temp file [mcpConfig.ts:28-34]
+      ├─ On Unix: passes JSON directly [mcpConfig.ts:22]
+      └─ Appends --mcp-config to args [mcpConfig.ts:56]
+   → Spawns process [query.ts:342]
+      └─ Actual command: claude --mcp-config '{"mcpServers":{...}}'
+
+7. Claude Code SDK
+   → Receives --mcp-config argument
+   → Parses JSON
+   → Connects to each MCP server (HTTP or stdio)
+   → Registers tools
+   → Makes available in session
+
+=================================================================================
+MCP SERVER CONFIGURATION FORMAT
+=================================================================================
+
+{
+  "mcpServers": {
+    "yoho_remote": {
+      "type": "http",
+      "url": "http://localhost:9999"
+    },
+    "yoho-vault": {
+      "type": "http",
+      "url": "http://localhost:3100/mcp",
+      "headers": { "x-org-id": "org-123" }
+    },
+    "skill": {
+      "command": "bun",
+      "args": ["run", "/path/to/skill-stdio.ts"],
+      "cwd": "/repo/root",
+      "env": { "PATH": "...", "YOHO_ORG_ID": "org-123" }
+    }
+  }
+}
+
+HTTP servers: type: 'http' + url (+ optional headers)
+Stdio servers: command, args, cwd, env for process spawning
+
+=================================================================================
+AUXILIARY MCP SERVERS RESOLUTION (yohoMcpServers.ts)
+=================================================================================
+
+File: cli/src/utils/yohoMcpServers.ts, function getYohoAuxMcpServers()
+
+For yoho-vault (both codex and claude):
+  1. Check YOHO_MEMORY_PATH env
+  2. Query API for project: YohoVault / yoho-vault / YohoMemory / yoho-memory
+  3. Check legacy path: ~/happy/yoho-memory
+  4. If found & local files exist:
+     → Use stdio: bun run src/mcp/stdio.ts
+  5. Else if Claude flavor:
+     → Use HTTP fallback: http://<YOHO_REMOTE_URL_host>:3100/mcp
+
+For skill server (if found):
+  → Use stdio: bun run src/mcp/skill-stdio.ts
+
+Org isolation:
+  → Passed as YOHO_ORG_ID env (stdio) or x-org-id header (HTTP)
+
+=================================================================================
+KEY DIFFERENCES FROM STATIC CONFIGURATION
+=================================================================================
+
+Static (.mcp.json or claude mcp add):
+  - Config read from disk at startup
+  - URLs hardcoded
+  - Fixed set of servers
+  - User manually maintains
+
+Yoho-remote (dynamic):
+  - Config assembled at runtime
+  - Session-specific URLs (yoho_remote server)
+  - API-sourced project paths (yoho-vault)
+  - Org isolation headers added automatically
+  - Runtime fallbacks (HTTP vs stdio)
+  - Per-session tool restrictions
+
+TRANSPORT MECHANISM: Same in both cases
+  - --mcp-config CLI argument
+  - JSON serialization
+  - Claude Code SDK parsing
+
+=================================================================================
+FILE PATHS AND LINE NUMBERS (KEY LOCATIONS)
+=================================================================================
+
+1. Initial assembly:
+   cli/src/claude/runClaude.ts:499-587
+     - getYohoAuxMcpServers() call: line 499
+     - startYohoRemoteServer(): line 190-197
+     - mcpServers object built: line 581-587
+
+2. Session storage:
+   cli/src/claude/session.ts:18, 68
+     - readonly mcpServers property
+     - Constructor assignment
+
+3. Passing to SDK:
+   cli/src/claude/claudeRemote.ts:155
+     - sdkOptions.mcpServers = opts.mcpServers
+
+4. CLI argument assembly (CRITICAL):
+   cli/src/claude/sdk/query.ts:336
+     - cleanupMcpConfig = appendMcpConfigArg(spawnArgs, mcpServers)
+
+5. MCP config serialization:
+   cli/src/claude/utils/mcpConfig.ts:15-58
+     - resolveMcpConfigArg(): JSON serialization / temp file logic
+     - appendMcpConfigArg(): Adds --mcp-config to args
+
+6. Process spawn:
+   cli/src/claude/sdk/query.ts:342-349
+     - spawn('claude', args)
+
+7. Auxiliary server resolution:
+   cli/src/utils/yohoMcpServers.ts:126-168
+     - getYohoAuxMcpServers() with all resolution logic
+
+=================================================================================
+HOW TO REPLICATE WITH DIRECT CLAUDE CODE
+=================================================================================
+
+Option 1: Static .mcp.json
+  Create: ~/.claude/mcp.json
+  Content: { "mcpServers": { "example": { "type": "http", "url": "..." } } }
+  Usage: claude
+  → Claude reads file automatically
+
+Option 2: CLI --mcp-config (same as yoho-remote)
+  Command: claude --mcp-config '{"mcpServers":{"example":{"type":"http","url":"..."}}}'
+  Or file: claude --mcp-config /path/to/config.json
+  → Same mechanism as yoho-remote
+
+Option 3: claude mcp add (user-friendly)
+  Command: claude mcp add example "http://localhost:3100/mcp"
+  → Stores in Claude's settings
+  → Reads on next startup
+
+=================================================================================
+NO SPECIAL/PROPRIETARY FEATURES
+=================================================================================
+
+✅ Standard --mcp-config CLI argument (Claude Code SDK feature)
+✅ Standard JSON format (MCP protocol spec)
+✅ Standard HTTP & stdio transports (MCP protocol spec)
+✅ Standard process spawning (Node.js child_process)
+
+The "magic" is purely in:
+  1. Runtime assembly (collecting servers from multiple sources)
+  2. Session-specific URLs (generated at session startup)
+  3. Org isolation (headers/env automatically included)
+  4. Tool restrictions (per-session allowedTools/disallowedTools)
+
+All of these work the same way whether using yoho-remote or manual config.
+
+=================================================================================

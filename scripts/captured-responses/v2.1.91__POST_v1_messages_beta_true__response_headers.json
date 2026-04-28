@@ -1,0 +1,38 @@
+{
+  "statusCode": 200,
+  "headers": {
+    "date": "Fri, 10 Apr 2026 07:13:53 GMT",
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache",
+    "anthropic-ratelimit-unified-status": "allowed",
+    "anthropic-ratelimit-unified-5h-status": "allowed",
+    "anthropic-ratelimit-unified-5h-reset": "1775811600",
+    "anthropic-ratelimit-unified-5h-utilization": "0.3",
+    "anthropic-ratelimit-unified-7d-status": "allowed",
+    "anthropic-ratelimit-unified-7d-reset": "1776074400",
+    "anthropic-ratelimit-unified-7d-utilization": "0.63",
+    "anthropic-ratelimit-unified-representative-claim": "five_hour",
+    "anthropic-ratelimit-unified-fallback-percentage": "0.5",
+    "anthropic-ratelimit-unified-reset": "1775811600",
+    "anthropic-ratelimit-unified-overage-disabled-reason": "org_level_disabled",
+    "anthropic-ratelimit-unified-overage-status": "rejected",
+    "request-id": "req_011CZugDgVfgjVP3SzTvRzFN",
+    "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+    "anthropic-organization-id": "93bce2c2-59b0-4e1a-b68e-1a92a2047740",
+    "server": "cloudflare",
+    "x-envoy-upstream-service-time": "1964",
+    "content-encoding": "gzip",
+    "vary": "Accept-Encoding",
+    "server-timing": "x-originResponse;dur=1969",
+    "cf-cache-status": "DYNAMIC",
+    "set-cookie": [
+      "_cfuvid=zTI0ihi1KQRUEQBQEzzkyGcGaAk2b_aSV0GmCpeF6Ek-1775805231.2449765-1.0.1.1-xGtmSAngjl9OaOk5SRma6Bz.M.aAyK_6bvVmrcZ_VXU; HttpOnly; SameSite=None; Secure; Path=/; Domain=api.anthropic.com"
+    ],
+    "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+    "x-robots-tag": "none",
+    "cf-ray": "9e9ff3874ab3ce2b-SIN",
+    "connection": "keep-alive",
+    "keep-alive": "timeout=5",
+    "transfer-encoding": "chunked"
+  }
+}

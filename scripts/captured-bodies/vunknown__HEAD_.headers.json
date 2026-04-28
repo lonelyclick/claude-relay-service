@@ -1,0 +1,21 @@
+{
+  "method": "HEAD",
+  "url": "/",
+  "userAgent": "node",
+  "headers": [
+    "host",
+    "127.0.0.1:9999",
+    "connection",
+    "close",
+    "accept",
+    "*/*",
+    "accept-language",
+    "*",
+    "sec-fetch-mode",
+    "cors",
+    "user-agent",
+    "node",
+    "accept-encoding",
+    "gzip, deflate"
+  ]
+}

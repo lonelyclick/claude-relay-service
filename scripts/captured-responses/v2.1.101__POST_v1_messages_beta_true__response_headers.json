@@ -1,0 +1,39 @@
+{
+  "statusCode": 200,
+  "headers": {
+    "date": "Sat, 11 Apr 2026 13:42:53 GMT",
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache",
+    "anthropic-ratelimit-unified-status": "allowed_warning",
+    "anthropic-ratelimit-unified-5h-status": "allowed",
+    "anthropic-ratelimit-unified-5h-reset": "1775923200",
+    "anthropic-ratelimit-unified-5h-utilization": "0.18",
+    "anthropic-ratelimit-unified-7d-status": "allowed_warning",
+    "anthropic-ratelimit-unified-7d-reset": "1776074400",
+    "anthropic-ratelimit-unified-7d-utilization": "0.77",
+    "anthropic-ratelimit-unified-7d-surpassed-threshold": "0.75",
+    "anthropic-ratelimit-unified-representative-claim": "seven_day",
+    "anthropic-ratelimit-unified-fallback-percentage": "0.5",
+    "anthropic-ratelimit-unified-reset": "1776074400",
+    "anthropic-ratelimit-unified-overage-disabled-reason": "org_level_disabled",
+    "anthropic-ratelimit-unified-overage-status": "rejected",
+    "request-id": "req_011CZx5gmhPaREkZYdeMTTvG",
+    "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+    "anthropic-organization-id": "93bce2c2-59b0-4e1a-b68e-1a92a2047740",
+    "server": "cloudflare",
+    "x-envoy-upstream-service-time": "6290",
+    "content-encoding": "gzip",
+    "vary": "Accept-Encoding",
+    "server-timing": "x-originResponse;dur=6296",
+    "cf-cache-status": "DYNAMIC",
+    "set-cookie": [
+      "_cfuvid=eSBhjguwLFBHzyNfStuB96.tfQs7iG_527BYSyKtY4w-1775914966.9267488-1.0.1.1-eJ62i8X.0.O06KdNKRe34rDm8Qun5ZNc1BNKn1mB3Rk; HttpOnly; SameSite=None; Secure; Path=/; Domain=api.anthropic.com"
+    ],
+    "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+    "x-robots-tag": "none",
+    "cf-ray": "9eaa6a9f4ccaff83-SIN",
+    "connection": "keep-alive",
+    "keep-alive": "timeout=5",
+    "transfer-encoding": "chunked"
+  }
+}
