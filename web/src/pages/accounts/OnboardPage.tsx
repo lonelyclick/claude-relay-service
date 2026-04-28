@@ -1,13 +1,18 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { generateAuthUrl, exchangeCode, loginWithSessionKey, importTokens, createOpenAICompatibleAccount, createClaudeCompatibleAccount } from '~/api/accounts'
+import { generateAuthUrl, exchangeCode, loginWithSessionKey, importTokens, createOpenAICompatibleAccount, createClaudeCompatibleAccount, startGeminiLogin, getGeminiLoginStatus } from '~/api/accounts'
 import { listRoutingGroups } from '~/api/routing'
 import { listProxies } from '~/api/proxies'
 import type { Proxy } from '~/api/types'
 import { useToast } from '~/components/Toast'
 import { cn } from '~/lib/cn'
 
-type Provider = 'claude-official' | 'openai-codex' | 'openai-compatible' | 'claude-compatible'
+type Provider =
+  | 'claude-official'
+  | 'openai-codex'
+  | 'openai-compatible'
+  | 'claude-compatible'
+  | 'google-gemini-oauth'
 type ClaudeAuthMethod = 'oauth' | 'session-key' | 'import-tokens'
 
 const providers: { id: Provider; label: string }[] = [
@@ -15,6 +20,7 @@ const providers: { id: Provider; label: string }[] = [
   { id: 'openai-codex', label: 'OpenAI Codex' },
   { id: 'openai-compatible', label: 'OpenAI Compatible' },
   { id: 'claude-compatible', label: 'Claude Compatible' },
+  { id: 'google-gemini-oauth', label: 'Google Gemini (OAuth)' },
 ]
 
 const claudeAuthMethods: { id: ClaudeAuthMethod; label: string }[] = [
@@ -71,6 +77,7 @@ export function OnboardPage() {
       {provider === 'openai-codex' && <CodexForm />}
       {provider === 'openai-compatible' && <OpenAICompatibleForm />}
       {provider === 'claude-compatible' && <ClaudeCompatibleForm />}
+      {provider === 'google-gemini-oauth' && <GeminiForm />}
     </div>
   )
 }
@@ -570,6 +577,175 @@ function ClaudeCompatibleForm() {
         </Field>
         <SubmitButton loading={mut.isPending}>Create Account</SubmitButton>
       </form>
+    </div>
+  )
+}
+
+function GeminiForm() {
+  const toast = useToast()
+  const qc = useQueryClient()
+  const [step, setStep] = useState<'idle' | 'pending' | 'completed' | 'failed'>('idle')
+  const [sessionId, setSessionId] = useState('')
+  const [authUrl, setAuthUrl] = useState('')
+  const [redirectUri, setRedirectUri] = useState('')
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [label, setLabel] = useState('')
+  const [group, setGroup] = useState('')
+  const [proxyUrl, setProxyUrl] = useState('')
+  const [modelName, setModelName] = useState('gemini-2.5-pro')
+
+  const startMut = useMutation({
+    mutationFn: () =>
+      startGeminiLogin({
+        ...(label ? { label } : {}),
+        ...(modelName ? { modelName } : {}),
+        ...(proxyUrl ? { proxyUrl } : {}),
+        ...(group ? { routingGroupId: group } : {}),
+      }),
+    onSuccess: (data) => {
+      setSessionId(data.session.sessionId)
+      setAuthUrl(data.session.authUrl)
+      setRedirectUri(data.session.redirectUri)
+      setStep('pending')
+      setStatusMessage('已生成 Google 授权链接，等待你在浏览器完成登录…')
+      window.open(data.session.authUrl, '_blank', 'noopener,noreferrer')
+    },
+    onError: (e) => toast.error(e.message),
+  })
+
+  useEffect(() => {
+    if (step !== 'pending' || !sessionId) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const tick = async () => {
+      try {
+        const res = await getGeminiLoginStatus(sessionId)
+        if (cancelled) return
+        if (res.status === 'completed') {
+          setStep('completed')
+          setStatusMessage(`登录成功：${res.account?.label ?? res.account?.id ?? ''}`)
+          toast.success('Gemini account created')
+          qc.invalidateQueries({ queryKey: ['accounts'] })
+          return
+        }
+        if (res.status === 'failed') {
+          setStep('failed')
+          setStatusMessage(res.error ?? '登录失败')
+          return
+        }
+        if (res.status === 'unknown') {
+          setStep('failed')
+          setStatusMessage('登录会话已失效（可能超过 10 分钟未完成）')
+          return
+        }
+        timer = setTimeout(tick, 2000)
+      } catch (err) {
+        if (cancelled) return
+        setStatusMessage(err instanceof Error ? err.message : String(err))
+        timer = setTimeout(tick, 4000)
+      }
+    }
+    void tick()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [step, sessionId, qc, toast])
+
+  const reset = () => {
+    setStep('idle')
+    setSessionId('')
+    setAuthUrl('')
+    setRedirectUri('')
+    setStatusMessage(null)
+  }
+
+  return (
+    <div className="bg-ccdash-card border border-ccdash-border rounded-xl p-5 space-y-4 max-w-lg">
+      <div>
+        <div className="text-sm font-medium text-slate-200">Google Gemini (OAuth)</div>
+        <div className="text-xs text-slate-500 mt-1">
+          复用 gemini-cli 的 OAuth client。登录回调会通过 cor 进程内的 loopback HTTP 服务器接收，必须在
+          cor 主机本身的浏览器里打开授权链接。
+        </div>
+      </div>
+
+      {step === 'idle' && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            startMut.mutate()
+          }}
+          className="space-y-3"
+        >
+          <Field label="Label (optional)">
+            <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. gemini-pro-main" />
+          </Field>
+          <Field label="Model Name">
+            <Input value={modelName} onChange={(e) => setModelName(e.target.value)} />
+          </Field>
+          <Field label="Proxy">
+            <ProxySelect value={proxyUrl} onChange={setProxyUrl} />
+          </Field>
+          <Field label="Routing Group">
+            <GroupSelect value={group} onChange={setGroup} />
+          </Field>
+          <SubmitButton loading={startMut.isPending}>Start Google OAuth Login</SubmitButton>
+        </form>
+      )}
+
+      {step === 'pending' && (
+        <div className="space-y-3">
+          <div className="text-sm text-slate-300">{statusMessage}</div>
+          <div className="text-xs text-slate-500 break-all">授权 URL（如未自动打开请复制）：</div>
+          <div className="flex gap-2 items-start">
+            <a
+              href={authUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-blue-400 hover:underline break-all"
+            >
+              {authUrl}
+            </a>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(authUrl).then(
+                  () => toast.success('已复制 authUrl'),
+                  (err) => toast.error(err instanceof Error ? err.message : String(err)),
+                )
+              }}
+              className="text-xs text-slate-400 hover:text-slate-200 shrink-0"
+            >
+              Copy
+            </button>
+          </div>
+          <div className="text-xs text-slate-500">
+            Google 完成后会跳到 <code className="text-slate-300">{redirectUri}</code>，cor 内部接住后立即落库。
+          </div>
+          <button type="button" onClick={reset} className="px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-slate-200">
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {step === 'completed' && (
+        <div className="space-y-3">
+          <div className="text-sm text-emerald-400">{statusMessage}</div>
+          <button type="button" onClick={reset} className="px-4 py-2 rounded-lg text-sm text-slate-200 bg-slate-700/40 hover:bg-slate-700/60">
+            Add another account
+          </button>
+        </div>
+      )}
+
+      {step === 'failed' && (
+        <div className="space-y-3">
+          <div className="text-sm text-rose-400">{statusMessage}</div>
+          <button type="button" onClick={reset} className="px-4 py-2 rounded-lg text-sm text-slate-200 bg-slate-700/40 hover:bg-slate-700/60">
+            Try again
+          </button>
+        </div>
+      )}
     </div>
   )
 }

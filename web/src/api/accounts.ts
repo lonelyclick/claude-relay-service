@@ -77,4 +77,29 @@ export const importTokens = (accessToken: string, refreshToken: string | undefin
   post('/admin/oauth/import-tokens', { accessToken, refreshToken: refreshToken || undefined, label, ...options })
 export const refreshAll = () => post('/admin/oauth/refresh')
 
+export const startGeminiLogin = (payload: {
+  label?: string
+  modelName?: string
+  proxyUrl?: string
+  routingGroupId?: string
+  accountId?: string
+}) =>
+  post<{
+    session: {
+      sessionId: string
+      authUrl: string
+      redirectUri: string
+      expiresAt: string
+    }
+    instructions: string[]
+  }>('/admin/oauth/gemini/start', payload)
+
+export const getGeminiLoginStatus = (sessionId: string) =>
+  get<{
+    sessionId: string
+    status: 'pending' | 'completed' | 'failed' | 'unknown'
+    account: Account | null
+    error: string | null
+  }>(`/admin/oauth/gemini/status?sessionId=${enc(sessionId)}`)
+
 function enc(v: string) { return encodeURIComponent(v) }
