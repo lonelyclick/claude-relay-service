@@ -35,6 +35,7 @@ import { buildProviderScopedAccountId } from '../providers/accountRef.js'
 import {
   CLAUDE_COMPATIBLE_PROVIDER,
   CLAUDE_OFFICIAL_PROVIDER,
+  GOOGLE_GEMINI_OAUTH_PROVIDER,
   OPENAI_CODEX_PROVIDER,
   OPENAI_COMPATIBLE_PROVIDER,
   providerRequiresProxy,
@@ -46,6 +47,17 @@ import {
   OPENAI_CODEX_OAUTH_SCOPES,
   parseOpenAICodexTokenClaims,
 } from '../providers/openaiCodex.js'
+import {
+  buildGeminiAuthorizeUrl,
+  deriveGeminiSubscriptionType,
+  GEMINI_OAUTH_SCOPES,
+  getGeminiLoopbackRedirectUri,
+  isGeminiOauthAccount,
+  readGeminiProjectId as readGeminiProjectFromAccount,
+  readGeminiUserTier as readGeminiTierFromAccount,
+  type GeminiAccountMetadata,
+  type GeminiUserTier,
+} from '../providers/googleGeminiOauth.js'
 import {
   deriveClaudeSubscriptionType,
   deriveOpenAICodexSubscriptionType,
@@ -381,6 +393,22 @@ export class OAuthService {
       }
     }
 
+    if (provider === GOOGLE_GEMINI_OAUTH_PROVIDER.id) {
+      const redirectUri = getGeminiLoopbackRedirectUri()
+      return {
+        sessionId,
+        provider,
+        authUrl: buildGeminiAuthorizeUrl({
+          codeChallenge: generateCodeChallenge(codeVerifier),
+          state,
+          redirectUri,
+        }),
+        redirectUri,
+        scopes: [...GEMINI_OAUTH_SCOPES],
+        expiresAt: new Date(session.expiresAt).toISOString(),
+      }
+    }
+
     return {
       sessionId,
       provider,
@@ -439,6 +467,36 @@ export class OAuthService {
         apiBaseUrl: input.apiBaseUrl,
         routingGroupId: input.routingGroupId,
         group: input.group,
+      })
+    }
+
+    if (session.provider === GOOGLE_GEMINI_OAUTH_PROVIDER.id) {
+      const redirectUri = getGeminiLoopbackRedirectUri()
+      const tokenResponse = await this.requestGeminiTokenGrant(
+        {
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: redirectUri,
+          client_id: appConfig.geminiOauthClientId,
+          client_secret: appConfig.geminiOauthClientSecret,
+          code_verifier: session.codeVerifier,
+        },
+        'authorization_code',
+      )
+
+      const metadata = await this.fetchGeminiAccountMetadata(tokenResponse.access_token).catch(
+        () => null,
+      )
+
+      return this.persistGeminiTokenResponse(tokenResponse, {
+        existingAccountId: input.accountId,
+        label: input.label,
+        source: 'login',
+        modelName: input.modelName,
+        proxyUrl,
+        routingGroupId: input.routingGroupId,
+        group: input.group,
+        metadata,
       })
     }
 
@@ -1104,6 +1162,24 @@ export class OAuthService {
         )
 
         return this.persistOpenAICodexTokenResponse(tokenResponse, {
+          existingAccountId: accountId,
+          label: account.label,
+          source: 'refresh',
+        })
+      }
+
+      if (account.provider === GOOGLE_GEMINI_OAUTH_PROVIDER.id) {
+        const tokenResponse = await this.requestGeminiTokenGrant(
+          {
+            grant_type: 'refresh_token',
+            refresh_token: account.refreshToken,
+            client_id: appConfig.geminiOauthClientId,
+            client_secret: appConfig.geminiOauthClientSecret,
+          },
+          'refresh_token',
+        )
+
+        return this.persistGeminiTokenResponse(tokenResponse, {
           existingAccountId: accountId,
           label: account.label,
           source: 'refresh',
@@ -2305,6 +2381,260 @@ export class OAuthService {
         result: stored,
       }
     })
+  }
+
+  private async requestGeminiTokenGrant(
+    body: Record<string, string | number>,
+    grantType: 'authorization_code' | 'refresh_token',
+  ): Promise<OAuthTokenResponse> {
+    const form = new URLSearchParams()
+    for (const [key, value] of Object.entries(body)) {
+      form.set(key, String(value))
+    }
+    const response = await fetch(appConfig.geminiOauthTokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form.toString(),
+      signal: AbortSignal.timeout(appConfig.requestTimeoutMs),
+    })
+    if (!response.ok) {
+      const responseBody = await response.text()
+      throw new OAuthTokenRequestError(
+        `Gemini OAuth ${grantType} failed: ${response.status} ${responseBody.slice(0, 500)}`,
+        response.status,
+        responseBody,
+        grantType,
+      )
+    }
+    return (await response.json()) as OAuthTokenResponse
+  }
+
+  private async fetchGeminiAccountMetadata(
+    accessToken: string,
+  ): Promise<GeminiAccountMetadata | null> {
+    if (!accessToken) return null
+    type GeminiUserInfo = {
+      sub?: string
+      email?: string
+      name?: string
+      picture?: string
+    }
+    let userInfo: GeminiUserInfo | null = null
+    try {
+      const res = await fetch(appConfig.geminiOauthUserInfoUrl, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(appConfig.requestTimeoutMs),
+      })
+      if (res.ok) {
+        userInfo = (await res.json()) as GeminiUserInfo
+      }
+    } catch {
+      // best-effort
+    }
+
+    let cloudaicompanionProject: string | null = null
+    let userTier: GeminiUserTier | null = null
+    try {
+      const loadUrl = `${appConfig.geminiCodeAssistEndpoint}/${appConfig.geminiCodeAssistApiVersion}:loadCodeAssist`
+      const res = await fetch(loadUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          metadata: {
+            ideType: 'IDE_UNSPECIFIED',
+            platform: 'PLATFORM_UNSPECIFIED',
+            pluginType: 'GEMINI',
+          },
+        }),
+        signal: AbortSignal.timeout(appConfig.requestTimeoutMs),
+      })
+      if (res.ok) {
+        const data = (await res.json()) as {
+          cloudaicompanionProject?: { id?: string; name?: string } | string
+          currentTier?: { id?: string }
+        }
+        if (typeof data.cloudaicompanionProject === 'string') {
+          cloudaicompanionProject = data.cloudaicompanionProject
+        } else if (data.cloudaicompanionProject?.id) {
+          cloudaicompanionProject = data.cloudaicompanionProject.id
+        }
+        if (data.currentTier?.id) {
+          userTier = data.currentTier.id as GeminiUserTier
+        }
+      }
+    } catch {
+      // best-effort
+    }
+
+    return {
+      cloudaicompanionProject,
+      userTier,
+      emailAddress: userInfo?.email ?? null,
+      displayName: userInfo?.name ?? null,
+      pictureUrl: userInfo?.picture ?? null,
+      sub: userInfo?.sub ?? null,
+    }
+  }
+
+  private async persistGeminiTokenResponse(
+    tokenResponse: OAuthTokenResponse,
+    options: PersistTokenOptions & { metadata?: GeminiAccountMetadata | null },
+  ): Promise<StoredAccount> {
+    const accessToken = tokenResponse.access_token?.trim()
+    if (!accessToken) {
+      throw new Error('Gemini OAuth response is missing access_token')
+    }
+
+    return this.store.updateData((current) => {
+      const data = this.pruneExpiredStickySessions(current)
+      const metadata = options.metadata ?? null
+      const existing = this.findMatchingGeminiAccount(data.accounts, metadata, options)
+      const nowIso = new Date().toISOString()
+      const refreshToken = tokenResponse.refresh_token ?? existing?.refreshToken ?? null
+      const expiresAt =
+        typeof tokenResponse.expires_in === 'number' && Number.isFinite(tokenResponse.expires_in)
+          ? Date.now() + tokenResponse.expires_in * 1000
+          : existing?.expiresAt ?? null
+      const routingGroupId = resolveRoutingGroupId(
+        options.routingGroupId,
+        options.group,
+        existing?.routingGroupId,
+        existing?.group,
+      )
+      const emailAddress = metadata?.emailAddress?.trim().toLowerCase() ?? existing?.emailAddress ?? null
+      const subscriptionType = deriveGeminiSubscriptionType(metadata?.userTier ?? null)
+      const rawProfile = {
+        cloudaicompanionProject:
+          metadata?.cloudaicompanionProject ?? (existing ? readGeminiProjectFromAccount(existing) : null),
+        userTier: metadata?.userTier ?? (existing ? readGeminiTierFromAccount(existing) : null),
+        emailAddress,
+        displayName: metadata?.displayName ?? existing?.displayName ?? null,
+        pictureUrl: metadata?.pictureUrl ?? null,
+        sub: metadata?.sub ?? existing?.accountUuid ?? null,
+      }
+
+      const stored: StoredAccount = {
+        id:
+          existing?.id ??
+          buildProviderScopedAccountId(
+            GOOGLE_GEMINI_OAUTH_PROVIDER.id,
+            this.deriveGeminiLocalId({ sub: metadata?.sub ?? null, emailAddress }),
+          ),
+        provider: GOOGLE_GEMINI_OAUTH_PROVIDER.id,
+        protocol: existing?.protocol ?? GOOGLE_GEMINI_OAUTH_PROVIDER.protocol,
+        authMode: existing?.authMode ?? GOOGLE_GEMINI_OAUTH_PROVIDER.authMode,
+        label:
+          trimToNull(options.label) ??
+          existing?.label ??
+          metadata?.displayName ??
+          emailAddress ??
+          'Google Gemini',
+        isActive: true,
+        status: 'active',
+        lastSelectedAt: existing?.lastSelectedAt ?? null,
+        lastUsedAt: existing?.lastUsedAt ?? null,
+        lastRefreshAt:
+          options.source === 'refresh' ? nowIso : existing?.lastRefreshAt ?? null,
+        lastFailureAt: existing?.lastFailureAt ?? null,
+        cooldownUntil: options.source === 'login' ? null : existing?.cooldownUntil ?? null,
+        lastError: null,
+        accessToken,
+        refreshToken,
+        expiresAt,
+        scopes: tokenResponse.scope?.split(/\s+/).filter(Boolean) ?? [...GEMINI_OAUTH_SCOPES],
+        createdAt: existing?.createdAt ?? nowIso,
+        updatedAt: nowIso,
+        subscriptionType,
+        providerPlanTypeRaw: metadata?.userTier ?? existing?.providerPlanTypeRaw ?? null,
+        rateLimitTier: existing?.rateLimitTier ?? null,
+        accountUuid: metadata?.sub ?? existing?.accountUuid ?? null,
+        organizationUuid: metadata?.cloudaicompanionProject ?? existing?.organizationUuid ?? null,
+        emailAddress,
+        displayName: metadata?.displayName ?? existing?.displayName ?? null,
+        hasExtraUsageEnabled: existing?.hasExtraUsageEnabled ?? null,
+        billingType: existing?.billingType ?? null,
+        accountCreatedAt: existing?.accountCreatedAt ?? null,
+        subscriptionCreatedAt: existing?.subscriptionCreatedAt ?? null,
+        rawProfile: rawProfile as unknown as OAuthProfile,
+        roles: existing?.roles ?? null,
+        routingGroupId,
+        group: routingGroupId,
+        maxSessions: existing?.maxSessions ?? null,
+        weight: existing?.weight ?? null,
+        planType: existing?.planType ?? null,
+        planMultiplier: existing?.planMultiplier ?? null,
+        schedulerEnabled: existing?.schedulerEnabled ?? true,
+        schedulerState:
+          options.source === 'login' && existing?.schedulerState === 'auto_blocked'
+            ? 'enabled'
+            : existing?.schedulerState ?? 'enabled',
+        autoBlockedReason: options.source === 'login' ? null : existing?.autoBlockedReason ?? null,
+        autoBlockedUntil: options.source === 'login' ? null : existing?.autoBlockedUntil ?? null,
+        lastRateLimitStatus: options.source === 'login' ? null : existing?.lastRateLimitStatus ?? null,
+        lastRateLimit5hUtilization: options.source === 'login' ? null : existing?.lastRateLimit5hUtilization ?? null,
+        lastRateLimit7dUtilization: options.source === 'login' ? null : existing?.lastRateLimit7dUtilization ?? null,
+        lastRateLimitReset: options.source === 'login' ? null : existing?.lastRateLimitReset ?? null,
+        lastRateLimitAt: options.source === 'login' ? null : existing?.lastRateLimitAt ?? null,
+        lastProbeAttemptAt: options.source === 'login' ? null : existing?.lastProbeAttemptAt ?? null,
+        proxyUrl: trimToNull(options.proxyUrl) ?? existing?.proxyUrl ?? null,
+        bodyTemplatePath: existing?.bodyTemplatePath ?? null,
+        vmFingerprintTemplatePath: existing?.vmFingerprintTemplatePath ?? null,
+        deviceId: existing?.deviceId ?? crypto.randomBytes(32).toString('hex'),
+        apiBaseUrl: existing?.apiBaseUrl ?? null,
+        modelName: trimToNull(options.modelName) ?? existing?.modelName ?? appConfig.geminiDefaultModel,
+        modelTierMap: existing?.modelTierMap ?? null,
+        loginPassword: existing?.loginPassword ?? null,
+      }
+
+      const routingGroups = ensureRoutingGroupStub(data.routingGroups ?? [], routingGroupId, nowIso)
+      return {
+        data: {
+          ...data,
+          accounts: sortAccountsForDisplay(
+            data.accounts
+              .filter((account) => account.id !== stored.id)
+              .concat(stored),
+          ),
+          routingGroups,
+        },
+        result: stored,
+      }
+    })
+  }
+
+  private findMatchingGeminiAccount(
+    accounts: StoredAccount[],
+    metadata: GeminiAccountMetadata | null,
+    options: PersistTokenOptions,
+  ): StoredAccount | null {
+    if (options.existingAccountId) {
+      return accounts.find((account) => account.id === options.existingAccountId) ?? null
+    }
+    if (metadata?.sub) {
+      const bySub = accounts.find(
+        (account) => account.provider === GOOGLE_GEMINI_OAUTH_PROVIDER.id && account.accountUuid === metadata.sub,
+      )
+      if (bySub) return bySub
+    }
+    if (metadata?.emailAddress) {
+      const byEmail = accounts.find(
+        (account) =>
+          account.provider === GOOGLE_GEMINI_OAUTH_PROVIDER.id &&
+          (account.emailAddress ?? '').toLowerCase() === metadata.emailAddress!.toLowerCase(),
+      )
+      if (byEmail) return byEmail
+    }
+    return null
+  }
+
+  private deriveGeminiLocalId(input: { sub: string | null; emailAddress: string | null }): string {
+    if (input.sub) return input.sub
+    if (input.emailAddress) return input.emailAddress.toLowerCase()
+    return crypto.randomBytes(8).toString('hex')
   }
 
   private async ensureFreshAccount(account: StoredAccount): Promise<StoredAccount> {

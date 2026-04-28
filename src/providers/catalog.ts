@@ -35,11 +35,19 @@ export const CLAUDE_COMPATIBLE_PROVIDER: ProviderProfile = {
   displayName: 'Claude Compatible',
 }
 
+export const GOOGLE_GEMINI_OAUTH_PROVIDER: ProviderProfile = {
+  id: 'google-gemini-oauth',
+  protocol: 'openai',
+  authMode: 'oauth',
+  displayName: 'Google Gemini (OAuth)',
+}
+
 const PROVIDER_PROFILES: readonly ProviderProfile[] = [
   CLAUDE_OFFICIAL_PROVIDER,
   OPENAI_CODEX_PROVIDER,
   OPENAI_COMPATIBLE_PROVIDER,
   CLAUDE_COMPATIBLE_PROVIDER,
+  GOOGLE_GEMINI_OAUTH_PROVIDER,
 ]
 
 const PROVIDER_PROFILE_MAP = new Map(

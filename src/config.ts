@@ -53,6 +53,28 @@ const envSchema = z.object({
     .url()
     .default('https://chatgpt.com/backend-api/codex'),
   OPENAI_CODEX_MODEL: z.string().default('gpt-5-codex'),
+  GEMINI_OAUTH_CLIENT_ID: z
+    .string()
+    .default('681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com'),
+  GEMINI_OAUTH_CLIENT_SECRET: z.string().default('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'),
+  GEMINI_OAUTH_AUTHORIZE_URL: z
+    .string()
+    .url()
+    .default('https://accounts.google.com/o/oauth2/v2/auth'),
+  GEMINI_OAUTH_TOKEN_URL: z.string().url().default('https://oauth2.googleapis.com/token'),
+  GEMINI_OAUTH_LOOPBACK_PORT: z.coerce.number().int().min(0).max(65535).default(8085),
+  GEMINI_OAUTH_LOOPBACK_HOST: z.string().default('127.0.0.1'),
+  GEMINI_OAUTH_LOOPBACK_REDIRECT_PATH: z.string().default('/oauth/callback'),
+  GEMINI_OAUTH_USERINFO_URL: z
+    .string()
+    .url()
+    .default('https://openidconnect.googleapis.com/v1/userinfo'),
+  GEMINI_CODE_ASSIST_ENDPOINT: z
+    .string()
+    .url()
+    .default('https://cloudcode-pa.googleapis.com'),
+  GEMINI_CODE_ASSIST_API_VERSION: z.string().default('v1internal'),
+  GEMINI_DEFAULT_MODEL: z.string().default('gemini-2.5-pro'),
   REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   BUFFERED_REQUEST_BODY_MAX_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
   NON_STREAM_RESPONSE_CAPTURE_MAX_BYTES: z.coerce.number().int().positive().default(1024 * 1024),
@@ -240,6 +262,22 @@ export const appConfig = {
   openAICodexOauthRedirectUrl: env.OPENAI_CODEX_OAUTH_REDIRECT_URL,
   openAICodexApiBaseUrl: env.OPENAI_CODEX_API_BASE_URL.replace(/\/+$/, ''),
   openAICodexModel: env.OPENAI_CODEX_MODEL.trim() || 'gpt-5-codex',
+  geminiOauthClientId: env.GEMINI_OAUTH_CLIENT_ID,
+  geminiOauthClientSecret: env.GEMINI_OAUTH_CLIENT_SECRET,
+  geminiOauthAuthorizeUrl: env.GEMINI_OAUTH_AUTHORIZE_URL,
+  geminiOauthTokenUrl: env.GEMINI_OAUTH_TOKEN_URL,
+  geminiOauthLoopbackPort: env.GEMINI_OAUTH_LOOPBACK_PORT,
+  geminiOauthLoopbackHost: env.GEMINI_OAUTH_LOOPBACK_HOST,
+  geminiOauthLoopbackRedirectPath: env.GEMINI_OAUTH_LOOPBACK_REDIRECT_PATH,
+  geminiOauthUserInfoUrl: env.GEMINI_OAUTH_USERINFO_URL,
+  geminiOauthScopes: [
+    'https://www.googleapis.com/auth/cloud-platform',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
+  ] as const,
+  geminiCodeAssistEndpoint: env.GEMINI_CODE_ASSIST_ENDPOINT.replace(/\/+$/, ''),
+  geminiCodeAssistApiVersion: env.GEMINI_CODE_ASSIST_API_VERSION,
+  geminiDefaultModel: env.GEMINI_DEFAULT_MODEL,
   adminUiKeycloakUserInfoUrl: `${env.ADMIN_UI_KEYCLOAK_URL.replace(/\/$/, '')}/realms/${encodeURIComponent(env.ADMIN_UI_KEYCLOAK_REALM)}/protocol/openid-connect/userinfo`,
   adminUiKeycloakUrl: env.ADMIN_UI_KEYCLOAK_URL.replace(/\/$/, ''),
   adminUiKeycloakRealm: env.ADMIN_UI_KEYCLOAK_REALM,

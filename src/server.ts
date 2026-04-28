@@ -1130,6 +1130,52 @@ export function createServer(services) {
                 : result),
         });
     }));
+    app.post('/admin/oauth/gemini/start', asyncRoute(async (req, res) => {
+        if (!services.geminiLoopback) {
+            res.status(503).json({ error: 'gemini_loopback_unavailable', message: 'Gemini loopback OAuth controller is not initialised.' });
+            return;
+        }
+        try {
+            const result = await services.geminiLoopback.startLogin({
+                label: getOptionalString(req.body?.label),
+                proxyUrl: getOptionalString(req.body?.proxyUrl),
+                modelName: getOptionalString(req.body?.modelName),
+                routingGroupId: getFirstDefinedNullableString(req.body, ['routingGroupId', 'group']),
+                accountId: getOptionalString(req.body?.accountId),
+            });
+            res.json({
+                ok: true,
+                provider: 'google-gemini-oauth',
+                session: result,
+                instructions: [
+                    '1. 在浏览器（ncu 本机）打开 authUrl，登录 Google 账号并授权。',
+                    '2. Google 会跳转到 ' + result.redirectUri + '，即由 cor 进程内部的 loopback server 接住。',
+                    '3. 然后调用 /admin/oauth/gemini/status?sessionId=' + result.sessionId + ' 查询登录是否完成。',
+                ],
+            });
+        } catch (error) {
+            res.status(500).json({ error: 'gemini_login_start_failed', message: error instanceof Error ? error.message : String(error) });
+        }
+    }));
+    app.get('/admin/oauth/gemini/status', asyncRoute(async (req, res) => {
+        if (!services.geminiLoopback) {
+            res.status(503).json({ error: 'gemini_loopback_unavailable' });
+            return;
+        }
+        const sessionId = getOptionalString(req.query?.sessionId);
+        if (!sessionId) {
+            res.status(400).json({ error: 'missing_session_id' });
+            return;
+        }
+        const status = services.geminiLoopback.getStatus(sessionId);
+        res.json({
+            ok: true,
+            sessionId: status.sessionId,
+            status: status.status,
+            account: status.account ? sanitizeAccount(status.account) : null,
+            error: status.error ?? null,
+        });
+    }));
     app.post('/admin/accounts/:accountId/settings', asyncRoute(async (req, res) => {
         const accountId = getRouteParam(req.params.accountId);
         const settings = {};

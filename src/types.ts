@@ -1,6 +1,11 @@
 export type ProtocolKind = 'claude' | 'openai'
 export type AuthMode = 'oauth' | 'api_key' | 'passthrough'
-export type AccountProvider = 'claude-official' | 'openai-codex' | 'openai-compatible' | 'claude-compatible'
+export type AccountProvider =
+  | 'claude-official'
+  | 'openai-codex'
+  | 'openai-compatible'
+  | 'claude-compatible'
+  | 'google-gemini-oauth'
 export type SubscriptionType =
   | 'free'
   | 'go'
@@ -15,6 +20,9 @@ export type SubscriptionType =
   | 'business'
   | 'enterprise'
   | 'edu'
+  | 'gemini-free'
+  | 'gemini-standard'
+  | 'gemini-pro'
   | null
 export type StoredAccountStatus = 'active' | 'temp_error' | 'revoked'
 export type ClaudeModelTier = 'opus' | 'sonnet' | 'haiku'

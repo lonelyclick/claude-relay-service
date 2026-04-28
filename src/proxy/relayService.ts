@@ -57,6 +57,7 @@ import {
 import {
   CLAUDE_COMPATIBLE_PROVIDER,
   CLAUDE_OFFICIAL_PROVIDER,
+  GOOGLE_GEMINI_OAUTH_PROVIDER,
   OPENAI_CODEX_PROVIDER,
 } from '../providers/catalog.js'
 import {
@@ -73,6 +74,16 @@ import {
   isClaudeCompatibleAccount,
   rewriteClaudeCompatibleRequestBody,
 } from '../providers/claudeCompatible.js'
+import {
+  buildGeminiChatCompletionsRequest,
+  buildGeminiCodeAssistStreamUrl,
+  buildGeminiCodeAssistUrl,
+  chatCompletionsSseTerminator,
+  extractGeminiErrorMessage,
+  geminiSseToChatCompletionsChunks,
+  isGeminiOauthAccount,
+  transformGeminiNonStreamingResponseToChat,
+} from '../providers/googleGeminiOauth.js'
 import {
   RELAY_ERROR_CODES,
   type RelayErrorCode,
@@ -1166,6 +1177,23 @@ export class RelayService {
         return
       }
 
+      if (requestedProvider === 'google-gemini-oauth') {
+        await this.handleGoogleGeminiHttp({
+          req,
+          res,
+          trace,
+          route,
+          requestBody,
+          rawRequestBody,
+          forceAccountId,
+          sessionKey,
+          routingGroupId,
+          relayUser,
+          clientDeviceId,
+        })
+        return
+      }
+
       const clientVersion = parseClaudeCliVersion(req.headers['user-agent'])
       const normalizedClientVersion: [number, number, number] = clientVersion ?? [
         MIN_CLAUDE_CLI_VERSION[0],
@@ -2065,6 +2093,22 @@ export class RelayService {
         })
         return
       }
+      if (requestedProvider === 'google-gemini-oauth') {
+        this.rejectUpgrade(socket, 501, anthropicErrorBody(
+          501,
+          'google-gemini-oauth does not support WebSocket upstream routes.',
+          RELAY_ERROR_CODES.PROVIDER_WS_UNSUPPORTED,
+        ))
+        this.logWsRejected(trace, {
+          error: 'google_gemini_ws_not_supported',
+          forceAccountId,
+          internalCode: RELAY_ERROR_CODES.PROVIDER_WS_UNSUPPORTED,
+          routeAuthStrategy: route.authStrategy,
+          statusCode: 501,
+          statusText: STATUS_CODES[501] ?? 'Not Implemented',
+        })
+        return
+      }
 
       const authMode = this.resolveUpstreamAuthMode(
         route.authStrategy,
@@ -2251,11 +2295,19 @@ export class RelayService {
     const hasClaudeOfficial = visibleAccounts.some(
       (account) => account.provider === CLAUDE_OFFICIAL_PROVIDER.id,
     )
+    if (!hasClaudeOfficial && this.isOpenAICompatibleChatCompletionsPath(pathname)) {
+      if (visibleAccounts.some(isGeminiOauthAccount)) {
+        return GOOGLE_GEMINI_OAUTH_PROVIDER.id
+      }
+    }
     if (!hasClaudeOfficial && visibleAccounts.some(isOpenAICodexAccount)) {
       return OPENAI_CODEX_PROVIDER.id
     }
     if (!hasClaudeOfficial && visibleAccounts.some(isOpenAICompatibleAccount)) {
       return 'openai-compatible'
+    }
+    if (!hasClaudeOfficial && visibleAccounts.some(isGeminiOauthAccount)) {
+      return GOOGLE_GEMINI_OAUTH_PROVIDER.id
     }
     if (!hasClaudeOfficial && visibleAccounts.some(isClaudeCompatibleAccount)) {
       return CLAUDE_COMPATIBLE_PROVIDER.id
@@ -2971,6 +3023,316 @@ export class RelayService {
     const upstreamUrl = buildOpenAICompatibleChatCompletionsUrl(account)
     upstreamUrl.search = incomingUrl.search
     return upstreamUrl
+  }
+
+  private supportsGoogleGeminiHttpPath(pathname: string): boolean {
+    return pathname === '/v1/chat/completions'
+  }
+
+  private async handleGoogleGeminiHttp(input: {
+    req: Request
+    res: Response
+    trace: HttpTraceContext
+    route: HttpRoute
+    requestBody: RelayRequestBody
+    rawRequestBody: Buffer | undefined
+    forceAccountId: string | null
+    sessionKey: string | null
+    routingGroupId: string | null
+    relayUser: ResolvedRelayUserContext
+    clientDeviceId: string | null
+  }): Promise<void> {
+    if (!this.supportsGoogleGeminiHttpPath(input.req.path)) {
+      input.res.status(501).json(localHttpErrorBody(
+        input.req.path,
+        501,
+        'google-gemini-oauth currently only supports /v1/chat/completions.',
+        RELAY_ERROR_CODES.PROVIDER_ROUTE_UNSUPPORTED,
+      ))
+      this.logHttpRejection(input.trace, {
+        error: 'google_gemini_path_not_supported',
+        forceAccountId: input.forceAccountId,
+        internalCode: RELAY_ERROR_CODES.PROVIDER_ROUTE_UNSUPPORTED,
+        routeAuthStrategy: input.route.authStrategy,
+        statusCode: 501,
+        statusText: STATUS_CODES[501] ?? 'Not Implemented',
+      })
+      return
+    }
+
+    let resolved: ResolvedAccount
+    try {
+      resolved = await this.oauthService.selectAccount({
+        provider: GOOGLE_GEMINI_OAUTH_PROVIDER.id,
+        sessionKey: null,
+        forceAccountId: input.forceAccountId,
+        routingGroupId: input.routingGroupId,
+        userId: input.relayUser.userId,
+        clientDeviceId: input.clientDeviceId,
+        currentRequestBodyPreview: RelayService.truncateBody(input.rawRequestBody),
+      })
+    } catch (error) {
+      if (error instanceof SchedulerCapacityError) {
+        input.res.status(529).json(
+          localHttpErrorBody(
+            input.req.path,
+            529,
+            'Service is at capacity. Please try again later.',
+            RELAY_ERROR_CODES.SCHEDULER_CAPACITY,
+          ),
+        )
+        this.logHttpRejection(input.trace, {
+          error: formatSchedulerCapacityError(error),
+          forceAccountId: input.forceAccountId,
+          internalCode: RELAY_ERROR_CODES.SCHEDULER_CAPACITY,
+          routeAuthStrategy: input.route.authStrategy,
+          statusCode: 529,
+          statusText: 'Overloaded',
+        })
+        return
+      }
+      if (error instanceof RoutingGuardError) {
+        input.res.status(429).json(
+          localHttpErrorBody(
+            input.req.path,
+            429,
+            error.message,
+            RELAY_ERROR_CODES.ROUTING_GUARD_LIMIT,
+          ),
+        )
+        this.logHttpRejection(input.trace, {
+          error: `routing_guard:${error.code}: current=${error.current} limit=${error.limit}`,
+          forceAccountId: input.forceAccountId,
+          internalCode: RELAY_ERROR_CODES.ROUTING_GUARD_LIMIT,
+          routeAuthStrategy: input.route.authStrategy,
+          statusCode: 429,
+          statusText: STATUS_CODES[429] ?? 'Too Many Requests',
+        })
+        return
+      }
+      const clientError = classifyClientFacingRelayError(error)
+      if (clientError) {
+        input.res.status(clientError.statusCode).json(
+          localHttpErrorBody(
+            input.req.path,
+            clientError.statusCode,
+            clientError.message,
+            clientError.code,
+          ),
+        )
+        this.logHttpRejection(input.trace, {
+          error: error instanceof Error ? error.message : String(error),
+          forceAccountId: input.forceAccountId,
+          internalCode: clientError.code,
+          routeAuthStrategy: input.route.authStrategy,
+          statusCode: clientError.statusCode,
+          statusText: STATUS_CODES[clientError.statusCode] ?? 'Error',
+        })
+        return
+      }
+      throw error
+    }
+
+    if (!isGeminiOauthAccount(resolved.account)) {
+      throw new Error(`Account ${resolved.account.id} is not google-gemini-oauth`)
+    }
+
+    if (!input.rawRequestBody || input.rawRequestBody.length === 0) {
+      input.res.status(400).json(localHttpErrorBody(
+        input.req.path,
+        400,
+        'request body is required',
+        RELAY_ERROR_CODES.BAD_REQUEST,
+      ))
+      return
+    }
+
+    let geminiRequest
+    try {
+      geminiRequest = buildGeminiChatCompletionsRequest({
+        rawBody: input.rawRequestBody,
+        account: resolved.account,
+        promptId: input.trace.requestId,
+      })
+    } catch (error) {
+      input.res.status(400).json(localHttpErrorBody(
+        input.req.path,
+        400,
+        error instanceof Error ? error.message : 'Invalid request',
+        RELAY_ERROR_CODES.BAD_REQUEST,
+      ))
+      this.logHttpRejection(input.trace, {
+        error: error instanceof Error ? error.message : String(error),
+        forceAccountId: input.forceAccountId,
+        internalCode: RELAY_ERROR_CODES.BAD_REQUEST,
+        routeAuthStrategy: input.route.authStrategy,
+        statusCode: 400,
+        statusText: STATUS_CODES[400] ?? 'Bad Request',
+      })
+      return
+    }
+
+    if (await this.rejectIfMissingBillingRule({
+      res: input.res,
+      trace: input.trace,
+      routeAuthStrategy: input.route.authStrategy,
+      forceAccountId: input.forceAccountId,
+      relayUser: input.relayUser,
+      method: input.req.method,
+      path: input.req.path,
+      target: input.trace.target,
+      accountId: resolved.account.id,
+      provider: GOOGLE_GEMINI_OAUTH_PROVIDER.id,
+      body: input.requestBody,
+    })) {
+      return
+    }
+
+    const upstreamUrl = geminiRequest.stream
+      ? buildGeminiCodeAssistStreamUrl('streamGenerateContent')
+      : buildGeminiCodeAssistUrl('generateContent')
+
+    const upstreamRequestHeaders: Record<string, string> = {
+      authorization: `Bearer ${resolved.account.accessToken}`,
+      'content-type': 'application/json',
+      accept: geminiRequest.stream ? 'text/event-stream' : 'application/json',
+      'x-request-id': input.trace.requestId,
+    }
+
+    const upstream = await request(upstreamUrl, {
+      method: 'POST',
+      dispatcher: this.getOptionalHttpDispatcher(resolved.proxyUrl),
+      headers: upstreamRequestHeaders,
+      body: geminiRequest.upstreamBody,
+      headersTimeout: appConfig.upstreamRequestTimeoutMs,
+      bodyTimeout: appConfig.upstreamRequestTimeoutMs,
+      responseHeaders: 'raw',
+    })
+
+    const upstreamRawHeaders = Array.isArray(upstream.headers) ? upstream.headers : undefined
+    const upstreamHeaders = upstreamRawHeaders
+      ? collapseIncomingHeaders(upstreamRawHeaders)
+      : upstream.headers
+    const retryAfterSec = this.parseRetryAfterSeconds(upstreamHeaders)
+    this.healthTracker.recordResponse(resolved.account.id, upstream.statusCode, retryAfterSec)
+
+    if (upstream.statusCode === 429) {
+      this.scheduleAccountCooldown(
+        resolved.account.id,
+        this.computeRateLimitCooldownMs(retryAfterSec, null),
+        input.trace,
+        input.req.method,
+        input.trace.target,
+      )
+    }
+
+    if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
+      const buf = Buffer.from(await upstream.body.arrayBuffer().catch(() => new ArrayBuffer(0)))
+      const message = extractGeminiErrorMessage(buf)
+      input.res.status(upstream.statusCode).type('application/json').send(
+        JSON.stringify({
+          type: 'error',
+          error: {
+            type: 'api_error',
+            message,
+            internal_code: RELAY_ERROR_CODES.INTERNAL_ERROR,
+          },
+        }),
+      )
+      this.logHttpCompleted(input.trace, {
+        accountId: resolved.account.id,
+        authMode: 'oauth',
+        forceAccountId: input.forceAccountId,
+        hasStickySessionKey: false,
+        retryCount: 0,
+        routeAuthStrategy: input.route.authStrategy,
+        upstreamHeaders,
+        rateLimitStatus: null,
+        responseBodyPreview: message.slice(0, 256),
+        responseContentType: 'application/json',
+        statusCode: upstream.statusCode,
+        statusText: upstream.statusText,
+      })
+      return
+    }
+
+    if (geminiRequest.stream) {
+      input.res.status(200)
+      input.res.setHeader('content-type', 'text/event-stream; charset=utf-8')
+      input.res.setHeader('cache-control', 'no-cache, no-transform')
+      input.res.setHeader('connection', 'keep-alive')
+      input.res.flushHeaders?.()
+      const completionId = `chatcmpl-${input.trace.requestId.replace(/-/g, '').slice(0, 16)}`
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+      const stream = upstream.body
+      for await (const chunk of stream as AsyncIterable<Buffer | Uint8Array>) {
+        buffer += decoder.decode(chunk as Uint8Array, { stream: true })
+        let newlineIdx: number
+        while ((newlineIdx = buffer.indexOf('\n\n')) !== -1) {
+          const block = buffer.slice(0, newlineIdx)
+          buffer = buffer.slice(newlineIdx + 2)
+          const dataLines = block
+            .split('\n')
+            .filter((line) => line.startsWith('data: '))
+            .map((line) => line.slice(6))
+          if (dataLines.length === 0) continue
+          const payload = dataLines.join('\n').trim()
+          if (!payload || payload === '[DONE]') continue
+          const events = geminiSseToChatCompletionsChunks({
+            ssePayload: payload,
+            model: geminiRequest.model,
+            completionId,
+          })
+          for (const event of events) {
+            input.res.write(event)
+          }
+        }
+      }
+      input.res.write(chatCompletionsSseTerminator())
+      input.res.end()
+      await this.oauthService.markAccountUsed(resolved.account.id)
+      this.logHttpCompleted(input.trace, {
+        accountId: resolved.account.id,
+        authMode: 'oauth',
+        forceAccountId: input.forceAccountId,
+        hasStickySessionKey: false,
+        retryCount: 0,
+        routeAuthStrategy: input.route.authStrategy,
+        upstreamHeaders,
+        rateLimitStatus: null,
+        responseBodyPreview: null,
+        responseContentType: 'text/event-stream',
+        statusCode: upstream.statusCode,
+        statusText: upstream.statusText,
+      })
+      return
+    }
+
+    const buf = Buffer.from(await upstream.body.arrayBuffer().catch(() => new ArrayBuffer(0)))
+    const transformed = transformGeminiNonStreamingResponseToChat({
+      body: buf,
+      account: resolved.account,
+      model: geminiRequest.model,
+    })
+    input.res.status(200)
+    input.res.setHeader('content-type', transformed.contentType)
+    input.res.send(transformed.body)
+    await this.oauthService.markAccountUsed(resolved.account.id)
+    this.logHttpCompleted(input.trace, {
+      accountId: resolved.account.id,
+      authMode: 'oauth',
+      forceAccountId: input.forceAccountId,
+      hasStickySessionKey: false,
+      retryCount: 0,
+      routeAuthStrategy: input.route.authStrategy,
+      upstreamHeaders,
+      rateLimitStatus: null,
+      responseBodyPreview: transformed.body.toString('utf8').slice(0, 256),
+      responseContentType: transformed.contentType,
+      statusCode: 200,
+      statusText: 'OK',
+    })
   }
 
   private supportsClaudeCompatibleHttpPath(pathname: string): boolean {

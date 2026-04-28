@@ -2,6 +2,7 @@ import { createServer as createHttpServer } from 'node:http'
 
 import { appConfig } from './config.js'
 import { OAuthService } from './oauth/service.js'
+import { GeminiLoopbackController } from './oauth/geminiLoopback.js'
 import { KeepAliveRefresher } from './oauth/keepAliveRefresher.js'
 import { PgTokenStore } from './oauth/pgTokenStore.js'
 import { RelayService } from './proxy/relayService.js'
@@ -63,6 +64,7 @@ async function main(): Promise<void> {
   }
 
   const oauthService = new OAuthService(tokenStore, scheduler, fingerprintCache, userStore)
+  const geminiLoopback = new GeminiLoopbackController(oauthService)
   const keepAliveRefresher = new KeepAliveRefresher(oauthService, proxyPool, healthTracker)
   const relayService = new RelayService(
     oauthService,
@@ -74,7 +76,7 @@ async function main(): Promise<void> {
     billingStore,
     apiKeyStore,
   )
-  const app = createServer({ oauthService, relayService, usageStore, proxyPool, userStore, billingStore, apiKeyStore })
+  const app = createServer({ oauthService, relayService, usageStore, proxyPool, userStore, billingStore, apiKeyStore, geminiLoopback })
   const server = createHttpServer(app)
 
   server.on('upgrade', (req, socket, head) => {
@@ -102,6 +104,7 @@ async function main(): Promise<void> {
       userStore?.close?.() ?? Promise.resolve(),
       billingStore?.close?.() ?? Promise.resolve(),
       proxyPool.close(),
+      geminiLoopback.stop(),
     ])
     process.stdout.write(`[shutdown] signal=${signal} complete\n`)
   }
