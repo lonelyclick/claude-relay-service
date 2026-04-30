@@ -3,6 +3,7 @@ import { appConfig } from '../config.js'
 export type RelayLogEvent = {
   event:
     | 'body_rewrite_metrics'
+    | 'billing_sku_preflight_soft_missing'
     | 'claude_compatible_model_routed'
     | 'http_completed'
     | 'http_rejected'

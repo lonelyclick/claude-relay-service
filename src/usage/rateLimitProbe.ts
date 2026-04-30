@@ -32,6 +32,13 @@ export interface RateLimitProbeResult {
   refreshAttempted: boolean
   refreshSucceeded: boolean
   refreshError: string | null
+  modelUsage?: Array<{
+    label: string
+    modelIds: string[]
+    utilization: number | null
+    remainingFraction: number | null
+    reset: number | null
+  }>
 }
 
 const HEADER_MAP: ReadonlyArray<[keyof RateLimitProbeResult, string, 'string' | 'number']> = [

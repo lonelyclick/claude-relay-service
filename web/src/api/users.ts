@@ -1,6 +1,5 @@
 import { del, get, post } from './client'
 import type {
-  BillingCurrency,
   CreatedRelayApiKey,
   RelayKeySource,
   RelayApiKey,
@@ -14,13 +13,6 @@ import type {
 const enc = (v: string) => encodeURIComponent(v)
 
 export const listUsers = () => get<{ users: User[] }>('/admin/users')
-export const createUser = (name: string, billingCurrency?: BillingCurrency) =>
-  post<{
-    user: User
-    apiKey: string
-    apiKeySource?: 'relay_api_keys' | 'relay_users_legacy'
-    primaryApiKey?: CreatedRelayApiKey | null
-  }>('/admin/users', { name, billingCurrency })
 export const getUser = async (id: string) => {
   const res = await get<{ user: User }>(`/admin/users/${enc(id)}`)
   return res.user
@@ -29,8 +21,12 @@ export const getUserApiKey = (id: string) =>
   get<UserApiKeyRead>(`/admin/users/${enc(id)}/api-key`)
 export const listUserApiKeys = (id: string) =>
   get<{ apiKeys: RelayApiKey[]; max: number }>(`/admin/users/${enc(id)}/api-keys`)
-export const createUserApiKey = (id: string, name?: string) =>
-  post<CreatedRelayApiKey & { created: boolean }>(`/admin/users/${enc(id)}/api-keys`, { name })
+export const getUserApiKeyPlaintext = (id: string, keyId: string) =>
+  get<{ apiKey: string }>(`/admin/users/${enc(id)}/api-keys/${enc(keyId)}/plaintext`)
+export const createUserApiKey = (id: string, payload?: { name?: string; groupAssignments?: RelayApiKey['groupAssignments'] }) =>
+  post<CreatedRelayApiKey & { created: boolean }>(`/admin/users/${enc(id)}/api-keys`, payload ?? {})
+export const updateUserApiKeyGroups = (id: string, keyId: string, groupAssignments: RelayApiKey['groupAssignments']) =>
+  post<{ ok: boolean; apiKey: RelayApiKey }>(`/admin/users/${enc(id)}/api-keys/${enc(keyId)}/groups`, { groupAssignments })
 export const revokeUserApiKey = (id: string, keyId: string) =>
   del<{ revoked: boolean; apiKey: RelayApiKey }>(`/admin/users/${enc(id)}/api-keys/${enc(keyId)}`)
 export const updateUser = (id: string, updates: Record<string, unknown>) => post(`/admin/users/${enc(id)}/update`, updates)

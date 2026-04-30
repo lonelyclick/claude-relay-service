@@ -30,7 +30,7 @@ import {
   extractUsageFromJsonBody,
   type ExtractedUsage,
 } from '../usage/usageExtractor.js'
-import type { ApiKeyStore } from '../usage/apiKeyStore.js'
+import type { ApiKeyStore, RelayApiKeyGroupAssignments } from '../usage/apiKeyStore.js'
 import type { UsageRecord, UsageStore } from '../usage/usageStore.js'
 import type { UserStore } from '../usage/userStore.js'
 import {
@@ -39,8 +39,7 @@ import {
 } from '../usage/openaiRateLimitProbe.js'
 import { OAuthService, RoutingGuardError } from '../oauth/service.js'
 import type { BillingStore } from '../billing/billingStore.js'
-import { SYSTEM_FALLBACK_RULE_ID_PREFIX } from '../billing/billingStore.js'
-import type { BillingRule } from '../billing/engine.js'
+import type { BillingModelProtocol } from '../billing/engine.js'
 import type { AccountProvider, BillingCurrency, RelayKeySource, RelayUser, ResolvedAccount, StoredAccount } from '../types.js'
 import { SchedulerCapacityError, formatSchedulerCapacityError } from '../scheduler/accountScheduler.js'
 import { AccountHealthTracker } from '../scheduler/healthTracker.js'
@@ -68,7 +67,15 @@ import {
 import {
   buildOpenAICompatibleChatCompletionsUrl,
   isOpenAICompatibleAccount,
+  planOpenAICompatibleModelRouting,
 } from '../providers/openaiCompatible.js'
+import { convertResponsesToChat } from './responsesAdapter/requestConverter.js'
+import {
+  buildFailureEvent,
+  convertChatToResponse,
+  streamChatToResponses,
+} from './responsesAdapter/streamConverter.js'
+import type { ResponsesRequest } from './responsesAdapter/types.js'
 import {
   buildClaudeCompatibleUpstreamUrl,
   isClaudeCompatibleAccount,
@@ -78,6 +85,7 @@ import {
   buildGeminiChatCompletionsRequest,
   buildGeminiCodeAssistStreamUrl,
   buildGeminiCodeAssistUrl,
+  buildGeminiNativeDispatch,
   chatCompletionsSseTerminator,
   extractGeminiErrorMessage,
   geminiSseToChatCompletionsChunks,
@@ -135,11 +143,10 @@ type PreparedRequestBody = {
 type ResolvedRelayUserContext = {
   userId: string | null
   userAccountId: string | null
-  routingMode: 'auto' | 'pinned_account' | 'preferred_group'
-  routingGroupId: string | null
-  preferredGroup: string | null
+  routingMode: 'auto' | 'pinned_account'
   billingMode: 'postpaid' | 'prepaid'
   billingCurrency: BillingCurrency
+  apiKeyGroupAssignments: RelayApiKeyGroupAssignments | null
   relayKeySource: RelayKeySource | null
   stripped: boolean
   rejected: string | null
@@ -148,6 +155,7 @@ type ResolvedRelayUserContext = {
 type ResolvedRelayUserLookup = {
   user: RelayUser | null
   resolvedKeyId: string | null
+  groupAssignments: RelayApiKeyGroupAssignments | null
   relayKeySource: RelayKeySource | null
 }
 
@@ -456,6 +464,21 @@ const HTTP_ROUTES = [
     methods: ['GET'],
   },
   {
+    pattern: /^\/v1beta\/models$/,
+    authStrategy: 'prefer_incoming_auth',
+    methods: ['GET'],
+  },
+  {
+    pattern: /^\/v1beta\/models\/[A-Za-z0-9._\-]+$/,
+    authStrategy: 'prefer_incoming_auth',
+    methods: ['GET'],
+  },
+  {
+    pattern: /^\/v1beta\/models\/[A-Za-z0-9._\-]+:[A-Za-z]+$/,
+    authStrategy: 'prefer_incoming_auth',
+    methods: ['POST'],
+  },
+  {
     pattern: /^\/v1\/files(?:\/.+)?$/,
     authStrategy: 'prefer_incoming_auth',
     methods: ['GET', 'POST'],
@@ -639,28 +662,22 @@ export class RelayService {
   ) {}
 
   private async lookupRelayUserByToken(token: string): Promise<ResolvedRelayUserLookup> {
-    // relay_users.api_key and relay_api_keys currently share the same rk_* wire format.
-    // Prefer relay_api_keys as the runtime source of truth and only fall back to legacy
-    // relay_users.api_key when the hashed multi-key store does not recognize the token.
-    if (this.apiKeyStore) {
-      const hit = await this.apiKeyStore.lookupByKey(token)
-      if (hit) {
-        const user = await this.userStore?.getUserById(hit.userId)
-        if (user) {
-          return {
-            user,
-            resolvedKeyId: hit.keyId,
-            relayKeySource: 'relay_api_keys',
-          }
-        }
-      }
+    if (!this.apiKeyStore) {
+      return { user: null, resolvedKeyId: null, groupAssignments: null, relayKeySource: null }
     }
-
-    const legacyUser = this.userStore?.getUserByApiKey(token) ?? null
+    const hit = await this.apiKeyStore.lookupByKey(token)
+    if (!hit) {
+      return { user: null, resolvedKeyId: null, groupAssignments: null, relayKeySource: null }
+    }
+    const user = await this.userStore?.getUserById(hit.userId) ?? null
+    if (!user) {
+      return { user: null, resolvedKeyId: null, groupAssignments: null, relayKeySource: null }
+    }
     return {
-      user: legacyUser,
-      resolvedKeyId: null,
-      relayKeySource: legacyUser ? 'relay_users_legacy' : null,
+      user,
+      resolvedKeyId: hit.keyId,
+      groupAssignments: hit.groupAssignments,
+      relayKeySource: 'relay_api_keys',
     }
   }
 
@@ -670,10 +687,9 @@ export class RelayService {
         userId: null,
         userAccountId: null,
         routingMode: 'auto',
-        routingGroupId: null,
-        preferredGroup: null,
         billingMode: 'postpaid',
         billingCurrency: appConfig.billingCurrency as BillingCurrency,
+        apiKeyGroupAssignments: null,
         relayKeySource: null,
         stripped: false,
         rejected: null,
@@ -687,17 +703,16 @@ export class RelayService {
         userId: null,
         userAccountId: null,
         routingMode: 'auto',
-        routingGroupId: null,
-        preferredGroup: null,
         billingMode: 'postpaid',
         billingCurrency: appConfig.billingCurrency as BillingCurrency,
+        apiKeyGroupAssignments: null,
         relayKeySource: null,
         stripped: false,
         rejected: null,
       }
     }
 
-    const { user, resolvedKeyId, relayKeySource } = await this.lookupRelayUserByToken(token)
+    const { user, resolvedKeyId, groupAssignments, relayKeySource } = await this.lookupRelayUserByToken(token)
     if (user && resolvedKeyId) {
       this.apiKeyStore?.touchLastUsed(resolvedKeyId)
     }
@@ -706,10 +721,9 @@ export class RelayService {
         userId: null,
         userAccountId: null,
         routingMode: 'auto',
-        routingGroupId: null,
-        preferredGroup: null,
         billingMode: 'postpaid',
         billingCurrency: appConfig.billingCurrency as BillingCurrency,
+        apiKeyGroupAssignments: null,
         relayKeySource: null,
         stripped: false,
         rejected: 'Invalid relay API key',
@@ -720,10 +734,9 @@ export class RelayService {
         userId: null,
         userAccountId: null,
         routingMode: 'auto',
-        routingGroupId: null,
-        preferredGroup: null,
         billingMode: user.billingMode,
         billingCurrency: user.billingCurrency,
+        apiKeyGroupAssignments: groupAssignments,
         relayKeySource,
         stripped: false,
         rejected: 'User is disabled',
@@ -735,11 +748,10 @@ export class RelayService {
     return {
       userId: user.id,
       userAccountId: user.accountId,
-      routingMode: user.routingMode,
-      routingGroupId: user.routingGroupId ?? user.preferredGroup,
-      preferredGroup: user.preferredGroup,
+      routingMode: user.routingMode === 'pinned_account' ? 'pinned_account' : 'auto',
       billingMode: user.billingMode,
       billingCurrency: user.billingCurrency,
+      apiKeyGroupAssignments: groupAssignments,
       relayKeySource,
       stripped: true,
       rejected: null,
@@ -764,7 +776,7 @@ export class RelayService {
     method: string
     path: string
   }): Promise<void> {
-    if (!this.billingStore || !input.userId || input.billingMode !== 'prepaid') {
+    if (!this.billingStore || !input.userId) {
       return
     }
     if (!this.isBillableUsageRequest(input.method, input.path)) {
@@ -786,6 +798,40 @@ export class RelayService {
     }
   }
 
+  private rewriteOpenAICompatibleBodyModel(body: RelayRequestBody, targetModel: string): RelayRequestBody {
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      return body
+    }
+    try {
+      const parsed = JSON.parse(body.toString('utf8')) as Record<string, unknown>
+      parsed.model = targetModel
+      return Buffer.from(JSON.stringify(parsed), 'utf8')
+    } catch {
+      return body
+    }
+  }
+
+  private routingGroupTypeForProvider(provider: AccountProvider): keyof RelayApiKeyGroupAssignments {
+    if (provider === 'openai-codex' || provider === 'openai-compatible') return 'openai'
+    if (provider === 'google-gemini-oauth') return 'google'
+    return 'anthropic'
+  }
+
+  private routingGroupFromApiKeyAssignments(
+    relayUser: ResolvedRelayUserContext,
+    provider: AccountProvider,
+  ): string | null {
+    const assignments = relayUser.apiKeyGroupAssignments
+    if (!assignments) return null
+    return assignments[this.routingGroupTypeForProvider(provider)] ?? null
+  }
+
+  private accountRoutingGroupId(
+    account: Pick<StoredAccount, 'routingGroupId' | 'group'>,
+  ): string | null {
+    return account.routingGroupId ?? account.group ?? null
+  }
+
   private async rejectIfMissingBillingRule(input: {
     res: Response
     trace: HttpTraceContext
@@ -797,29 +843,36 @@ export class RelayService {
     target: string
     accountId: string | null
     provider: AccountProvider | null
+    routingGroupId: string | null
     body: RelayRequestBody
+    effectiveModelOverride?: string | null
+    /** Override the protocol inferred from `target` (e.g. when a Responses→Chat adapter rewrites upstream wire format). */
+    effectiveProtocolOverride?: BillingModelProtocol | null
   }): Promise<boolean> {
     if (!this.billingStore || !input.relayUser.userId || !this.isBillableUsageRequest(input.method, input.path)) {
       return false
     }
-    const model = this.extractRequestedModel(input.body)
+    const model = input.effectiveModelOverride ?? this.extractRequestedModel(input.body)
+    const intendedRoutingGroupId = input.routingGroupId
     const result = await this.billingStore.preflightBillableRequest({
       userId: input.relayUser.userId,
       billingCurrency: input.relayUser.billingCurrency,
       accountId: input.accountId,
       provider: input.provider,
       model,
+      routingGroupId: intendedRoutingGroupId,
       target: input.target,
+      protocolOverride: input.effectiveProtocolOverride ?? null,
     })
     if (result.ok) {
       return false
     }
-    const message = `Billing rule missing or zero-priced for model ${model ?? '(unknown)'}. Request blocked before upstream forwarding.`
+    const message = `Billing SKU missing or zero-priced for model ${model ?? '(unknown)'}. Request blocked before upstream forwarding.`
     input.res.status(402).json(
       localHttpErrorBody(input.path, 402, message, RELAY_ERROR_CODES.BILLING_RULE_MISSING),
     )
     this.logHttpRejection(input.trace, {
-      error: `billing_rule_preflight_failed:${result.status}: model=${model ?? '(unknown)'} rule=${result.matchedRuleId ?? '(none)'}`,
+      error: `billing_sku_preflight_failed:${result.status}: model=${model ?? '(unknown)'} provider=${input.provider ?? '(none)'} group=${intendedRoutingGroupId ?? '(none)'} currency=${input.relayUser.billingCurrency}`,
       forceAccountId: input.forceAccountId,
       internalCode: RELAY_ERROR_CODES.BILLING_RULE_MISSING,
       routeAuthStrategy: input.routeAuthStrategy,
@@ -876,44 +929,44 @@ export class RelayService {
       return
     }
 
-    const rules = await this.billingStore.listRules(input.relayUser.billingCurrency)
-    const now = Date.now()
-    const eligible: BillingRule[] = []
-    for (const rule of rules) {
-      if (!rule.isActive) continue
-      if (rule.id.startsWith(SYSTEM_FALLBACK_RULE_ID_PREFIX)) continue
-      const model = rule.model?.trim()
-      if (!model) continue
-      const effectiveFrom = Date.parse(rule.effectiveFrom)
-      if (Number.isFinite(effectiveFrom) && now < effectiveFrom) continue
-      if (rule.effectiveTo) {
-        const effectiveTo = Date.parse(rule.effectiveTo)
-        if (Number.isFinite(effectiveTo) && now >= effectiveTo) continue
-      }
-      eligible.push(rule)
-    }
+    const [skus, multipliers] = await Promise.all([
+      this.billingStore.listBaseSkus(),
+      this.billingStore.listChannelMultipliers(),
+    ])
+    const sellableKeys = new Set(
+      multipliers
+        .filter((multiplier) => multiplier.isActive && multiplier.allowCalls)
+        .map((multiplier) => `${multiplier.protocol}|${multiplier.modelVendor}|${multiplier.model}`),
+    )
+    const eligible = skus.filter(
+      (sku) =>
+        sku.isActive &&
+        sku.currency === input.relayUser.billingCurrency &&
+        sku.model.trim().length > 0 &&
+        sellableKeys.has(`${sku.protocol}|${sku.modelVendor}|${sku.model}`),
+    )
 
-    const byModel = new Map<string, BillingRule>()
-    for (const rule of eligible) {
-      const model = (rule.model ?? '').trim()
+    const byModel = new Map<string, typeof eligible[number]>()
+    for (const sku of eligible) {
+      const model = sku.model.trim()
       const existing = byModel.get(model)
       if (!existing) {
-        byModel.set(model, rule)
+        byModel.set(model, sku)
         continue
       }
-      const existingFrom = Date.parse(existing.effectiveFrom)
-      const ruleFrom = Date.parse(rule.effectiveFrom)
-      if (Number.isFinite(ruleFrom) && (!Number.isFinite(existingFrom) || ruleFrom < existingFrom)) {
-        byModel.set(model, rule)
+      const existingCreated = Date.parse(existing.createdAt)
+      const skuCreated = Date.parse(sku.createdAt)
+      if (Number.isFinite(skuCreated) && (!Number.isFinite(existingCreated) || skuCreated < existingCreated)) {
+        byModel.set(model, sku)
       }
     }
 
     const data = [...byModel.entries()]
       .sort(([leftId], [rightId]) => leftId.localeCompare(rightId))
-      .map(([model, rule]) => {
-        const effectiveFromMs = Date.parse(rule.effectiveFrom)
-        const created = Number.isFinite(effectiveFromMs)
-          ? Math.max(0, Math.floor(effectiveFromMs / 1000))
+      .map(([model, sku]) => {
+        const createdMs = Date.parse(sku.createdAt)
+        const created = Number.isFinite(createdMs)
+          ? Math.max(0, Math.floor(createdMs / 1000))
           : 0
         return {
           id: model,
@@ -1093,11 +1146,7 @@ export class RelayService {
         req.headers,
         requestUrl.searchParams,
       )
-      const routingGroupId = this.extractAccountGroup(req.headers) ?? (
-        relayUser.routingMode === 'preferred_group'
-          ? (relayUser.routingGroupId ?? relayUser.preferredGroup)
-          : null
-      )
+      let routingGroupId = this.extractAccountGroup(req.headers)
       try {
         await this.assertRoutingGroupEnabled(routingGroupId)
       } catch (error) {
@@ -1119,11 +1168,50 @@ export class RelayService {
         }
         throw error
       }
-      const requestedProvider = await this.resolveRequestedProvider(
+      let requestedProvider = await this.resolveRequestedProvider(
         forceAccountId,
         req.path,
         routingGroupId,
       )
+      const apiKeyRoutingGroupId = this.routingGroupFromApiKeyAssignments(relayUser, requestedProvider)
+      if (!this.extractAccountGroup(req.headers) && relayUser.apiKeyGroupAssignments && !apiKeyRoutingGroupId) {
+        const message = `Relay API key is not allowed to use ${this.routingGroupTypeForProvider(requestedProvider)} providers.`
+        res.status(403).json(localHttpErrorBody(req.path, 403, message, RELAY_ERROR_CODES.ROUTING_GROUP_UNAVAILABLE))
+        this.logHttpRejection(trace, {
+          error: message,
+          forceAccountId,
+          internalCode: RELAY_ERROR_CODES.ROUTING_GROUP_UNAVAILABLE,
+          routeAuthStrategy: route.authStrategy,
+          statusCode: 403,
+          statusText: STATUS_CODES[403] ?? 'Forbidden',
+        })
+        return
+      }
+      if (!this.extractAccountGroup(req.headers) && apiKeyRoutingGroupId) {
+        routingGroupId = apiKeyRoutingGroupId
+        requestedProvider = await this.resolveRequestedProvider(forceAccountId, req.path, routingGroupId)
+        try {
+          await this.assertRoutingGroupEnabled(routingGroupId)
+        } catch (error) {
+          if (error instanceof RoutingGroupAccessError) {
+            const clientError = classifyClientFacingRelayError(error)
+            const statusCode = clientError?.statusCode ?? 403
+            const message = clientError?.message ?? 'Requested routing group is unavailable.'
+            const internalCode = clientError?.code ?? RELAY_ERROR_CODES.ROUTING_GROUP_UNAVAILABLE
+            res.status(statusCode).json(localHttpErrorBody(req.path, statusCode, message, internalCode))
+            this.logHttpRejection(trace, {
+              error: error.message,
+              forceAccountId,
+              internalCode,
+              routeAuthStrategy: route.authStrategy,
+              statusCode,
+              statusText: STATUS_CODES[statusCode] ?? 'Forbidden',
+            })
+            return
+          }
+          throw error
+        }
+      }
 
       if (requestedProvider === 'openai-codex') {
         await this.handleOpenAICodexHttp({
@@ -1323,6 +1411,7 @@ export class RelayService {
           target: trace.target,
           accountId: resolvedForProxy.account.id,
           provider: CLAUDE_OFFICIAL_PROVIDER.id,
+          routingGroupId: this.accountRoutingGroupId(resolvedForProxy.account),
           body: forwardedBody,
         })) {
           return
@@ -1506,6 +1595,7 @@ export class RelayService {
           target: trace.target,
           accountId: resolved.account.id,
           provider: CLAUDE_OFFICIAL_PROVIDER.id,
+          routingGroupId: this.accountRoutingGroupId(resolved.account),
           body: requestBody,
         })) {
           return
@@ -2014,11 +2104,7 @@ export class RelayService {
         forceAccountId = relayUser.userAccountId
       }
 
-      const routingGroupId = this.extractAccountGroup(req.headers) ?? (
-        relayUser.routingMode === 'preferred_group'
-          ? (relayUser.routingGroupId ?? relayUser.preferredGroup)
-          : null
-      )
+      const routingGroupId = this.extractAccountGroup(req.headers)
       try {
         await this.assertRoutingGroupEnabled(routingGroupId)
       } catch (error) {
@@ -2285,6 +2371,10 @@ export class RelayService {
       return OPENAI_CODEX_PROVIDER.id
     }
 
+    if (this.isGeminiNativePath(pathname)) {
+      return GOOGLE_GEMINI_OAUTH_PROVIDER.id
+    }
+
     const accounts = await this.oauthService.listAccounts()
     const visibleAccounts = routingGroupId
       ? accounts.filter((account) => (account.routingGroupId ?? account.group) === routingGroupId)
@@ -2337,12 +2427,18 @@ export class RelayService {
     return !(
       pathname === '/v1/responses' ||
       pathname.startsWith('/v1/responses/') ||
-      this.isOpenAICompatibleChatCompletionsPath(pathname)
+      this.isOpenAICompatibleChatCompletionsPath(pathname) ||
+      this.isGeminiNativePath(pathname)
     )
   }
 
   private isOpenAICompatibleChatCompletionsPath(pathname: string): boolean {
     return pathname === '/v1/chat/completions'
+  }
+
+  private isGeminiNativePath(pathname: string): boolean {
+    if (pathname === '/v1beta/models') return true
+    return /^\/v1beta\/models\/[A-Za-z0-9._\-]+(?::[A-Za-z]+)?$/.test(pathname)
   }
 
   private async handleOpenAICodexHttp(input: {
@@ -2380,7 +2476,8 @@ export class RelayService {
     let resolved: ResolvedAccount
     try {
       resolved = await this.oauthService.selectAccount({
-        provider: OPENAI_CODEX_PROVIDER.id,
+        // provider unset: let the scheduler pick whichever account the routing group
+        // exposes (openai-codex real account or openai-compatible adapter account).
         sessionKey: this.isOpenAICodexResponsesPath(input.req.path) ? input.sessionKey : null,
         forceAccountId: input.forceAccountId,
         routingGroupId: input.routingGroupId,
@@ -2431,11 +2528,242 @@ export class RelayService {
       throw error
     }
 
-    await this.handleOpenAICodexResponsesHttp(input, resolved)
+    if (resolved.account.provider === 'openai-compatible') {
+      await this.handleOpenAICompatibleResponsesHttp(input, resolved)
+      return
+    }
+    if (resolved.account.provider === 'openai-codex') {
+      await this.handleOpenAICodexResponsesHttp(input, resolved)
+      return
+    }
+    input.res.status(501).json(localHttpErrorBody(
+      input.req.path,
+      501,
+      `Account provider ${resolved.account.provider} cannot serve /v1/responses.`,
+      RELAY_ERROR_CODES.PROVIDER_ROUTE_UNSUPPORTED,
+    ))
+    this.logHttpRejection(input.trace, {
+      error: `responses_path_provider_unsupported:${resolved.account.provider}`,
+      forceAccountId: input.forceAccountId,
+      internalCode: RELAY_ERROR_CODES.PROVIDER_ROUTE_UNSUPPORTED,
+      routeAuthStrategy: input.route.authStrategy,
+      statusCode: 501,
+      statusText: STATUS_CODES[501] ?? 'Not Implemented',
+    })
   }
 
   private isOpenAICodexResponsesPath(pathname: string): boolean {
     return pathname === '/v1/responses' || pathname.startsWith('/v1/responses/')
+  }
+
+  private async handleOpenAICompatibleResponsesHttp(
+    input: {
+      req: Request
+      res: Response
+      trace: HttpTraceContext
+      route: HttpRoute
+      requestBody: RelayRequestBody
+      rawRequestBody: Buffer | undefined
+      forceAccountId: string | null
+      explicitForceAccountId: string | null
+      sessionKey: string | null
+      routingGroupId: string | null
+      relayUser: ResolvedRelayUserContext
+      clientDeviceId: string | null
+    },
+    resolved: ResolvedAccount,
+  ): Promise<void> {
+    if (!isOpenAICompatibleAccount(resolved.account)) {
+      throw new Error(`Account ${resolved.account.id} is not openai-compatible`)
+    }
+
+    let parsedBody: ResponsesRequest
+    try {
+      const raw = Buffer.isBuffer(input.requestBody)
+        ? input.requestBody.toString('utf8')
+        : ''
+      parsedBody = JSON.parse(raw) as ResponsesRequest
+    } catch (err) {
+      input.res.status(400).json(localHttpErrorBody(
+        input.req.path,
+        400,
+        'Invalid JSON body for /v1/responses',
+        RELAY_ERROR_CODES.BAD_REQUEST,
+      ))
+      this.logHttpRejection(input.trace, {
+        error: `responses_adapter_body_parse_failed:${err instanceof Error ? err.message : String(err)}`,
+        forceAccountId: input.forceAccountId,
+        internalCode: RELAY_ERROR_CODES.BAD_REQUEST,
+        routeAuthStrategy: input.route.authStrategy,
+        statusCode: 400,
+        statusText: STATUS_CODES[400] ?? 'Bad Request',
+      })
+      return
+    }
+
+    const sourceModel = typeof parsedBody.model === 'string' ? parsedBody.model : null
+    const route = planOpenAICompatibleModelRouting(sourceModel, resolved.account)
+    const targetModel = route.targetModel ?? sourceModel
+    if (!targetModel) {
+      input.res.status(400).json(localHttpErrorBody(
+        input.req.path,
+        400,
+        'Request is missing model and account has no fallback modelName',
+        RELAY_ERROR_CODES.BAD_REQUEST,
+      ))
+      return
+    }
+
+    if (await this.rejectIfMissingBillingRule({
+      res: input.res,
+      trace: input.trace,
+      routeAuthStrategy: input.route.authStrategy,
+      forceAccountId: input.forceAccountId,
+      relayUser: input.relayUser,
+      method: input.req.method,
+      path: input.req.path,
+      target: input.trace.target,
+      accountId: resolved.account.id,
+      provider: 'openai-compatible',
+      routingGroupId: this.accountRoutingGroupId(resolved.account),
+      body: input.requestBody,
+      effectiveModelOverride: targetModel,
+      // Adapter sends Chat Completions upstream; bill against chat SKU.
+      effectiveProtocolOverride: 'openai_chat',
+    })) {
+      return
+    }
+
+    const wantsStream = parsedBody.stream !== false
+    const chatRequest = convertResponsesToChat(parsedBody)
+    chatRequest.model = targetModel
+    chatRequest.stream = wantsStream
+
+    const upstreamUrl = buildOpenAICompatibleChatCompletionsUrl(resolved.account)
+    const upstreamRequestHeaders: Record<string, string> = {
+      authorization: `Bearer ${resolved.account.accessToken}`,
+      'content-type': 'application/json',
+      accept: wantsStream ? 'text/event-stream' : 'application/json',
+      'x-request-id': input.trace.requestId,
+    }
+    for (const headerName of [
+      'user-agent',
+      'openai-organization',
+      'openai-project',
+      'openai-beta',
+    ] as const) {
+      const value = this.normalizeHeaderValue(input.req.headers[headerName])
+      if (value) {
+        upstreamRequestHeaders[headerName] = value
+      }
+    }
+
+    const upstreamBody = Buffer.from(JSON.stringify(chatRequest), 'utf8')
+    let upstream
+    try {
+      upstream = await request(upstreamUrl, {
+        method: 'POST',
+        dispatcher: this.getOptionalHttpDispatcher(resolved.proxyUrl),
+        headers: upstreamRequestHeaders,
+        body: upstreamBody,
+        headersTimeout: appConfig.upstreamRequestTimeoutMs,
+        bodyTimeout: appConfig.upstreamRequestTimeoutMs,
+        responseHeaders: 'raw',
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      input.res.status(502).json(localHttpErrorBody(
+        input.req.path,
+        502,
+        `Upstream request failed: ${message}`,
+        RELAY_ERROR_CODES.INTERNAL_ERROR,
+      ))
+      this.logHttpRejection(input.trace, {
+        error: `responses_adapter_upstream_network:${message}`,
+        forceAccountId: input.forceAccountId,
+        internalCode: RELAY_ERROR_CODES.INTERNAL_ERROR,
+        routeAuthStrategy: input.route.authStrategy,
+        statusCode: 502,
+        statusText: STATUS_CODES[502] ?? 'Bad Gateway',
+      })
+      return
+    }
+
+    const status = upstream.statusCode
+
+    if (status >= 400) {
+      const buf = await this.readBodyBuffer(upstream.body, appConfig.nonStreamResponseCaptureMaxBytes)
+      const text = buf.toString('utf8')
+      this.healthTracker.recordResponse(resolved.account.id, status, this.parseRetryAfterSeconds(
+        Array.isArray(upstream.headers) ? collapseIncomingHeaders(upstream.headers) : upstream.headers,
+      ))
+      if (wantsStream) {
+        input.res.status(200)
+        input.res.setHeader('content-type', 'text/event-stream; charset=utf-8')
+        input.res.setHeader('cache-control', 'no-cache, no-transform')
+        input.res.flushHeaders?.()
+        input.res.write(buildFailureEvent(targetModel, `upstream_${status}`, text.slice(0, 500)))
+        input.res.end()
+      } else {
+        input.res.status(status).type('application/json').send(text)
+      }
+      this.logHttpRejection(input.trace, {
+        error: `responses_adapter_upstream_${status}:${text.slice(0, 200)}`,
+        forceAccountId: input.forceAccountId,
+        internalCode: RELAY_ERROR_CODES.INTERNAL_ERROR,
+        routeAuthStrategy: input.route.authStrategy,
+        statusCode: status,
+        statusText: STATUS_CODES[status] ?? 'Error',
+      })
+      return
+    }
+
+    if (!wantsStream) {
+      const buf = await this.readBodyBuffer(upstream.body, appConfig.nonStreamResponseCaptureMaxBytes)
+      let chatJson: unknown
+      try {
+        chatJson = JSON.parse(buf.toString('utf8'))
+      } catch {
+        chatJson = null
+      }
+      const responsesObj = convertChatToResponse(chatJson, targetModel)
+      input.res.status(200).json(responsesObj)
+      return
+    }
+
+    input.res.status(200)
+    input.res.setHeader('content-type', 'text/event-stream; charset=utf-8')
+    input.res.setHeader('cache-control', 'no-cache, no-transform')
+    input.res.flushHeaders?.()
+
+    let clientClosed = false
+    input.res.once('close', () => {
+      clientClosed = true
+      try { (upstream.body as { destroy?: () => void } | undefined)?.destroy?.() } catch { /* ignore */ }
+    })
+
+    try {
+      for await (const sse of streamChatToResponses(upstream.body as AsyncIterable<Uint8Array>, {
+        model: targetModel,
+        request: parsedBody,
+      })) {
+        if (clientClosed) break
+        input.res.write(sse)
+      }
+    } catch (err) {
+      if (!clientClosed) {
+        try {
+          input.res.write(buildFailureEvent(
+            targetModel,
+            'adapter_error',
+            err instanceof Error ? err.message : String(err),
+          ))
+        } catch { /* ignore */ }
+      }
+    }
+    if (!clientClosed) {
+      try { input.res.end() } catch { /* ignore */ }
+    }
   }
 
   private buildOpenAICodexResponsesProxyUrl(
@@ -2495,6 +2823,7 @@ export class RelayService {
         target: input.trace.target,
         accountId: currentResolved.account.id,
         provider: OPENAI_CODEX_PROVIDER.id,
+        routingGroupId: this.accountRoutingGroupId(currentResolved.account),
         body: routedRequest.body,
       })) {
         return
@@ -2910,6 +3239,14 @@ export class RelayService {
       }
     }
 
+    const sourceModel = this.extractRequestedModel(input.requestBody)
+    const route = planOpenAICompatibleModelRouting(sourceModel, resolved.account)
+    let upstreamBody: RelayRequestBody = input.requestBody
+    if (route.targetModel && route.targetModel !== sourceModel) {
+      upstreamBody = this.rewriteOpenAICompatibleBodyModel(input.requestBody, route.targetModel)
+    }
+    const effectiveModelOverride = route.targetModel ?? sourceModel ?? null
+
     if (await this.rejectIfMissingBillingRule({
       res: input.res,
       trace: input.trace,
@@ -2921,7 +3258,9 @@ export class RelayService {
       target: input.trace.target,
       accountId: resolved.account.id,
       provider: 'openai-compatible',
+      routingGroupId: this.accountRoutingGroupId(resolved.account),
       body: input.requestBody,
+      effectiveModelOverride,
     })) {
       return
     }
@@ -2930,7 +3269,7 @@ export class RelayService {
       method: input.req.method,
       dispatcher: this.getOptionalHttpDispatcher(resolved.proxyUrl),
       headers: upstreamRequestHeaders,
-      body: input.requestBody,
+      body: upstreamBody,
       headersTimeout: appConfig.upstreamRequestTimeoutMs,
       bodyTimeout: appConfig.upstreamRequestTimeoutMs,
       responseHeaders: 'raw',
@@ -3029,7 +3368,10 @@ export class RelayService {
   }
 
   private supportsGoogleGeminiHttpPath(pathname: string): boolean {
-    return pathname === '/v1/chat/completions'
+    return (
+      this.isOpenAICompatibleChatCompletionsPath(pathname) ||
+      this.isGeminiNativePath(pathname)
+    )
   }
 
   private async handleGoogleGeminiHttp(input: {
@@ -3140,6 +3482,11 @@ export class RelayService {
       throw new Error(`Account ${resolved.account.id} is not google-gemini-oauth`)
     }
 
+    if (this.isGeminiNativePath(input.req.path)) {
+      await this.handleGoogleGeminiNative({ ...input, resolved })
+      return
+    }
+
     if (!input.rawRequestBody || input.rawRequestBody.length === 0) {
       input.res.status(400).json(localHttpErrorBody(
         input.req.path,
@@ -3152,18 +3499,23 @@ export class RelayService {
 
     let geminiRequest
     try {
-      geminiRequest = buildGeminiChatCompletionsRequest({
+      geminiRequest = await buildGeminiChatCompletionsRequest({
         rawBody: input.rawRequestBody,
         account: resolved.account,
         promptId: input.trace.requestId,
       })
     } catch (error) {
-      input.res.status(400).json(localHttpErrorBody(
-        input.req.path,
-        400,
-        error instanceof Error ? error.message : 'Invalid request',
-        RELAY_ERROR_CODES.BAD_REQUEST,
-      ))
+      const message = error instanceof Error ? error.message : 'Invalid request'
+      input.res.status(400).json({
+        error: {
+          message,
+          type: message.startsWith('unsupported_parameters')
+            ? 'invalid_request_error'
+            : 'invalid_request_error',
+          code: '400',
+          param: null,
+        },
+      })
       this.logHttpRejection(input.trace, {
         error: error instanceof Error ? error.message : String(error),
         forceAccountId: input.forceAccountId,
@@ -3186,6 +3538,7 @@ export class RelayService {
       target: input.trace.target,
       accountId: resolved.account.id,
       provider: GOOGLE_GEMINI_OAUTH_PROVIDER.id,
+      routingGroupId: this.accountRoutingGroupId(resolved.account),
       body: input.requestBody,
     })) {
       return
@@ -3232,13 +3585,20 @@ export class RelayService {
     if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
       const buf = Buffer.from(await upstream.body.arrayBuffer().catch(() => new ArrayBuffer(0)))
       const message = extractGeminiErrorMessage(buf)
-      input.res.status(upstream.statusCode).type('application/json').send(
+      const code = upstream.statusCode
+      const errType =
+        code === 401 ? 'authentication_error' :
+        code === 403 ? 'permission_error' :
+        code === 404 ? 'invalid_request_error' :
+        code === 429 ? 'rate_limit_error' :
+        code >= 500 ? 'api_error' : 'invalid_request_error'
+      input.res.status(code).type('application/json').send(
         JSON.stringify({
-          type: 'error',
           error: {
-            type: 'api_error',
             message,
-            internal_code: RELAY_ERROR_CODES.INTERNAL_ERROR,
+            type: errType,
+            code: String(code),
+            param: null,
           },
         }),
       )
@@ -3335,6 +3695,158 @@ export class RelayService {
       responseContentType: transformed.contentType,
       statusCode: 200,
       statusText: 'OK',
+    })
+  }
+
+  private async handleGoogleGeminiNative(input: {
+    req: Request
+    res: Response
+    trace: HttpTraceContext
+    route: HttpRoute
+    requestBody: RelayRequestBody
+    rawRequestBody: Buffer | undefined
+    forceAccountId: string | null
+    sessionKey: string | null
+    routingGroupId: string | null
+    relayUser: ResolvedRelayUserContext
+    clientDeviceId: string | null
+    resolved: ResolvedAccount
+  }): Promise<void> {
+    let dispatch
+    try {
+      dispatch = buildGeminiNativeDispatch({
+        pathname: input.req.path,
+        method: input.req.method,
+        rawBody: input.rawRequestBody,
+        account: input.resolved.account,
+        promptId: input.trace.requestId,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid request'
+      input.res.status(400).json({
+        error: { message, type: 'invalid_request_error', code: '400', param: null },
+      })
+      this.logHttpRejection(input.trace, {
+        error: message,
+        forceAccountId: input.forceAccountId,
+        internalCode: RELAY_ERROR_CODES.BAD_REQUEST,
+        routeAuthStrategy: input.route.authStrategy,
+        statusCode: 400,
+        statusText: STATUS_CODES[400] ?? 'Bad Request',
+      })
+      return
+    }
+
+    if (await this.rejectIfMissingBillingRule({
+      res: input.res,
+      trace: input.trace,
+      routeAuthStrategy: input.route.authStrategy,
+      forceAccountId: input.forceAccountId,
+      relayUser: input.relayUser,
+      method: input.req.method,
+      path: input.req.path,
+      target: input.trace.target,
+      accountId: input.resolved.account.id,
+      provider: GOOGLE_GEMINI_OAUTH_PROVIDER.id,
+      routingGroupId: this.accountRoutingGroupId(input.resolved.account),
+      body: input.requestBody,
+    })) {
+      return
+    }
+
+    const upstreamHeaders: Record<string, string> = {
+      authorization: `Bearer ${input.resolved.account.accessToken}`,
+      'x-request-id': input.trace.requestId,
+    }
+    if (dispatch.upstreamMethod === 'POST') {
+      upstreamHeaders['content-type'] = 'application/json'
+      upstreamHeaders.accept = dispatch.isStream ? 'text/event-stream' : 'application/json'
+    } else {
+      upstreamHeaders.accept = 'application/json'
+    }
+
+    const upstream = await request(dispatch.upstreamUrl, {
+      method: dispatch.upstreamMethod,
+      dispatcher: this.getOptionalHttpDispatcher(input.resolved.proxyUrl),
+      headers: upstreamHeaders,
+      body: dispatch.upstreamBody ?? undefined,
+      headersTimeout: appConfig.upstreamRequestTimeoutMs,
+      bodyTimeout: appConfig.upstreamRequestTimeoutMs,
+      responseHeaders: 'raw',
+    })
+
+    const upstreamRawHeaders = Array.isArray(upstream.headers) ? upstream.headers : undefined
+    const collapsedHeaders = upstreamRawHeaders
+      ? collapseIncomingHeaders(upstreamRawHeaders)
+      : upstream.headers
+    const retryAfterSec = this.parseRetryAfterSeconds(collapsedHeaders)
+    this.healthTracker.recordResponse(input.resolved.account.id, upstream.statusCode, retryAfterSec)
+
+    if (upstream.statusCode === 429) {
+      this.scheduleAccountCooldown(
+        input.resolved.account.id,
+        this.computeRateLimitCooldownMs(retryAfterSec, null),
+        input.trace,
+        input.req.method,
+        input.trace.target,
+      )
+    }
+
+    const headersValue = collapsedHeaders as Record<string, string | string[] | undefined>
+    const rawContentType = headersValue['content-type']
+    const contentType = (Array.isArray(rawContentType) ? rawContentType[0] : rawContentType)
+      ?? (dispatch.isStream ? 'text/event-stream; charset=utf-8' : 'application/json; charset=utf-8')
+
+    if (dispatch.untestedAgainstCodeAssist) {
+      input.res.setHeader('x-relay-gemini-native-untested', 'true')
+    }
+
+    if (dispatch.isStream && upstream.statusCode >= 200 && upstream.statusCode < 300) {
+      input.res.status(upstream.statusCode)
+      input.res.setHeader('content-type', contentType)
+      input.res.setHeader('cache-control', 'no-cache, no-transform')
+      input.res.setHeader('connection', 'keep-alive')
+      input.res.flushHeaders?.()
+      for await (const chunk of upstream.body as AsyncIterable<Buffer | Uint8Array>) {
+        input.res.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+      }
+      input.res.end()
+      await this.oauthService.markAccountUsed(input.resolved.account.id)
+      this.logHttpCompleted(input.trace, {
+        accountId: input.resolved.account.id,
+        authMode: 'oauth',
+        forceAccountId: input.forceAccountId,
+        hasStickySessionKey: false,
+        retryCount: 0,
+        routeAuthStrategy: input.route.authStrategy,
+        upstreamHeaders: collapsedHeaders,
+        rateLimitStatus: null,
+        responseBodyPreview: null,
+        responseContentType: contentType,
+        statusCode: upstream.statusCode,
+        statusText: upstream.statusText,
+      })
+      return
+    }
+
+    const buf = Buffer.from(await upstream.body.arrayBuffer().catch(() => new ArrayBuffer(0)))
+    input.res.status(upstream.statusCode).type(contentType).send(buf)
+    if (upstream.statusCode >= 200 && upstream.statusCode < 300) {
+      await this.oauthService.markAccountUsed(input.resolved.account.id)
+    }
+    this.logHttpCompleted(input.trace, {
+      accountId: input.resolved.account.id,
+      authMode: 'oauth',
+      forceAccountId: input.forceAccountId,
+      hasStickySessionKey: false,
+      retryCount: 0,
+      routeAuthStrategy: input.route.authStrategy,
+      upstreamHeaders: collapsedHeaders,
+      rateLimitStatus: null,
+      responseBodyPreview: buf.toString('utf8').slice(0, 256),
+      responseContentType: contentType,
+      statusCode: upstream.statusCode,
+      statusText: upstream.statusText,
     })
   }
 
@@ -3511,6 +4023,7 @@ export class RelayService {
         target: input.trace.target,
         accountId: currentResolved.account.id,
         provider: CLAUDE_COMPATIBLE_PROVIDER.id,
+        routingGroupId: this.accountRoutingGroupId(currentResolved.account),
         body: rewrittenBody,
       })) {
         return

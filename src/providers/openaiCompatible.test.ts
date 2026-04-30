@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { StoredAccount } from '../types.js'
-import { buildOpenAICompatibleChatCompletionsUrl } from './openaiCompatible.js'
+import {
+  buildOpenAICompatibleChatCompletionsUrl,
+  planOpenAICompatibleModelRouting,
+  resolveOpenAICompatibleTargetModel,
+} from './openaiCompatible.js'
 
 function buildAccount(overrides: Partial<StoredAccount> = {}): StoredAccount {
   return {
@@ -56,8 +60,9 @@ function buildAccount(overrides: Partial<StoredAccount> = {}): StoredAccount {
     vmFingerprintTemplatePath: overrides.vmFingerprintTemplatePath ?? null,
     deviceId: overrides.deviceId ?? 'device-1',
     apiBaseUrl: overrides.apiBaseUrl ?? 'https://api.openai.com/v1',
-    modelName: overrides.modelName ?? 'gpt-4.1',
+    modelName: 'modelName' in overrides ? overrides.modelName ?? null : 'gpt-4.1',
     modelTierMap: null,
+    modelMap: 'modelMap' in overrides ? overrides.modelMap ?? null : null,
     loginPassword: overrides.loginPassword ?? null,
   }
 }
@@ -70,6 +75,51 @@ test('buildOpenAICompatibleChatCompletionsUrl targets the native chat completion
   const url = buildOpenAICompatibleChatCompletionsUrl(account)
 
   assert.equal(url.toString(), 'https://api.openai.com/v1/chat/completions')
+})
+
+test('planOpenAICompatibleModelRouting honors modelMap exact match', () => {
+  const account = buildAccount({
+    modelName: 'mimo-v2.5-pro',
+    modelMap: { 'gpt-5': 'mimo-v2.5-pro', 'gpt-4o-mini': 'mimo-v2.5' },
+  })
+
+  const route = planOpenAICompatibleModelRouting('gpt-4o-mini', account)
+  assert.equal(route.targetModel, 'mimo-v2.5')
+  assert.equal(route.mapHit, true)
+  assert.equal(route.sourceModel, 'gpt-4o-mini')
+})
+
+test('planOpenAICompatibleModelRouting falls back to modelName when no map hit', () => {
+  const account = buildAccount({
+    modelName: 'mimo-v2.5-pro',
+    modelMap: { 'gpt-5': 'mimo-v2.5-pro' },
+  })
+
+  const route = planOpenAICompatibleModelRouting('unknown-xyz', account)
+  assert.equal(route.targetModel, 'mimo-v2.5-pro')
+  assert.equal(route.mapHit, false)
+})
+
+test('planOpenAICompatibleModelRouting falls back to source when no map and no modelName', () => {
+  const account = buildAccount({ modelName: null, modelMap: null })
+
+  const route = planOpenAICompatibleModelRouting('gpt-5', account)
+  assert.equal(route.targetModel, 'gpt-5')
+  assert.equal(route.mapHit, false)
+})
+
+test('planOpenAICompatibleModelRouting handles null source model', () => {
+  const account = buildAccount({ modelName: 'mimo-v2.5-pro', modelMap: { 'gpt-5': 'mimo-v2.5-pro' } })
+
+  const route = planOpenAICompatibleModelRouting(null, account)
+  assert.equal(route.targetModel, 'mimo-v2.5-pro')
+  assert.equal(route.mapHit, false)
+  assert.equal(route.sourceModel, null)
+})
+
+test('resolveOpenAICompatibleTargetModel returns mapped target', () => {
+  const account = buildAccount({ modelMap: { 'gpt-5': 'mimo-v2.5-pro' } })
+  assert.equal(resolveOpenAICompatibleTargetModel('gpt-5', account), 'mimo-v2.5-pro')
 })
 
 test('buildOpenAICompatibleChatCompletionsUrl requires apiBaseUrl', () => {

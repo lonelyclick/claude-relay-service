@@ -1,4 +1,5 @@
 import { appConfig } from '../config.js'
+import { isGeminiOauthAccount, retrieveGeminiUserQuota } from '../providers/googleGeminiOauth.js'
 import type { AccountHealthTracker } from '../scheduler/healthTracker.js'
 import type { ProxyPool } from '../scheduler/proxyPool.js'
 import { probeRateLimits } from '../usage/rateLimitProbe.js'
@@ -100,20 +101,32 @@ export class KeepAliveRefresher {
           }
         }
 
-        // Record attempt time immediately (fire-and-forget)
-        void this.oauthService.persistLastProbeAttemptAt(account.id, now)
+        // Record attempt time immediately (fire-and-forget; failure must be logged
+        // or the next tick will keep retrying without backoff).
+        void this.oauthService.persistLastProbeAttemptAt(account.id, now).catch((error) => {
+          process.stderr.write(
+            `[keepalive] persist_last_probe_at_failed account=${account.id} error=${error instanceof Error ? error.message : String(error)}\n`,
+          )
+        })
 
         try {
           const proxyUrl = await this.oauthService.resolveProxyUrl(account.proxyUrl)
-          const result = await probeRateLimits({
-            accessToken: account.accessToken,
-            proxyDispatcher: proxyUrl && this.proxyPool
-              ? this.proxyPool.getHttpDispatcher(proxyUrl)
-              : undefined,
-            apiBaseUrl: appConfig.anthropicApiBaseUrl,
-            anthropicVersion: appConfig.anthropicVersion,
-            anthropicBeta: appConfig.oauthBetaHeader,
-          })
+          const proxyDispatcher = proxyUrl && this.proxyPool
+            ? this.proxyPool.getHttpDispatcher(proxyUrl)
+            : undefined
+          const result = isGeminiOauthAccount(account)
+            ? await retrieveGeminiUserQuota({
+              accessToken: account.accessToken,
+              account,
+              proxyDispatcher,
+            })
+            : await probeRateLimits({
+              accessToken: account.accessToken,
+              proxyDispatcher,
+              apiBaseUrl: appConfig.anthropicApiBaseUrl,
+              anthropicVersion: appConfig.anthropicVersion,
+              anthropicBeta: appConfig.oauthBetaHeader,
+            })
           if (!result.error || result.error === 'rate_limited') {
             await this.oauthService.recordRateLimitSnapshot({
               accountId: account.id,
@@ -148,8 +161,10 @@ export class KeepAliveRefresher {
 
   private runTickSafely(trigger: 'startup' | 'interval'): void {
     void this.tick().catch((error) => {
+      const message = error instanceof Error ? error.message : String(error)
+      const stack = error instanceof Error && error.stack ? error.stack.split('\n').slice(0, 4).join(' | ') : ''
       process.stderr.write(
-        `[keepalive] trigger=${trigger} error=${error instanceof Error ? error.message : String(error)}\n`,
+        `[keepalive] tick_failed trigger=${trigger} error=${message}${stack ? ` stack=${stack}` : ''}\n`,
       )
     })
   }

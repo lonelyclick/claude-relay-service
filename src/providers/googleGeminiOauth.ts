@@ -1,7 +1,11 @@
 import crypto from 'node:crypto'
 
+import type { Dispatcher } from 'undici'
+import { request } from 'undici'
+
 import { appConfig } from '../config.js'
 import type { StoredAccount, SubscriptionType } from '../types.js'
+import type { RateLimitProbeResult } from '../usage/rateLimitProbe.js'
 
 export const GEMINI_OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/cloud-platform',
@@ -29,7 +33,6 @@ export function deriveGeminiSubscriptionType(
 ): SubscriptionType {
   switch (tier) {
     case 'standard-tier':
-      return 'gemini-standard'
     case 'legacy-tier':
       return 'gemini-pro'
     case 'free-tier':
@@ -107,6 +110,287 @@ export function buildGeminiCodeAssistStreamUrl(method: string): URL {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Gemini native protocol → Code Assist dispatch
+// ──────────────────────────────────────────────────────────────────────────
+
+export type NativeRouteDispatch = {
+  upstreamUrl: URL
+  upstreamMethod: 'GET' | 'POST'
+  upstreamBody: Buffer | null
+  isStream: boolean
+  untestedAgainstCodeAssist: boolean
+}
+
+const KNOWN_GENERATE_METHODS = new Set(['generateContent', 'streamGenerateContent'])
+const ENVELOPE_METHODS_WITH_PROMPT_ID = new Set(['generateContent', 'streamGenerateContent'])
+const UNTESTED_METHODS = new Set(['countTokens', 'embedContent', 'batchEmbedContents'])
+
+function buildCodeAssistRestUrl(suffix: string): URL {
+  const base = appConfig.geminiCodeAssistEndpoint
+  const version = appConfig.geminiCodeAssistApiVersion
+  return new URL(`/${version}/${suffix.replace(/^\//, '')}`, `${base}/`)
+}
+
+export function buildGeminiNativeDispatch(input: {
+  pathname: string
+  method: string
+  rawBody: Buffer | undefined
+  account: StoredAccount
+  promptId: string
+}): NativeRouteDispatch {
+  const upperMethod = input.method.toUpperCase()
+
+  if (input.pathname === '/v1beta/models') {
+    if (upperMethod !== 'GET') {
+      throw new Error(`unsupported method ${input.method} for ${input.pathname}`)
+    }
+    return {
+      upstreamUrl: buildCodeAssistRestUrl('models'),
+      upstreamMethod: 'GET',
+      upstreamBody: null,
+      isStream: false,
+      untestedAgainstCodeAssist: true,
+    }
+  }
+
+  const segMatch = input.pathname.match(/^\/v1beta\/models\/([A-Za-z0-9._\-]+)(?::([A-Za-z]+))?$/)
+  if (!segMatch) {
+    throw new Error(`unsupported gemini native path: ${input.pathname}`)
+  }
+  const modelName = segMatch[1]!
+  const methodName = segMatch[2] ?? null
+
+  if (!methodName) {
+    if (upperMethod !== 'GET') {
+      throw new Error(`unsupported method ${input.method} for ${input.pathname}`)
+    }
+    return {
+      upstreamUrl: buildCodeAssistRestUrl(`models/${modelName}`),
+      upstreamMethod: 'GET',
+      upstreamBody: null,
+      isStream: false,
+      untestedAgainstCodeAssist: true,
+    }
+  }
+
+  if (upperMethod !== 'POST') {
+    throw new Error(`unsupported method ${input.method} for ${input.pathname}`)
+  }
+
+  const isStream = methodName === 'streamGenerateContent'
+  const upstreamUrl = isStream
+    ? buildGeminiCodeAssistStreamUrl(methodName)
+    : buildGeminiCodeAssistUrl(methodName)
+
+  const requestPayload = parseRequestPayload(input.rawBody)
+  const envelope: Record<string, unknown> = {
+    model: modelName,
+    request: requestPayload,
+  }
+  const projectId = readGeminiProjectId(input.account)
+  if (projectId) envelope.project = projectId
+  if (ENVELOPE_METHODS_WITH_PROMPT_ID.has(methodName) && input.promptId) {
+    envelope.user_prompt_id = input.promptId
+  }
+
+  const upstreamBody = Buffer.from(JSON.stringify(envelope), 'utf8')
+  return {
+    upstreamUrl,
+    upstreamMethod: 'POST',
+    upstreamBody,
+    isStream,
+    untestedAgainstCodeAssist:
+      !KNOWN_GENERATE_METHODS.has(methodName) || UNTESTED_METHODS.has(methodName),
+  }
+}
+
+function parseRequestPayload(rawBody: Buffer | undefined): Record<string, unknown> {
+  if (!rawBody || rawBody.length === 0) return {}
+  try {
+    const parsed = JSON.parse(rawBody.toString('utf8'))
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+  } catch {
+    // fall through
+  }
+  throw new Error('request body must be a JSON object')
+}
+
+type GeminiQuotaBucket = {
+  remainingFraction?: unknown
+  resetTime?: unknown
+  tokenType?: unknown
+  modelId?: unknown
+}
+
+type GeminiQuotaResponse = {
+  buckets?: GeminiQuotaBucket[]
+}
+
+type GeminiModelUsage = {
+  label: string
+  modelIds: string[]
+  utilization: number | null
+  remainingFraction: number | null
+  reset: number | null
+}
+
+export async function retrieveGeminiUserQuota(options: {
+  accessToken: string
+  account: StoredAccount
+  proxyDispatcher: Dispatcher | undefined
+}): Promise<RateLimitProbeResult> {
+  const base = buildEmptyGeminiQuotaResult()
+  if (!options.accessToken) {
+    return { ...base, error: 'no_access_token' }
+  }
+  const project = readGeminiProjectId(options.account)
+  if (!project) {
+    return { ...base, error: 'missing_gemini_project' }
+  }
+
+  let response: Dispatcher.ResponseData
+  try {
+    response = await request(buildGeminiCodeAssistUrl('retrieveUserQuota'), {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${options.accessToken}`,
+        'content-type': 'application/json',
+        'user-agent': 'gemini-cli/0.0.0 (claude-oauth-relay)',
+      },
+      body: JSON.stringify({
+        project,
+      }),
+      dispatcher: options.proxyDispatcher,
+      signal: AbortSignal.timeout(30_000),
+    })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { ...base, error: `connection_error: ${message}` }
+  }
+
+  base.httpStatus = response.statusCode
+  const bodyText = await response.body.text().catch(() => '')
+  if (response.statusCode === 401 || response.statusCode === 403) {
+    base.error = 'token_expired_or_revoked'
+    return base
+  }
+  if (response.statusCode === 429) {
+    base.error = 'rate_limited'
+    return base
+  }
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    base.error = `http_${response.statusCode}`
+    return base
+  }
+
+  let parsed: GeminiQuotaResponse
+  try {
+    parsed = JSON.parse(bodyText) as GeminiQuotaResponse
+  } catch {
+    return { ...base, error: 'invalid_quota_response' }
+  }
+
+  const buckets = Array.isArray(parsed.buckets) ? parsed.buckets : []
+  const requestBuckets = buckets.filter((bucket) => bucket.tokenType === 'REQUESTS')
+  const model = options.account.modelName?.trim() || appConfig.geminiDefaultModel
+  const preferredBucket = requestBuckets.find((bucket) => bucket.modelId === model) ?? requestBuckets[0]
+  const remainingFraction = readFraction(preferredBucket?.remainingFraction)
+  const resetMs = readResetMs(preferredBucket?.resetTime)
+  const utilization = remainingFraction == null ? null : clamp01(1 - remainingFraction)
+  const status = utilization == null || remainingFraction == null
+    ? 'allowed'
+    : remainingFraction <= 0
+      ? 'throttled'
+      : utilization >= 0.8
+        ? 'allowed_warning'
+        : 'allowed'
+
+  return {
+    ...base,
+    status,
+    reset: resetMs,
+    representativeClaim: typeof preferredBucket?.modelId === 'string' ? preferredBucket.modelId : model,
+    fallbackPercentage: remainingFraction == null ? null : Math.round(remainingFraction * 100),
+    fiveHourStatus: status,
+    fiveHourUtilization: utilization,
+    fiveHourReset: resetMs,
+    modelUsage: buildGeminiModelUsage(requestBuckets),
+  }
+}
+
+function buildGeminiModelUsage(buckets: GeminiQuotaBucket[]): GeminiModelUsage[] {
+  return [
+    buildGeminiModelUsageItem('Flash', buckets, (modelId) => /(^|-)flash($|-)/.test(modelId) && !modelId.includes('flash-lite')),
+    buildGeminiModelUsageItem('Flash Lite', buckets, (modelId) => modelId.includes('flash-lite')),
+    buildGeminiModelUsageItem('Pro', buckets, (modelId) => /(^|-)pro($|-)/.test(modelId)),
+  ].filter((item) => item.modelIds.length > 0)
+}
+
+function buildGeminiModelUsageItem(
+  label: string,
+  buckets: GeminiQuotaBucket[],
+  predicate: (modelId: string) => boolean,
+): GeminiModelUsage {
+  const matches = buckets.filter((bucket) => typeof bucket.modelId === 'string' && predicate(bucket.modelId))
+  const usageValues = matches.map((bucket) => {
+    const remainingFraction = readFraction(bucket.remainingFraction)
+    return remainingFraction == null ? null : clamp01(1 - remainingFraction)
+  }).filter((value): value is number => value != null)
+  const remainingValues = matches.map((bucket) => readFraction(bucket.remainingFraction)).filter((value): value is number => value != null)
+  const resetValues = matches.map((bucket) => readResetMs(bucket.resetTime)).filter((value): value is number => value != null)
+  return {
+    label,
+    modelIds: matches.map((bucket) => String(bucket.modelId)),
+    utilization: usageValues.length > 0 ? Math.max(...usageValues) : null,
+    remainingFraction: remainingValues.length > 0 ? Math.min(...remainingValues) : null,
+    reset: resetValues.length > 0 ? Math.max(...resetValues) : null,
+  }
+}
+
+function buildEmptyGeminiQuotaResult(): RateLimitProbeResult {
+  return {
+    status: null,
+    reset: null,
+    representativeClaim: null,
+    fallbackPercentage: null,
+    fiveHourStatus: null,
+    fiveHourUtilization: null,
+    fiveHourReset: null,
+    sevenDayStatus: null,
+    sevenDayUtilization: null,
+    sevenDayReset: null,
+    sevenDaySurpassedThreshold: null,
+    overageStatus: null,
+    overageDisabledReason: null,
+    overageReset: null,
+    httpStatus: 0,
+    probedAt: new Date().toISOString(),
+    error: null,
+    tokenStatus: null,
+    refreshAttempted: false,
+    refreshSucceeded: false,
+    refreshError: null,
+  }
+}
+
+function readFraction(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  return clamp01(value)
+}
+
+function readResetMs(value: unknown): number | null {
+  if (typeof value !== 'string' || !value.trim()) return null
+  const time = Date.parse(value)
+  return Number.isFinite(time) ? time : null
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // OpenAI Chat Completions → Code Assist Vertex-style request
 // Reference: gemini-cli/packages/core/src/code_assist/{server,converter}.ts
 // ──────────────────────────────────────────────────────────────────────────
@@ -132,7 +416,26 @@ type OpenAIChatRequest = {
   tools?: unknown
   tool_choice?: unknown
   response_format?: unknown
+  extra_body?: unknown
+  presence_penalty?: unknown
+  frequency_penalty?: unknown
+  seed?: unknown
+  logit_bias?: unknown
+  logprobs?: unknown
+  top_logprobs?: unknown
 }
+
+const UNSUPPORTED_OPENAI_PARAMS = [
+  'presence_penalty',
+  'frequency_penalty',
+  'seed',
+  'logit_bias',
+  'logprobs',
+  'top_logprobs',
+] as const
+
+const REMOTE_IMAGE_FETCH_TIMEOUT_MS = 5000
+const REMOTE_IMAGE_MAX_BYTES = 4 * 1024 * 1024
 
 type GeminiPart = {
   text?: string
@@ -152,12 +455,12 @@ export type GeminiRequestBuildResult = {
   model: string
 }
 
-export function buildGeminiChatCompletionsRequest(input: {
+export async function buildGeminiChatCompletionsRequest(input: {
   rawBody: Buffer
   account: StoredAccount
   promptId?: string
   sessionId?: string
-}): GeminiRequestBuildResult {
+}): Promise<GeminiRequestBuildResult> {
   if (!input.rawBody || input.rawBody.length === 0) {
     throw new Error('Request body is required')
   }
@@ -167,10 +470,17 @@ export function buildGeminiChatCompletionsRequest(input: {
     throw new Error('messages must be a non-empty array')
   }
 
+  const offending = UNSUPPORTED_OPENAI_PARAMS.filter(
+    (k) => (parsed as Record<string, unknown>)[k] !== undefined,
+  )
+  if (offending.length > 0) {
+    throw new Error(`unsupported_parameters: ${offending.join(', ')}`)
+  }
+
   const model = pickModelName(parsed.model, input.account)
   const stream = parsed.stream !== false
 
-  const { systemInstruction, contents } = convertChatMessages(messages)
+  const { systemInstruction, contents } = await convertChatMessages(messages)
 
   const generationConfig: Record<string, unknown> = {}
   if (typeof parsed.temperature === 'number' && Number.isFinite(parsed.temperature)) {
@@ -195,9 +505,15 @@ export function buildGeminiChatCompletionsRequest(input: {
     generationConfig.candidateCount = Math.floor(parsed.n)
   }
   if (parsed.response_format && typeof parsed.response_format === 'object') {
-    const fmt = parsed.response_format as { type?: unknown }
+    const fmt = parsed.response_format as { type?: unknown; json_schema?: unknown }
     if (fmt.type === 'json_object') {
       generationConfig.responseMimeType = 'application/json'
+    } else if (fmt.type === 'json_schema' && fmt.json_schema && typeof fmt.json_schema === 'object') {
+      const schema = (fmt.json_schema as { schema?: unknown }).schema
+      if (schema && typeof schema === 'object') {
+        generationConfig.responseMimeType = 'application/json'
+        generationConfig.responseSchema = schema
+      }
     }
   }
 
@@ -210,9 +526,16 @@ export function buildGeminiChatCompletionsRequest(input: {
   if (Object.keys(generationConfig).length > 0) {
     requestPayload.generationConfig = generationConfig
   }
-  const tools = convertOpenAITools(parsed.tools)
+  const { tools, toolConfig } = convertOpenAIToolsAndChoice(parsed.tools, parsed.tool_choice)
   if (tools.length > 0) {
     requestPayload.tools = tools
+  }
+  if (toolConfig) {
+    requestPayload.toolConfig = toolConfig
+  }
+  const safetySettings = readSafetySettings(parsed.extra_body)
+  if (safetySettings) {
+    requestPayload.safetySettings = safetySettings
   }
 
   const envelope: Record<string, unknown> = {
@@ -237,16 +560,23 @@ export function buildGeminiChatCompletionsRequest(input: {
   }
 }
 
+function readSafetySettings(extraBody: unknown): unknown[] | null {
+  if (!extraBody || typeof extraBody !== 'object') return null
+  const settings = (extraBody as { safetySettings?: unknown }).safetySettings
+  if (!Array.isArray(settings)) return null
+  return settings
+}
+
 function pickModelName(rawModel: unknown, account: StoredAccount): string {
   const fromBody = typeof rawModel === 'string' ? rawModel.trim() : ''
   const fromAccount = account.modelName?.trim() ?? ''
   return fromBody || fromAccount || appConfig.geminiDefaultModel
 }
 
-function convertChatMessages(messages: OpenAIChatMessage[]): {
+async function convertChatMessages(messages: OpenAIChatMessage[]): Promise<{
   systemInstruction: GeminiContent | null
   contents: GeminiContent[]
-} {
+}> {
   const contents: GeminiContent[] = []
   const systemTexts: string[] = []
   const toolCallIdToName = new Map<string, string>()
@@ -270,7 +600,7 @@ function convertChatMessages(messages: OpenAIChatMessage[]): {
       continue
     }
     if (role === 'user') {
-      const parts = collectUserParts(message.content)
+      const parts = await collectUserParts(message.content)
       if (parts.length > 0) {
         contents.push({ role: 'user', parts })
       }
@@ -313,17 +643,19 @@ function convertChatMessages(messages: OpenAIChatMessage[]): {
   return { systemInstruction, contents }
 }
 
-function collectUserParts(rawContent: unknown): GeminiPart[] {
+async function collectUserParts(rawContent: unknown): Promise<GeminiPart[]> {
   if (typeof rawContent === 'string') {
     return rawContent ? [{ text: rawContent }] : []
   }
   if (!Array.isArray(rawContent)) return []
-  const parts: GeminiPart[] = []
-  for (const item of rawContent as Array<Record<string, unknown>>) {
+  const items = rawContent as Array<Record<string, unknown>>
+  const fetchPromises: Array<Promise<GeminiPart>> = []
+  const ordered: Array<GeminiPart | { __pendingIndex: number }> = []
+  for (const item of items) {
     if (!item || typeof item !== 'object') continue
     const type = typeof item.type === 'string' ? item.type : ''
     if (type === 'text' && typeof item.text === 'string') {
-      parts.push({ text: item.text })
+      ordered.push({ text: item.text })
       continue
     }
     if (type === 'image_url') {
@@ -331,12 +663,67 @@ function collectUserParts(rawContent: unknown): GeminiPart[] {
       const url = imageUrl && typeof imageUrl.url === 'string' ? imageUrl.url : ''
       const dataUrlMatch = url.match(/^data:([^;]+);base64,(.+)$/i)
       if (dataUrlMatch) {
-        parts.push({ inlineData: { mimeType: dataUrlMatch[1]!, data: dataUrlMatch[2]! } })
+        ordered.push({ inlineData: { mimeType: dataUrlMatch[1]!, data: dataUrlMatch[2]! } })
+        continue
       }
-      continue
+      if (/^https?:\/\//i.test(url)) {
+        const idx = fetchPromises.length
+        fetchPromises.push(fetchRemoteImageAsPart(url))
+        ordered.push({ __pendingIndex: idx })
+        continue
+      }
+    }
+  }
+  const fetched = fetchPromises.length > 0 ? await Promise.all(fetchPromises) : []
+  const parts: GeminiPart[] = []
+  for (const slot of ordered) {
+    if ('__pendingIndex' in slot) {
+      parts.push(fetched[slot.__pendingIndex]!)
+    } else {
+      parts.push(slot)
     }
   }
   return parts
+}
+
+async function fetchRemoteImageAsPart(url: string): Promise<GeminiPart> {
+  const fail = (reason: string): GeminiPart => ({
+    text: `[image at ${url} could not be loaded: ${reason}]`,
+  })
+  try {
+    const response = await request(url, {
+      method: 'GET',
+      headersTimeout: REMOTE_IMAGE_FETCH_TIMEOUT_MS,
+      bodyTimeout: REMOTE_IMAGE_FETCH_TIMEOUT_MS,
+    })
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      response.body.destroy?.()
+      return fail(`upstream status ${response.statusCode}`)
+    }
+    const headers = response.headers as Record<string, string | string[] | undefined>
+    const rawType = headers['content-type']
+    const contentType = (Array.isArray(rawType) ? rawType[0] : rawType) ?? ''
+    const mimeType = contentType.split(';')[0]?.trim() ?? ''
+    if (!mimeType.startsWith('image/')) {
+      response.body.destroy?.()
+      return fail(`unexpected content-type ${mimeType || 'unknown'}`)
+    }
+    const chunks: Buffer[] = []
+    let total = 0
+    for await (const chunk of response.body as AsyncIterable<Buffer | Uint8Array>) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      total += buf.length
+      if (total > REMOTE_IMAGE_MAX_BYTES) {
+        response.body.destroy?.()
+        return fail(`exceeds ${REMOTE_IMAGE_MAX_BYTES} bytes`)
+      }
+      chunks.push(buf)
+    }
+    const data = Buffer.concat(chunks).toString('base64')
+    return { inlineData: { mimeType, data } }
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : 'fetch failed')
+  }
 }
 
 function stringifyContent(content: unknown): string {
@@ -349,6 +736,18 @@ function stringifyContent(content: unknown): string {
     }
   }
   return out.join('\n')
+}
+
+function convertOpenAIToolsAndChoice(
+  rawTools: unknown,
+  rawChoice: unknown,
+): {
+  tools: Array<Record<string, unknown>>
+  toolConfig: Record<string, unknown> | null
+} {
+  const tools = convertOpenAITools(rawTools)
+  const toolConfig = convertToolChoice(rawChoice, tools.length > 0)
+  return { tools, toolConfig }
 }
 
 function convertOpenAITools(rawTools: unknown): Array<Record<string, unknown>> {
@@ -367,6 +766,31 @@ function convertOpenAITools(rawTools: unknown): Array<Record<string, unknown>> {
   }
   if (declarations.length === 0) return []
   return [{ functionDeclarations: declarations }]
+}
+
+function convertToolChoice(rawChoice: unknown, hasTools: boolean): Record<string, unknown> | null {
+  if (!hasTools) return null
+  if (rawChoice === undefined || rawChoice === null || rawChoice === 'auto') {
+    return { functionCallingConfig: { mode: 'AUTO' } }
+  }
+  if (rawChoice === 'none') {
+    return { functionCallingConfig: { mode: 'NONE' } }
+  }
+  if (rawChoice === 'required') {
+    return { functionCallingConfig: { mode: 'ANY' } }
+  }
+  if (typeof rawChoice === 'object') {
+    const obj = rawChoice as { type?: unknown; function?: { name?: unknown } }
+    if (obj.type === 'function' && obj.function && typeof obj.function.name === 'string') {
+      return {
+        functionCallingConfig: {
+          mode: 'ANY',
+          allowedFunctionNames: [obj.function.name],
+        },
+      }
+    }
+  }
+  return { functionCallingConfig: { mode: 'AUTO' } }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -409,23 +833,28 @@ export function transformGeminiNonStreamingResponseToChat(input: {
 }): { body: Buffer; contentType: string } {
   const parsed = parseJson(input.body) as CaGenerateContentResponse
   const inner = parsed?.response ?? null
-  const candidate = inner?.candidates?.[0] ?? null
-  const message = mergePartsToChatMessage(candidate?.content?.parts ?? [])
-  const finishReason = mapFinishReason(candidate?.finishReason ?? null)
+  const candidates = inner?.candidates ?? []
   const usage = inner?.usageMetadata ?? null
+  const choices = candidates.length > 0
+    ? candidates.map((candidate, index) => ({
+        index,
+        message: mergePartsToChatMessage(candidate?.content?.parts ?? []),
+        finish_reason: mapFinishReason(candidate?.finishReason ?? null),
+      }))
+    : [
+        {
+          index: 0,
+          message: mergePartsToChatMessage([]),
+          finish_reason: mapFinishReason(null),
+        },
+      ]
 
   const completion = {
     id: `chatcmpl-${crypto.randomBytes(8).toString('hex')}`,
     object: 'chat.completion',
     created: Math.floor(Date.now() / 1000),
     model: inner?.modelVersion ?? input.model,
-    choices: [
-      {
-        index: 0,
-        message,
-        finish_reason: finishReason,
-      },
-    ],
+    choices,
     usage: {
       prompt_tokens: usage?.promptTokenCount ?? 0,
       completion_tokens: usage?.candidatesTokenCount ?? 0,
@@ -452,69 +881,97 @@ export function geminiSseToChatCompletionsChunks(input: {
   })()
   if (!parsed) return []
   const inner = parsed.response ?? null
-  const candidate = inner?.candidates?.[0] ?? null
-  const parts = candidate?.content?.parts ?? []
-  const finishReason = candidate?.finishReason ? mapFinishReason(candidate.finishReason) : null
+  const candidates = inner?.candidates ?? []
+  if (candidates.length === 0) return []
   const created = Math.floor(Date.now() / 1000)
+  const model = inner?.modelVersion ?? input.model
   const events: string[] = []
-  let textBuffer = ''
-  const toolCallEvents: Array<{ index: number; id: string; name: string; args: string }> = []
-  let toolIndex = 0
-  for (const part of parts) {
-    if (typeof part.text === 'string' && part.text.length > 0) {
-      textBuffer += part.text
-      continue
-    }
-    if (part.functionCall && part.functionCall.name) {
-      toolCallEvents.push({
-        index: toolIndex++,
-        id: `call_${crypto.randomBytes(6).toString('hex')}`,
-        name: part.functionCall.name,
-        args: JSON.stringify(part.functionCall.args ?? {}),
-      })
-    }
-  }
 
-  if (textBuffer.length > 0) {
-    events.push(
-      formatChatChunk({
-        id: input.completionId,
-        model: inner?.modelVersion ?? input.model,
-        created,
-        delta: { role: 'assistant', content: textBuffer },
-      }),
-    )
-  }
-  for (const tc of toolCallEvents) {
-    events.push(
-      formatChatChunk({
-        id: input.completionId,
-        model: inner?.modelVersion ?? input.model,
-        created,
-        delta: {
-          role: 'assistant',
-          tool_calls: [
-            {
-              index: tc.index,
-              id: tc.id,
-              type: 'function',
-              function: { name: tc.name, arguments: tc.args },
-            },
-          ],
-        },
-      }),
-    )
-  }
-  if (finishReason) {
-    events.push(
-      formatChatChunk({
-        id: input.completionId,
-        model: inner?.modelVersion ?? input.model,
-        created,
-        delta: {},
-        finishReason,
-      }),
-    )
+  for (let candIdx = 0; candIdx < candidates.length; candIdx += 1) {
+    const candidate = candidates[candIdx] ?? null
+    const parts = candidate?.content?.parts ?? []
+    const finishReason = candidate?.finishReason
+      ? mapFinishReason(candidate.finishReason)
+      : null
+
+    let textBuffer = ''
+    const toolCallEvents: Array<{ index: number; id: string; name: string; args: string }> = []
+    let toolIndex = 0
+    for (const part of parts) {
+      if (typeof part.text === 'string' && part.text.length > 0) {
+        textBuffer += part.text
+        continue
+      }
+      if (part.functionCall && part.functionCall.name) {
+        toolCallEvents.push({
+          index: toolIndex++,
+          id: `call_${crypto.randomBytes(6).toString('hex')}`,
+          name: part.functionCall.name,
+          args: JSON.stringify(part.functionCall.args ?? {}),
+        })
+      }
+    }
+
+    if (textBuffer.length > 0) {
+      events.push(
+        formatChatChunk({
+          id: input.completionId,
+          model,
+          created,
+          choiceIndex: candIdx,
+          delta: { role: 'assistant', content: textBuffer },
+        }),
+      )
+    }
+    for (const tc of toolCallEvents) {
+      events.push(
+        formatChatChunk({
+          id: input.completionId,
+          model,
+          created,
+          choiceIndex: candIdx,
+          delta: {
+            role: 'assistant',
+            tool_calls: [
+              {
+                index: tc.index,
+                id: tc.id,
+                type: 'function',
+                function: { name: tc.name, arguments: '' },
+              },
+            ],
+          },
+        }),
+      )
+      events.push(
+        formatChatChunk({
+          id: input.completionId,
+          model,
+          created,
+          choiceIndex: candIdx,
+          delta: {
+            tool_calls: [
+              {
+                index: tc.index,
+                function: { arguments: tc.args },
+              },
+            ],
+          },
+        }),
+      )
+    }
+    if (finishReason) {
+      events.push(
+        formatChatChunk({
+          id: input.completionId,
+          model,
+          created,
+          choiceIndex: candIdx,
+          delta: {},
+          finishReason,
+        }),
+      )
+    }
   }
   return events
 }
@@ -529,6 +986,7 @@ function formatChatChunk(input: {
   created: number
   delta: Record<string, unknown>
   finishReason?: string | null
+  choiceIndex?: number
 }): string {
   const chunk = {
     id: input.id,
@@ -537,7 +995,7 @@ function formatChatChunk(input: {
     model: input.model,
     choices: [
       {
-        index: 0,
+        index: input.choiceIndex ?? 0,
         delta: input.delta,
         finish_reason: input.finishReason ?? null,
       },
@@ -575,8 +1033,21 @@ function mapFinishReason(reason: string | null): string {
   const upper = reason.toUpperCase()
   if (upper === 'STOP') return 'stop'
   if (upper === 'MAX_TOKENS') return 'length'
-  if (upper === 'SAFETY' || upper === 'RECITATION' || upper === 'BLOCKLIST' || upper === 'PROHIBITED_CONTENT' || upper === 'SPII') return 'content_filter'
-  if (upper === 'TOOL_USE' || upper === 'FUNCTION_CALL') return 'tool_calls'
+  if (
+    upper === 'SAFETY' ||
+    upper === 'RECITATION' ||
+    upper === 'BLOCKLIST' ||
+    upper === 'PROHIBITED_CONTENT' ||
+    upper === 'SPII' ||
+    upper === 'LANGUAGE' ||
+    upper === 'IMAGE_SAFETY'
+  ) {
+    return 'content_filter'
+  }
+  if (upper === 'TOOL_USE' || upper === 'FUNCTION_CALL' || upper === 'MALFORMED_FUNCTION_CALL') {
+    return 'tool_calls'
+  }
+  if (upper === 'OTHER') return 'stop'
   return 'stop'
 }
 

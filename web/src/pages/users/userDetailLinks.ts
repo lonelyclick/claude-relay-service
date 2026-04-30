@@ -1,15 +1,8 @@
 import type { RelayKeySource } from '~/api/types'
-import {
-  normalizeUsersLegacyOrderMode,
-  normalizeUsersLegacyViewMode,
-  type UsersLegacyOrderMode,
-  type UsersLegacyViewMode,
-} from './usersListView'
 
 /**
- * These query params only restore the recent-window admin drill-down flow between
- * Users, User Detail, and Request Detail. They are not durable audit identifiers
- * or full-history navigation state.
+ * These query params restore the admin drill-down flow between User Detail and
+ * Request Detail. They are not durable audit identifiers or full-history state.
  */
 
 type UserDetailFilters = {
@@ -21,33 +14,16 @@ export function normalizeUserDetailRelayKeySource(value: string | null): RelayKe
   return value === 'relay_api_keys' || value === 'relay_users_legacy' ? value : null
 }
 
-export type UsersListReturnState = {
-  legacyView: UsersLegacyViewMode
-  legacyOrder: UsersLegacyOrderMode
-}
-
 export type UserDetailPageState = {
   device: string | null
   relayKeySource: RelayKeySource | null
   sessionKey: string | null
   sessionRequestId: string | null
-  usersListReturnState: UsersListReturnState
 }
 
 export type UserDetailReturnState = UserDetailFilters & {
   sessionKey?: string | null
-  usersListReturnState?: UsersListReturnState | null
 }
-
-const USERS_LIST_QUERY_PARAM = {
-  legacyView: 'legacyView',
-  legacyOrder: 'legacyOrder',
-} as const
-
-const USERS_LIST_RETURN_QUERY_PARAM = {
-  legacyView: 'returnLegacyView',
-  legacyOrder: 'returnLegacyOrder',
-} as const
 
 const USER_DETAIL_QUERY_PARAM = {
   device: 'device',
@@ -134,21 +110,6 @@ function appendUserDetailFilters(
   }
 }
 
-function appendUsersListReturnState(
-  params: URLSearchParams,
-  returnState: UsersListReturnState | null | undefined,
-): void {
-  if (!returnState) {
-    return
-  }
-  if (returnState.legacyView !== 'all') {
-    params.set(USERS_LIST_RETURN_QUERY_PARAM.legacyView, returnState.legacyView)
-  }
-  if (returnState.legacyOrder !== 'default') {
-    params.set(USERS_LIST_RETURN_QUERY_PARAM.legacyOrder, returnState.legacyOrder)
-  }
-}
-
 function appendUserDetailReturnState(
   params: URLSearchParams,
   returnState: UserDetailReturnState | null | undefined,
@@ -164,26 +125,18 @@ function appendUserDetailReturnState(
   if (sessionKey) {
     params.set(USER_DETAIL_RETURN_QUERY_PARAM.sessionKey, sessionKey)
   }
-  appendUsersListReturnState(params, returnState.usersListReturnState)
 }
 
-export function buildUsersHref(returnState: UsersListReturnState | null | undefined): string {
-  const params = new URLSearchParams()
-  if (returnState?.legacyView && returnState.legacyView !== 'all') {
-    params.set(USERS_LIST_QUERY_PARAM.legacyView, returnState.legacyView)
-  }
-  if (returnState?.legacyOrder && returnState.legacyOrder !== 'default') {
-    params.set(USERS_LIST_QUERY_PARAM.legacyOrder, returnState.legacyOrder)
-  }
-  const query = params.toString()
-  return `/users${query ? `?${query}` : ''}`
+export function buildUsersHref(): string {
+  return '/users'
 }
 
-export function readUsersListReturnState(searchParams: URLSearchParams): UsersListReturnState {
-  return {
-    legacyView: normalizeUsersLegacyViewMode(readSearchParam(searchParams, USERS_LIST_RETURN_QUERY_PARAM.legacyView)),
-    legacyOrder: normalizeUsersLegacyOrderMode(readSearchParam(searchParams, USERS_LIST_RETURN_QUERY_PARAM.legacyOrder)),
-  }
+export function buildOrganizationsHref(): string {
+  return '/users?tab=organizations'
+}
+
+export function buildOrganizationDetailHref(organizationId: string): string {
+  return `/users/organizations/${encodeURIComponent(organizationId)}`
 }
 
 export function readUserDetailPageState(searchParams: URLSearchParams): UserDetailPageState {
@@ -192,7 +145,6 @@ export function readUserDetailPageState(searchParams: URLSearchParams): UserDeta
     relayKeySource: normalizeUserDetailRelayKeySource(readSearchParam(searchParams, USER_DETAIL_QUERY_PARAM.relayKeySource)),
     sessionKey: normalizeSessionKey(readSearchParam(searchParams, USER_DETAIL_QUERY_PARAM.sessionKey)),
     sessionRequestId: normalizeSessionRequestId(readSearchParam(searchParams, USER_DETAIL_QUERY_PARAM.sessionRequestId)),
-    usersListReturnState: readUsersListReturnState(searchParams),
   }
 }
 
@@ -200,21 +152,12 @@ export function buildUserDetailHref(
   userId: string,
   filters: UserDetailFilters,
   hash?: string,
-  returnState?: UsersListReturnState,
 ): string {
   const params = new URLSearchParams()
   appendUserDetailFilters(params, filters)
-  appendUsersListReturnState(params, returnState)
   const query = params.toString()
   const fragment = hash ? `#${hash}` : ''
   return `/users/${encodeURIComponent(userId)}${query ? `?${query}` : ''}${fragment}`
-}
-
-export function buildLegacyRequestsHref(
-  userId: string,
-  returnState?: UsersListReturnState,
-): string {
-  return buildUserDetailHref(userId, { relayKeySource: 'relay_users_legacy' }, 'requests', returnState)
 }
 
 export function buildRequestDetailHref(
@@ -239,7 +182,6 @@ export function readUserDetailReturnState(searchParams: URLSearchParams): UserDe
     device: readSearchParam(searchParams, USER_DETAIL_RETURN_QUERY_PARAM.device) || null,
     relayKeySource: normalizeUserDetailRelayKeySource(readSearchParam(searchParams, USER_DETAIL_RETURN_QUERY_PARAM.relayKeySource)),
     sessionKey: normalizeSessionKey(readSearchParam(searchParams, USER_DETAIL_RETURN_QUERY_PARAM.sessionKey)),
-    usersListReturnState: readUsersListReturnState(searchParams),
   }
 }
 
@@ -263,7 +205,6 @@ export function buildUserDetailReturnHref(
   if (sessionRequestId) {
     params.set(USER_DETAIL_QUERY_PARAM.sessionRequestId, sessionRequestId)
   }
-  appendUsersListReturnState(params, returnState?.usersListReturnState)
   const query = params.toString()
   const hash = sessionKey ? buildSessionAnchorId(sessionKey) : 'requests'
   return `/users/${encodeURIComponent(userId)}${query ? `?${query}` : ''}#${hash}`

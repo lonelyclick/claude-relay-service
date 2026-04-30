@@ -12,13 +12,13 @@ import {
 test('userDetailRelayKeySourceOptions preserves the existing selectable relay key source filters', () => {
   assert.deepEqual(userDetailRelayKeySourceOptions, [
     { value: 'relay_api_keys', label: 'relay_api_keys' },
-    { value: 'relay_users_legacy', label: 'relay_users_legacy' },
+    { value: 'relay_users_legacy', label: 'legacy key' },
   ])
 })
 
 test('getUserDetailRelayKeySourceLabel preserves the current badge and filter labels', () => {
   assert.equal(getUserDetailRelayKeySourceLabel('relay_api_keys'), 'relay_api_keys')
-  assert.equal(getUserDetailRelayKeySourceLabel('relay_users_legacy'), 'legacy fallback')
+  assert.equal(getUserDetailRelayKeySourceLabel('relay_users_legacy'), 'legacy key')
   assert.equal(getUserDetailRelayKeySourceLabel(null), 'All key sources')
 })
 

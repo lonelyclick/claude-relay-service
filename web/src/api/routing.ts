@@ -67,7 +67,7 @@ function normalizeSchedulerStats(data: SchedulerStatsResponse): SchedulerStats {
 }
 
 export const listRoutingGroups = () => get<{ routingGroups: RoutingGroup[] }>('/admin/routing-groups')
-export const createRoutingGroup = (payload: { id: string; name: string; description?: string; isActive?: boolean }) =>
+export const createRoutingGroup = (payload: { id: string; name: string; type: RoutingGroup['type']; description?: string; descriptionZh?: string; isActive?: boolean }) =>
   post<RoutingGroup>('/admin/routing-groups', payload)
 export const updateRoutingGroup = (id: string, payload: Record<string, unknown>) =>
   post(`/admin/routing-groups/${encodeURIComponent(id)}/update`, payload)

@@ -3,12 +3,12 @@ import type { BadgeTone } from '~/components/Badge'
 
 export const userDetailRelayKeySourceOptions: Array<{ value: RelayKeySource; label: string }> = [
   { value: 'relay_api_keys', label: 'relay_api_keys' },
-  { value: 'relay_users_legacy', label: 'relay_users_legacy' },
+  { value: 'relay_users_legacy', label: 'legacy key' },
 ]
 
 export function getUserDetailRelayKeySourceLabel(source: RelayKeySource | null | undefined): string {
   if (source === 'relay_api_keys') return 'relay_api_keys'
-  if (source === 'relay_users_legacy') return 'legacy fallback'
+  if (source === 'relay_users_legacy') return 'legacy key'
   return 'All key sources'
 }
 

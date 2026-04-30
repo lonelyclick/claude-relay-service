@@ -115,6 +115,27 @@ pnpm build
 pnpm start
 ```
 
+### 拆分 ccproxy 与 server 服务
+
+默认 `SERVICE_MODE=all` 保持旧行为：同一个进程同时提供 Claude Code relay、`/admin/*`、`/internal/ccwebapp/*` 和管理台静态页面。
+
+如果要把 `ccproxy.yohomobile.dev` 和 server/admin 服务拆开，建议启动两份同版本代码但使用不同端口与 `SERVICE_MODE`：
+
+```bash
+# 公开给 ccproxy.yohomobile.dev，只处理 Claude Code / OpenAI-compatible relay 流量。
+SERVICE_MODE=relay PORT=3560 pnpm start
+
+# 供 server/admin 使用，只处理 /admin/*、/internal/ccwebapp/*、管理台静态页面。
+SERVICE_MODE=server PORT=3561 pnpm start
+```
+
+反向代理建议：
+
+- `ccproxy.yohomobile.dev` 指向 `127.0.0.1:3560`
+- server/admin 域名指向 `127.0.0.1:3561`
+
+这样 `ccproxy.yohomobile.dev` 上不会暴露 `/admin/*`、`/internal/ccwebapp/*` 或管理台页面；server/admin 域名也不会接管 relay catch-all / WebSocket，从而降低改动对线上 Claude Code 代理流量的影响。
+
 ## 环境变量
 
 必填：
@@ -125,6 +146,7 @@ pnpm start
 
 常用可选：
 
+- `SERVICE_MODE` — `all` / `relay` / `server`，默认 `all` 保持兼容；用于拆分 ccproxy 与 server/admin 服务
 - `REQUEST_TIMEOUT_MS`
 - `API_TIMEOUT_MS`
 - `UPSTREAM_REQUEST_TIMEOUT_MS`
@@ -332,8 +354,8 @@ Authorization: Bearer <ADMIN_TOKEN>
 
 - `GET /admin/users`
   - 列出全部 relay users 及聚合 usage
-- `POST /admin/users`
-  - 创建 user，返回 `user` 与一次性明文 `apiKey`
+- `POST /admin/better-auth/users`
+  - 创建用户：先在 Better Auth 建账号，relay 这边自动创建对应 profile（单向 Better Auth → relay）
 - `GET /admin/users/:userId`
   - 查看单个 user
 - `GET /admin/users/:userId/api-key`

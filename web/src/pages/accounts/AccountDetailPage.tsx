@@ -40,6 +40,9 @@ export function AccountDetailPage() {
       {a.provider === 'claude-compatible' && (
         <ClaudeCompatibleModelSection account={a} toast={toast} qc={qc} />
       )}
+      {a.provider === 'openai-compatible' && (
+        <OpenAICompatibleModelSection account={a} toast={toast} qc={qc} />
+      )}
       <RateLimitSection accountId={a.id} protocol={a.protocol} />
       <OAuthLoginSection account={a} toast={toast} qc={qc} />
       <ActionsSection account={a} toast={toast} qc={qc} navigate={navigate} />
@@ -52,8 +55,8 @@ function NetworkSection({ account: a, proxies }: { account: Account; proxies: im
   const network = proxies.find((proxy) => a.proxyUrl && (proxy.localUrl === a.proxyUrl || proxy.url === a.proxyUrl))
 
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-      <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Network</div>
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+      <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Network</div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-400 max-md:grid-cols-1">
         <div>Bound Network: <span className="text-slate-200">{network?.label ?? (a.proxyUrl ? 'Unknown network' : 'None')}</span></div>
         <div>Proxy URL: <span className="text-slate-200 font-mono break-all">{a.proxyUrl ?? '—'}</span></div>
@@ -83,19 +86,19 @@ function AccountLabelSection({ account: a, toast, qc }: { account: Account; toas
   })
 
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-      <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Account Label</div>
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+      <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Account Label</div>
       <div className="flex gap-2 items-center max-sm:flex-col max-sm:items-stretch">
         <input
           value={label}
           onChange={(event) => setLabel(event.target.value)}
           placeholder={a.emailAddress || a.id}
-          className="bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200 flex-1"
+          className="bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200 flex-1"
         />
         <button
           onClick={() => mut.mutate()}
           disabled={!changed || mut.isPending}
-          className="px-4 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white disabled:opacity-30 hover:bg-blue-500 transition-colors"
+          className="px-4 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white disabled:opacity-50 hover:bg-indigo-500 transition-colors"
         >
           Save Label
         </button>
@@ -125,7 +128,7 @@ function HeaderSection({ account: a }: { account: Account }) {
   const plan = accountPlanLabel(a)
 
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
       <div className="flex items-start justify-between gap-3 mb-3">
         <div>
           <h2 className="text-lg font-bold text-slate-100">{a.label || a.emailAddress || a.id}</h2>
@@ -227,7 +230,7 @@ function SchedulerSection({ account: a, toast, qc }: { account: Account; toast: 
   const activeStateClasses: Record<(typeof states)[number], string> = {
     enabled: 'bg-green-500/20 text-green-400 border-green-500/40',
     paused: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40',
-    draining: 'bg-blue-500/20 text-blue-400 border-blue-500/40',
+    draining: 'bg-accent-muted text-indigo-400 border-accent',
   }
   const maxSessionsHint = a.provider === 'openai-codex'
     ? 'OpenAI Codex treats this as a soft cap while quota headroom remains.'
@@ -259,8 +262,8 @@ function SchedulerSection({ account: a, toast, qc }: { account: Account; toast: 
         ]
 
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-      <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Scheduler</div>
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+      <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Scheduler</div>
       <div className="flex items-center gap-2 flex-wrap">
         {states.map((s) => (
           <button
@@ -270,7 +273,7 @@ function SchedulerSection({ account: a, toast, qc }: { account: Account; toast: 
             className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
               a.schedulerState === s
                 ? activeStateClasses[s]
-                : 'bg-ccdash-card border-ccdash-border text-slate-400 hover:text-slate-200'
+                : 'bg-bg-card border-border-default text-slate-400 hover:text-slate-200'
             }`}
           >
             {s.charAt(0).toUpperCase() + s.slice(1)}
@@ -286,7 +289,7 @@ function SchedulerSection({ account: a, toast, qc }: { account: Account; toast: 
         </div>
       )}
 
-      <div className="mt-4 pt-4 border-t border-ccdash-border">
+      <div className="mt-4 pt-4 border-t border-border-default">
         <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2" htmlFor="max-sessions-input">
           Max Sessions
         </label>
@@ -299,12 +302,12 @@ function SchedulerSection({ account: a, toast, qc }: { account: Account; toast: 
             value={maxSessionsInput}
             onChange={(event) => setMaxSessionsInput(event.target.value)}
             placeholder="Default"
-            className="bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200 w-40 max-sm:w-full"
+            className="bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200 w-40 max-sm:w-full"
           />
           <button
             onClick={() => maxSessionsMut.mutate()}
             disabled={!maxSessionsValid || !maxSessionsChanged || maxSessionsMut.isPending}
-            className="px-4 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white disabled:opacity-30 hover:bg-blue-500 transition-colors"
+            className="px-4 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white disabled:opacity-50 hover:bg-indigo-500 transition-colors"
           >
             Save
           </button>
@@ -314,7 +317,7 @@ function SchedulerSection({ account: a, toast, qc }: { account: Account; toast: 
         <div className="mt-2 text-xs text-slate-500">{maxSessionsHint} Empty uses the server default.</div>
       </div>
 
-      <div className="mt-4 pt-4 border-t border-ccdash-border">
+      <div className="mt-4 pt-4 border-t border-border-default">
         <div className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Plan Weight</div>
         <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
           <label className="text-xs text-slate-400">
@@ -322,7 +325,7 @@ function SchedulerSection({ account: a, toast, qc }: { account: Account; toast: 
             <select
               value={planTypeInput}
               onChange={(event) => setPlanTypeInput(event.target.value)}
-              className="mt-1 w-full bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200"
+              className="mt-1 w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200"
             >
               {planTypeOptions.map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
@@ -338,7 +341,7 @@ function SchedulerSection({ account: a, toast, qc }: { account: Account; toast: 
               value={planMultiplierInput}
               onChange={(event) => setPlanMultiplierInput(event.target.value)}
               placeholder="Auto"
-              className="mt-1 w-full bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200"
+              className="mt-1 w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200"
             />
           </label>
         </div>
@@ -346,7 +349,7 @@ function SchedulerSection({ account: a, toast, qc }: { account: Account; toast: 
           <button
             onClick={() => planMut.mutate()}
             disabled={!planMultiplierValid || !planSettingsChanged || planMut.isPending}
-            className="px-4 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white disabled:opacity-30 hover:bg-blue-500 transition-colors"
+            className="px-4 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white disabled:opacity-50 hover:bg-indigo-500 transition-colors"
           >
             Save Plan Weight
           </button>
@@ -362,9 +365,16 @@ function SchedulerSection({ account: a, toast, qc }: { account: Account; toast: 
 function RoutingGroupSection({ account: a, groups, toast, qc }: { account: Account; groups: RoutingGroup[]; toast: ReturnType<typeof useToast>; qc: ReturnType<typeof useQueryClient> }) {
   const [selected, setSelected] = useState(a.routingGroupId ?? '')
   const changed = selected !== (a.routingGroupId ?? '')
+  const groupType: 'anthropic' | 'openai' | 'google' =
+    a.provider === 'openai-codex' || a.provider === 'openai-compatible'
+      ? 'openai'
+      : a.provider === 'google-gemini-oauth'
+        ? 'google'
+        : 'anthropic'
+  const availableGroups = groups.filter((group) => group.type === groupType)
 
   const mut = useMutation({
-    mutationFn: () => updateAccountSettings(a.id, { routingGroupId: selected || null }),
+    mutationFn: () => updateAccountSettings(a.id, { routingGroupId: selected }),
     onSuccess: () => {
       toast.success('Routing group updated')
       qc.invalidateQueries({ queryKey: ['account', a.id] })
@@ -374,23 +384,23 @@ function RoutingGroupSection({ account: a, groups, toast, qc }: { account: Accou
   })
 
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-      <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Routing Group</div>
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+      <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Routing Group</div>
       <div className="flex gap-2 items-center">
         <select
           value={selected}
           onChange={(e) => setSelected(e.target.value)}
-          className="bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200 flex-1"
+          className="bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200 flex-1"
         >
-          <option value="">None (default pool)</option>
-          {groups.map((g) => (
-            <option key={g.id} value={g.id}>{g.name || g.id}</option>
+          <option value="">Select {groupType} group</option>
+          {availableGroups.map((g) => (
+            <option key={g.id} value={g.id}>{g.name || g.id}{g.descriptionZh ? ` — ${g.descriptionZh}` : ''}</option>
           ))}
         </select>
         <button
           onClick={() => mut.mutate()}
-          disabled={!changed || mut.isPending}
-          className="px-4 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white disabled:opacity-30 hover:bg-blue-500 transition-colors"
+          disabled={!changed || !selected || mut.isPending}
+          className="px-4 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white disabled:opacity-50 hover:bg-indigo-500 transition-colors"
         >
           Save
         </button>
@@ -450,15 +460,15 @@ function ClaudeCompatibleModelSection({ account: a, toast, qc }: { account: Acco
   })
 
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-      <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Claude-Compatible 模型映射</div>
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+      <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Claude-Compatible 模型映射</div>
       <div className="space-y-3 text-sm">
         <label className="block">
           <span className="text-[11px] text-slate-400">API Base URL</span>
           <input
             value={apiBaseUrl}
             onChange={(e) => setApiBaseUrl(e.target.value)}
-            className="mt-1 w-full bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-slate-200"
+            className="mt-1 w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-slate-200"
             placeholder="https://api.deepseek.com/anthropic"
           />
         </label>
@@ -467,11 +477,11 @@ function ClaudeCompatibleModelSection({ account: a, toast, qc }: { account: Acco
           <input
             value={modelName}
             onChange={(e) => setModelName(e.target.value)}
-            className="mt-1 w-full bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-slate-200"
+            className="mt-1 w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-slate-200"
             placeholder="deepseek-chat"
           />
         </label>
-        <div className="rounded-lg border border-ccdash-border bg-ccdash-bg/40 p-3 space-y-2">
+        <div className="rounded-lg border border-border-default bg-bg-primary/40 p-3 space-y-2">
           <div className="text-[11px] text-slate-400">
             按 Claude 家族映射上游模型（可选）。客户端发 claude-opus-* 命中 Opus，claude-sonnet-* 命中 Sonnet，claude-haiku-* 命中 Haiku；留空走默认。
           </div>
@@ -480,7 +490,7 @@ function ClaudeCompatibleModelSection({ account: a, toast, qc }: { account: Acco
             <input
               value={opus}
               onChange={(e) => setOpus(e.target.value)}
-              className="mt-1 w-full bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-slate-200"
+              className="mt-1 w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-slate-200"
               placeholder="deepseek-v4-pro"
             />
           </label>
@@ -489,7 +499,7 @@ function ClaudeCompatibleModelSection({ account: a, toast, qc }: { account: Acco
             <input
               value={sonnet}
               onChange={(e) => setSonnet(e.target.value)}
-              className="mt-1 w-full bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-slate-200"
+              className="mt-1 w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-slate-200"
               placeholder="留空则用默认"
             />
           </label>
@@ -498,7 +508,7 @@ function ClaudeCompatibleModelSection({ account: a, toast, qc }: { account: Acco
             <input
               value={haiku}
               onChange={(e) => setHaiku(e.target.value)}
-              className="mt-1 w-full bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-slate-200"
+              className="mt-1 w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-slate-200"
               placeholder="deepseek-v4-flash"
             />
           </label>
@@ -507,7 +517,151 @@ function ClaudeCompatibleModelSection({ account: a, toast, qc }: { account: Acco
           <button
             onClick={() => mut.mutate()}
             disabled={!canSave || mut.isPending}
-            className="px-4 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white disabled:opacity-30 hover:bg-blue-500 transition-colors"
+            className="px-4 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white disabled:opacity-50 hover:bg-indigo-500 transition-colors"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+type ModelMapEntry = { id: string; key: string; value: string }
+
+function newEntryId() {
+  return Math.random().toString(36).slice(2, 10)
+}
+
+function entriesFromMap(map: Record<string, string> | null | undefined): ModelMapEntry[] {
+  if (!map) return []
+  return Object.entries(map).map(([key, value]) => ({ id: newEntryId(), key, value }))
+}
+
+function entriesToMap(entries: ModelMapEntry[]): Record<string, string> | null {
+  const map: Record<string, string> = {}
+  for (const e of entries) {
+    const k = e.key.trim()
+    const v = e.value.trim()
+    if (!k || !v) continue
+    map[k] = v
+  }
+  return Object.keys(map).length > 0 ? map : null
+}
+
+function modelMapEqual(a: Record<string, string> | null, b: Record<string, string> | null): boolean {
+  if (!a && !b) return true
+  if (!a || !b) return false
+  const ka = Object.keys(a)
+  const kb = Object.keys(b)
+  if (ka.length !== kb.length) return false
+  for (const k of ka) if (a[k] !== b[k]) return false
+  return true
+}
+
+function OpenAICompatibleModelSection({ account: a, toast, qc }: { account: Account; toast: ReturnType<typeof useToast>; qc: ReturnType<typeof useQueryClient> }) {
+  const [apiBaseUrl, setApiBaseUrl] = useState(a.apiBaseUrl ?? '')
+  const [modelName, setModelName] = useState(a.modelName ?? '')
+  const [entries, setEntries] = useState<ModelMapEntry[]>(() => entriesFromMap(a.modelMap))
+
+  const mapKey = a.modelMap ? Object.entries(a.modelMap).map(([k, v]) => `${k}=${v}`).sort().join(',') : ''
+
+  useEffect(() => {
+    setApiBaseUrl(a.apiBaseUrl ?? '')
+    setModelName(a.modelName ?? '')
+    setEntries(entriesFromMap(a.modelMap))
+  }, [a.id, a.apiBaseUrl, a.modelName, mapKey])
+
+  const trimmedBase = apiBaseUrl.trim()
+  const trimmedModel = modelName.trim()
+  const nextMap = entriesToMap(entries)
+
+  const baseChanged = trimmedBase !== (a.apiBaseUrl ?? '')
+  const modelChanged = trimmedModel !== (a.modelName ?? '')
+  const mapChanged = !modelMapEqual(nextMap, a.modelMap ?? null)
+  const changed = baseChanged || modelChanged || mapChanged
+  const canSave = changed && trimmedBase.length > 0
+
+  const mut = useMutation({
+    mutationFn: () => updateAccountSettings(a.id, {
+      apiBaseUrl: trimmedBase,
+      modelName: trimmedModel || null,
+      modelMap: nextMap,
+    }),
+    onSuccess: () => {
+      toast.success('OpenAI-compatible settings updated')
+      qc.invalidateQueries({ queryKey: ['account', a.id] })
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+    },
+    onError: (e) => toast.error(e.message),
+  })
+
+  return (
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+      <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">OpenAI-Compatible 模型映射</div>
+      <div className="space-y-3 text-sm">
+        <label className="block">
+          <span className="text-[11px] text-slate-400">API Base URL</span>
+          <input
+            value={apiBaseUrl}
+            onChange={(e) => setApiBaseUrl(e.target.value)}
+            className="mt-1 w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-slate-200"
+            placeholder="https://token-plan-cn.xiaomimimo.com/v1"
+          />
+        </label>
+        <label className="block">
+          <span className="text-[11px] text-slate-400">默认上游模型（fallback，可选）</span>
+          <input
+            value={modelName}
+            onChange={(e) => setModelName(e.target.value)}
+            className="mt-1 w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-slate-200"
+            placeholder="mimo-v2.5-pro"
+          />
+        </label>
+        <div className="rounded-lg border border-border-default bg-bg-primary/40 p-3 space-y-2">
+          <div className="text-[11px] text-slate-400">
+            客户端 model 别名 → 上游模型。客户端发什么 model 就精确匹配（如 codex CLI 发 gpt-5 → mimo-v2.5-pro）；未命中走默认 fallback。最多 64 条。
+          </div>
+          {entries.length === 0 && (
+            <div className="text-[11px] text-slate-500 italic">尚无映射，点击下方添加。</div>
+          )}
+          {entries.map((entry, idx) => (
+            <div key={entry.id} className="flex items-center gap-2">
+              <input
+                value={entry.key}
+                onChange={(e) => setEntries((prev) => prev.map((p, i) => i === idx ? { ...p, key: e.target.value } : p))}
+                className="flex-1 bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-slate-200"
+                placeholder="客户端 model（如 gpt-5）"
+              />
+              <span className="text-slate-500">→</span>
+              <input
+                value={entry.value}
+                onChange={(e) => setEntries((prev) => prev.map((p, i) => i === idx ? { ...p, value: e.target.value } : p))}
+                className="flex-1 bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-slate-200"
+                placeholder="上游 model（如 mimo-v2.5-pro）"
+              />
+              <button
+                onClick={() => setEntries((prev) => prev.filter((_, i) => i !== idx))}
+                className="px-2 py-1.5 text-xs text-red-400 hover:text-red-300 border border-border-default rounded-lg"
+                title="删除该映射"
+              >
+                删
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={() => setEntries((prev) => [...prev, { id: newEntryId(), key: '', value: '' }])}
+            disabled={entries.length >= 64}
+            className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50"
+          >
+            + 添加映射
+          </button>
+        </div>
+        <div className="flex justify-end">
+          <button
+            onClick={() => mut.mutate()}
+            disabled={!canSave || mut.isPending}
+            className="px-4 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white disabled:opacity-50 hover:bg-indigo-500 transition-colors"
           >
             Save
           </button>
@@ -526,13 +680,13 @@ function RateLimitSection({ accountId, protocol }: { accountId: string; protocol
   })
 
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
       <div className="flex items-center justify-between mb-3">
-        <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400">Rate Limits</div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Rate Limits</div>
         <button
           onClick={() => probe.refetch()}
           disabled={probe.isFetching}
-          className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50"
+          className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50"
         >
           {probe.isFetching ? 'Probing...' : probe.data ? 'Refresh' : 'Probe'}
         </button>
@@ -552,6 +706,32 @@ function RateLimitSection({ accountId, protocol }: { accountId: string; protocol
 function RateLimitDisplay({ data, protocol }: { data: RateLimitProbe; protocol: string }) {
   if (data.kind === 'claude-compatible-connectivity') {
     return <ClaudeCompatibleProbeDisplay data={data} />
+  }
+
+  if (Array.isArray(data.modelUsage) && data.modelUsage.length > 0) {
+    return (
+      <div className="space-y-3">
+        {data.tokenStatus && !['ok', 'valid'].includes(data.tokenStatus) && (
+          <Badge tone="red">Token: {data.tokenStatus}{data.refreshAttempted ? (data.refreshSucceeded ? ' (refreshed)' : ` (refresh failed: ${data.refreshError})`) : ''}</Badge>
+        )}
+        <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Model Usage</div>
+        <div className="space-y-2">
+          {data.modelUsage.map((item) => (
+            <UtilBar
+              key={item.label}
+              label={item.label}
+              pct={typeof item.utilization === 'number' ? item.utilization : 0}
+              reset={typeof item.reset === 'string' ? item.reset : undefined}
+            />
+          ))}
+        </div>
+        {data.representativeClaim && (
+          <div className="text-[10px] text-slate-500">Selected bucket: <span className="font-mono">{data.representativeClaim}</span></div>
+        )}
+        {typeof data.error === 'string' && <div className="text-xs text-red-400">{data.error}</div>}
+        {data.probedAt && <div className="text-[10px] text-slate-500">Probed {timeAgo(data.probedAt)}</div>}
+      </div>
+    )
   }
 
   if (protocol === 'claude') {
@@ -676,7 +856,7 @@ function UtilBar({ label, pct, status, reset }: { label: string; pct: number; st
         <span>{label} — {Math.round(pct)}%{status ? ` (${status})` : ''}</span>
         {reset && <span>Reset: {timeAgo(reset)}</span>}
       </div>
-      <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+      <div className="h-2 bg-bg-card-raised rounded-full overflow-hidden">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(pct, 100)}%` }} />
       </div>
     </div>
@@ -716,13 +896,13 @@ function OAuthLoginSection({ account: a, toast, qc }: { account: Account; toast:
   if (a.authMode !== 'oauth') return null
 
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-      <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">OAuth Re-Login</div>
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+      <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">OAuth Re-Login</div>
       {!authUrl ? (
         <button
           onClick={() => genMut.mutate()}
           disabled={genMut.isPending}
-          className="px-3 py-1.5 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50"
+          className="px-3 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-500 transition-colors duration-150 disabled:opacity-50"
         >
           {genMut.isPending ? 'Generating...' : 'Generate Auth URL'}
         </button>
@@ -733,7 +913,7 @@ function OAuthLoginSection({ account: a, toast, qc }: { account: Account; toast:
             <ProxySelect value={proxyUrl} onChange={setProxyUrl} />
           </label>
           <div className="flex gap-2 items-center">
-            <a href={authUrl} target="_blank" rel="noopener" className="text-xs text-blue-400 hover:underline truncate">{authUrl}</a>
+            <a href={authUrl} target="_blank" rel="noopener" className="text-xs text-indigo-400 hover:underline truncate">{authUrl}</a>
             <button onClick={() => navigator.clipboard.writeText(authUrl)} className="text-xs text-slate-400 hover:text-slate-200 shrink-0">Copy</button>
           </div>
           <div className="flex gap-2">
@@ -741,12 +921,12 @@ function OAuthLoginSection({ account: a, toast, qc }: { account: Account; toast:
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder="Paste callback URL or code"
-              className="bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200 flex-1"
+              className="bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200 flex-1"
             />
             <button
               onClick={() => exMut.mutate()}
               disabled={!code || exMut.isPending}
-              className="px-3 py-1.5 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50"
+              className="px-3 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-500 transition-colors duration-150 disabled:opacity-50"
             >
               Exchange
             </button>
@@ -785,13 +965,13 @@ function ActionsSection({ account: a, toast, qc, navigate }: {
   })
 
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-      <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Actions</div>
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+      <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Actions</div>
       <div className="flex gap-2 flex-wrap">
         <button
           onClick={() => refreshMut.mutate()}
           disabled={refreshMut.isPending}
-          className="px-3 py-1.5 rounded-lg text-sm bg-ccdash-card-strong border border-ccdash-border text-slate-200 hover:text-white"
+          className="px-3 py-1.5 rounded-lg text-sm bg-bg-card-raised border border-border-default text-slate-200 hover:text-white"
         >
           Refresh Token
         </button>
@@ -840,8 +1020,8 @@ function AdvancedSection({ account: a }: { account: Account }) {
   ]
 
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-      <button onClick={() => setOpen(!open)} className="text-xs font-semibold uppercase tracking-wider text-cyan-400">
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+      <button onClick={() => setOpen(!open)} className="text-xs font-semibold uppercase tracking-wider text-indigo-300">
         Advanced Details {open ? '▴' : '▾'}
       </button>
       {open && (

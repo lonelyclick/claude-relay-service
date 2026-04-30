@@ -37,20 +37,20 @@ export function GuardPage() {
       <div className="flex items-center gap-3">
         <button
           onClick={() => setFilterHot(false)}
-          className={`px-3 py-1 rounded-lg text-xs font-medium ${!filterHot ? 'bg-blue-500/20 text-blue-400 border border-blue-500/40' : 'text-slate-400 border border-ccdash-border'}`}
+          className={`px-3 py-1 rounded-lg text-xs font-medium ${!filterHot ? 'bg-accent-muted text-indigo-400 border border-accent' : 'text-slate-400 border border-border-default'}`}
         >
           All
         </button>
         <button
           onClick={() => setFilterHot(true)}
-          className={`px-3 py-1 rounded-lg text-xs font-medium ${filterHot ? 'bg-red-500/20 text-red-400 border border-red-500/40' : 'text-slate-400 border border-ccdash-border'}`}
+          className={`px-3 py-1 rounded-lg text-xs font-medium ${filterHot ? 'bg-red-500/20 text-red-400 border border-red-500/40' : 'text-slate-400 border border-border-default'}`}
         >
           Hot / Critical
         </button>
       </div>
 
       <section>
-        <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Users ({filteredUsers.length})</div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Users ({filteredUsers.length})</div>
         {filteredUsers.length === 0 ? (
           <div className="text-sm text-slate-500">{filterHot ? 'No hot users.' : 'No user pressure data.'}</div>
         ) : (
@@ -59,7 +59,7 @@ export function GuardPage() {
       </section>
 
       <section>
-        <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Devices ({filteredDevices.length})</div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Devices ({filteredDevices.length})</div>
         {filteredDevices.length === 0 ? (
           <div className="text-sm text-slate-500">{filterHot ? 'No hot devices.' : 'No device pressure data.'}</div>
         ) : (
@@ -87,7 +87,7 @@ function GuardTable({ rows, showDevice }: { rows: GuardRow[]; showDevice: boolea
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-xs text-slate-500 uppercase tracking-wider border-b border-ccdash-border">
+          <tr className="text-xs text-slate-500 uppercase tracking-wider border-b border-border-default">
             <th className="text-left py-2 px-3">User</th>
             {showDevice && <th className="text-left py-2 px-3">Device</th>}
             <th className="text-center py-2 px-3">Sessions</th>
@@ -102,9 +102,9 @@ function GuardTable({ rows, showDevice }: { rows: GuardRow[]; showDevice: boolea
             const userId = r.userId ?? r.id ?? '—'
             const deviceParam = r.clientDeviceId ? `?device=${encodeURIComponent(r.clientDeviceId)}` : ''
             return (
-              <tr key={i} className="border-b border-ccdash-border/50 hover:bg-ccdash-card-strong/30">
+              <tr key={i} className="border-b border-border-default/50 hover:bg-bg-card-raised/30">
                 <td className="py-2 px-3">
-                  <Link to={`/users/${encodeURIComponent(userId)}${deviceParam}`} className="font-mono text-xs text-blue-400 hover:underline">
+                  <Link to={`/users/${encodeURIComponent(userId)}${deviceParam}`} className="font-mono text-xs text-indigo-400 hover:underline">
                     {userId}
                   </Link>
                 </td>
@@ -139,7 +139,7 @@ function MeterCell({ value, pct, fmt }: { value: number; pct: number; fmt?: (n: 
   return (
     <div className="text-center">
       <div className="text-xs text-slate-300">{fmt ? fmt(value) : value} ({Math.round(pct)}%)</div>
-      <div className="h-1 bg-slate-700 rounded-full mt-0.5 mx-auto w-16">
+      <div className="h-1 bg-bg-card-raised rounded-full mt-0.5 mx-auto w-16">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(pct, 100)}%` }} />
       </div>
     </div>

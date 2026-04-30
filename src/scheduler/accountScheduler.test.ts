@@ -67,6 +67,7 @@ function buildAccount(input: Partial<StoredAccount> & { id: string }): StoredAcc
     apiBaseUrl: input.apiBaseUrl ?? null,
     modelName: input.modelName ?? null,
     modelTierMap: null,
+    modelMap: null,
     loginPassword: input.loginPassword ?? null,
   }
 }
@@ -649,6 +650,22 @@ test('throws when no accounts available in requested group', () => {
     }),
     /No available accounts in group "group-b"/,
   )
+})
+
+test('selects grouped accounts when no group is requested', () => {
+  const { scheduler } = makeScheduler()
+  const accounts = [
+    buildAccount({ id: 'blocked-ungrouped', schedulerState: 'auto_blocked', autoBlockedReason: 'rate_limit:rejected' }),
+    buildAccount({ id: 'healthy-grouped', group: 'claude-official', routingGroupId: 'claude-official' }),
+  ]
+
+  const selected = scheduler.selectAccount(accounts, [], {
+    sessionHash: null,
+    forceAccountId: null,
+    group: null,
+  })
+
+  assert.equal(selected.id, 'healthy-grouped')
 })
 
 // ─── preferredAccountIds scoring ────────────────────────────────────────────

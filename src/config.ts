@@ -18,8 +18,10 @@ if (!isNodeTest) {
 const envSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   PORT: z.coerce.number().int().positive().default(3560),
+  SERVICE_MODE: z.enum(['all', 'relay', 'server']).default('all'),
   ADMIN_TOKEN: z.string().min(16),
   INTERNAL_TOKEN: z.string().min(16).optional(),
+  CCWEBAPP_NOTIFY_URL: z.string().url().optional(),
   STICKY_SESSION_TTL_HOURS: z.coerce.number().positive().default(1),
   ACCOUNT_ERROR_COOLDOWN_MS: z.coerce.number().int().positive().default(5 * 60 * 1000),
   API_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
@@ -74,7 +76,7 @@ const envSchema = z.object({
     .url()
     .default('https://cloudcode-pa.googleapis.com'),
   GEMINI_CODE_ASSIST_API_VERSION: z.string().default('v1internal'),
-  GEMINI_DEFAULT_MODEL: z.string().default('gemini-2.5-pro'),
+  GEMINI_DEFAULT_MODEL: z.string().default('gemini-3.1-pro'),
   REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   BUFFERED_REQUEST_BODY_MAX_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
   NON_STREAM_RESPONSE_CAPTURE_MAX_BYTES: z.coerce.number().int().positive().default(1024 * 1024),
@@ -209,6 +211,8 @@ const envSchema = z.object({
   BILLING_FALLBACK_CACHE_CREATION_PRICE_MICROS_PER_MILLION: z.coerce.number().int().nonnegative().default(112500000),
   BILLING_FALLBACK_CACHE_READ_PRICE_MICROS_PER_MILLION: z.coerce.number().int().nonnegative().default(9000000),
   DATABASE_URL: z.string().min(1).optional(),
+  BETTER_AUTH_API_URL: z.string().url().default("https://cc.yohomobile.dev/api/auth"),
+  BETTER_AUTH_ADMIN_EMAIL: z.string().email().optional(),
 })
 
 const vmFingerprintTemplateSchema = z.object({
@@ -242,8 +246,10 @@ const bodyTemplateNew = loadBodyTemplate(env.BODY_TEMPLATE_NEW_PATH ?? null)
 export const appConfig = {
   host: env.HOST,
   port: env.PORT,
+  serviceMode: env.SERVICE_MODE,
   adminToken: env.ADMIN_TOKEN,
   internalToken: env.INTERNAL_TOKEN ?? null,
+  ccwebappNotifyUrl: env.CCWEBAPP_NOTIFY_URL ?? null,
   stickySessionTtlHours: env.STICKY_SESSION_TTL_HOURS,
   accountErrorCooldownMs: env.ACCOUNT_ERROR_COOLDOWN_MS,
   requestTimeoutMs: env.REQUEST_TIMEOUT_MS,
@@ -342,6 +348,8 @@ export const appConfig = {
   billingFallbackCacheCreationPriceMicrosPerMillion: env.BILLING_FALLBACK_CACHE_CREATION_PRICE_MICROS_PER_MILLION,
   billingFallbackCacheReadPriceMicrosPerMillion: env.BILLING_FALLBACK_CACHE_READ_PRICE_MICROS_PER_MILLION,
   databaseUrl: env.DATABASE_URL ?? null,
+  betterAuthApiUrl: env.BETTER_AUTH_API_URL.replace(/\/+$/, ""),
+  betterAuthAdminEmail: env.BETTER_AUTH_ADMIN_EMAIL ?? null,
   claudeAiOrigin: 'https://claude.ai',
   claudeAiOrganizationsUrl: 'https://claude.ai/api/organizations',
   claudeAiCookieAuthorizeTemplate: 'https://claude.ai/v1/oauth/{organization_uuid}/authorize',

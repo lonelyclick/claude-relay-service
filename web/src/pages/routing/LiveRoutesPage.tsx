@@ -32,7 +32,7 @@ export function LiveRoutesPage() {
         <button
           onClick={() => { if (confirm('Clear all session routes?')) clearMut.mutate() }}
           disabled={routes.length === 0 || clearMut.isPending}
-          className="text-xs text-red-400 hover:text-red-300 disabled:opacity-30"
+          className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
         >
           Clear All
         </button>
@@ -44,7 +44,7 @@ export function LiveRoutesPage() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-slate-500 uppercase tracking-wider border-b border-ccdash-border">
+              <tr className="text-xs text-slate-500 uppercase tracking-wider border-b border-border-default">
                 <th className="text-left py-2 px-3">Session</th>
                 <th className="text-left py-2 px-3">Account</th>
                 <th className="text-center py-2 px-3">User</th>
@@ -55,7 +55,7 @@ export function LiveRoutesPage() {
             </thead>
             <tbody>
               {routes.map((r, i) => (
-                <tr key={i} className="border-b border-ccdash-border/50 hover:bg-ccdash-card-strong/30">
+                <tr key={i} className="border-b border-border-default/50 hover:bg-bg-card-raised/30">
                   <td className="py-2 px-3 font-mono text-xs text-slate-300">{truncateMiddle(r.sessionKey, 24)}</td>
                   <td className="py-2 px-3 font-mono text-xs text-slate-300">{r.accountEmail ?? truncateMiddle(r.accountId, 24)}</td>
                   <td className="py-2 px-3 text-center text-xs text-slate-400">{r.userName ?? r.userId ?? '—'}</td>

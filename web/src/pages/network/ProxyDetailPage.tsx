@@ -84,7 +84,7 @@ export function ProxyDetailPage() {
     <div className="space-y-5">
       <button onClick={() => navigate('/network')} className="text-sm text-slate-400 hover:text-slate-200">&larr; Back to Network</button>
 
-      <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
+      <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
         <div className="flex items-start justify-between mb-3">
           <div>
             <h2 className="text-lg font-bold text-slate-100">{proxy.label}</h2>
@@ -99,9 +99,9 @@ export function ProxyDetailPage() {
         </div>
       </section>
 
-      <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-        <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Diagnostics</div>
-        <button onClick={handleProbe} disabled={isProbing} className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50 mb-3">
+      <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+        <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Diagnostics</div>
+        <button onClick={handleProbe} disabled={isProbing} className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 mb-3">
           {isProbing ? 'Probing...' : diag ? 'Re-probe' : 'Run Probe'}
         </button>
         {diag && (
@@ -118,11 +118,11 @@ export function ProxyDetailPage() {
       </section>
 
       {proxy.accounts && proxy.accounts.length > 0 && (
-        <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-          <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Linked Accounts ({proxy.accounts.length})</div>
+        <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+          <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Linked Accounts ({proxy.accounts.length})</div>
           <div className="space-y-1">
             {proxy.accounts.map((a) => (
-              <Link key={a.id} to={`/accounts/${encodeURIComponent(a.id)}`} className="block text-xs text-blue-400 hover:underline">
+              <Link key={a.id} to={`/accounts/${encodeURIComponent(a.id)}`} className="block text-xs text-indigo-400 hover:underline">
                 {a.label || a.emailAddress}
               </Link>
             ))}
@@ -130,24 +130,24 @@ export function ProxyDetailPage() {
         </section>
       )}
 
-      <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-        <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Edit Proxy</div>
+      <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+        <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Edit Proxy</div>
         <div className="space-y-3 max-w-md">
           <label className="block space-y-1">
             <span className="text-xs text-slate-400">Label</span>
-            <input value={label} onChange={(e) => setLabel(e.target.value)} className="block w-full bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200" />
+            <input value={label} onChange={(e) => setLabel(e.target.value)} className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200" />
           </label>
           <label className="block space-y-1">
             <span className="text-xs text-slate-400">Local URL</span>
-            <input value={localUrl} onChange={(e) => setLocalUrl(e.target.value)} className="block w-full bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200" placeholder="http://..." />
+            <input value={localUrl} onChange={(e) => setLocalUrl(e.target.value)} className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200" placeholder="http://..." />
           </label>
-          <button onClick={() => updateMut.mutate()} disabled={updateMut.isPending} className="px-4 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50">
+          <button onClick={() => updateMut.mutate()} disabled={updateMut.isPending} className="px-4 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors duration-150 disabled:opacity-50">
             Save Changes
           </button>
         </div>
       </section>
 
-      <section className="bg-ccdash-card border border-red-500/20 rounded-xl p-5">
+      <section className="bg-bg-card border border-red-500/20 rounded-xl p-5">
         <button
           onClick={() => { if (confirm(`Delete proxy "${proxy.label}"?`)) deleteMut.mutate() }}
           disabled={deleteMut.isPending}

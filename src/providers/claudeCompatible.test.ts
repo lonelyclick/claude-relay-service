@@ -65,6 +65,7 @@ function buildAccount(overrides: Partial<StoredAccount> = {}): StoredAccount {
     apiBaseUrl: 'apiBaseUrl' in overrides ? overrides.apiBaseUrl ?? null : 'https://api.deepseek.com/anthropic',
     modelName: 'modelName' in overrides ? overrides.modelName ?? null : 'deepseek-chat',
     modelTierMap: 'modelTierMap' in overrides ? overrides.modelTierMap ?? null : null,
+    modelMap: 'modelMap' in overrides ? overrides.modelMap ?? null : null,
     loginPassword: overrides.loginPassword ?? null,
   }
 }

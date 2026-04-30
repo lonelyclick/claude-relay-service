@@ -9,7 +9,7 @@ export function LoginPage() {
   const relayRows = [
     { label: 'Claude Code', value: 'Claude OAuth / Claude-compatible', tone: 'text-amber-300' },
     { label: 'OpenAI', value: 'Codex OAuth / OpenAI-compatible', tone: 'text-emerald-300' },
-    { label: 'Routing', value: 'Account pools, sticky sessions, guard rails', tone: 'text-cyan-300' },
+    { label: 'Routing', value: 'Account pools, sticky sessions, guard rails', tone: 'text-indigo-300' },
   ]
   const stats = [
     ['Providers', '4'],
@@ -19,7 +19,7 @@ export function LoginPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-ccdash-bg">
+      <div className="flex items-center justify-center h-screen bg-bg-primary">
         <div className="text-slate-400 text-sm">Connecting...</div>
       </div>
     )
@@ -39,7 +39,7 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-ccdash-bg text-slate-100">
+    <div className="min-h-screen bg-bg-primary text-slate-100">
       <div className="mx-auto flex min-h-screen w-full max-w-6xl items-center gap-10 px-6 py-10 max-lg:flex-col max-lg:items-stretch max-lg:justify-center">
         <section className="flex-1">
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-300">
@@ -54,14 +54,14 @@ export function LoginPage() {
 
           <div className="mt-8 grid max-w-2xl grid-cols-3 gap-3 max-sm:grid-cols-1">
             {stats.map(([label, value]) => (
-              <div key={label} className="rounded-lg border border-ccdash-border bg-white/[0.03] px-4 py-3">
+              <div key={label} className="rounded-lg border border-border-default bg-white/[0.03] px-4 py-3">
                 <div className="text-[11px] uppercase tracking-wider text-slate-500">{label}</div>
                 <div className="mt-1 text-sm font-medium text-slate-100">{value}</div>
               </div>
             ))}
           </div>
 
-          <div className="mt-8 max-w-2xl rounded-lg border border-ccdash-border bg-ccdash-card/70 p-2 shadow-2xl shadow-black/20">
+          <div className="mt-8 max-w-2xl rounded-lg border border-border-default bg-bg-card/70 p-2 shadow-2xl shadow-black/20">
             {relayRows.map((row) => (
               <div key={row.label} className="grid grid-cols-[8rem_1fr] items-center gap-3 rounded-md px-4 py-3 text-sm max-sm:grid-cols-1 max-sm:gap-1">
                 <div className={`font-semibold ${row.tone}`}>{row.label}</div>
@@ -71,8 +71,8 @@ export function LoginPage() {
           </div>
         </section>
 
-        <div className="w-full max-w-sm rounded-xl border border-ccdash-border bg-ccdash-card p-7 shadow-xl">
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-cyan-400">
+        <div className="w-full max-w-sm rounded-xl border border-border-default bg-bg-card p-7 shadow-xl">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-indigo-300">
             Relay Admin
           </div>
           <h2 className="mb-2 text-2xl font-bold text-slate-100">Yoho Relay Admin</h2>

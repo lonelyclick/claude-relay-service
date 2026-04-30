@@ -32,6 +32,7 @@ export interface Account {
     sonnet?: string | null
     haiku?: string | null
   } | null
+  modelMap?: Record<string, string> | null
   apiBaseUrl?: string
   loginPassword?: string
   lastError?: string
@@ -47,7 +48,9 @@ export interface Account {
 export interface RoutingGroup {
   id: string
   name: string
-  description?: string
+  type: 'anthropic' | 'openai' | 'google'
+  description?: string | null
+  descriptionZh?: string | null
   isActive: boolean
   createdAt?: string
 }
@@ -57,11 +60,16 @@ export interface User {
   name: string
   isActive: boolean
   apiKeyPreview?: string
+  orgId?: string | null
   routingMode?: string
   accountId?: string
   routingGroupId?: string
   billingMode?: 'postpaid' | 'prepaid'
   billingCurrency?: BillingCurrency
+  customerTier?: 'standard' | 'plus' | 'business' | 'enterprise' | 'internal'
+  creditLimitMicros?: string
+  salesOwner?: string | null
+  riskStatus?: 'normal' | 'watch' | 'restricted' | 'blocked'
   balanceMicros?: string
   sessionCount?: number
   totalRequests?: number
@@ -75,6 +83,12 @@ export interface RelayApiKey {
   userId: string
   name: string
   keyPreview: string
+  plaintextAvailable: boolean
+  groupAssignments: {
+    anthropic: string | null
+    openai: string | null
+    google: string | null
+  }
   lastUsedAt?: string | null
   revokedAt?: string | null
   createdAt: string
@@ -197,6 +211,13 @@ export interface RateLimitProbe {
   refreshSucceeded?: boolean
   refreshError?: string
   probedAt?: string
+  modelUsage?: Array<{
+    label: string
+    modelIds: string[]
+    utilization: number | null
+    remainingFraction: number | null
+    reset: string | null
+  }>
   [key: string]: unknown
 }
 
@@ -260,7 +281,7 @@ export interface BillingSummary {
   currency: BillingCurrency
   totalRequests: number
   billedRequests: number
-  missingRuleRequests: number
+  missingSkuRequests: number
   invalidUsageRequests: number
   totalInputTokens: number
   totalOutputTokens: number
@@ -268,7 +289,7 @@ export interface BillingSummary {
   totalCacheReadTokens: number
   totalAmountMicros: string
   uniqueUsers: number
-  activeRules: number
+  activeSkus: number
   period: { from: string; to: string }
 }
 
@@ -278,7 +299,7 @@ export interface BillingUser {
   currency: BillingCurrency
   totalRequests: number
   billedRequests: number
-  missingRuleRequests: number
+  missingSkuRequests: number
   invalidUsageRequests: number
   totalInputTokens: number
   totalOutputTokens: number
@@ -292,7 +313,7 @@ export interface BillingUserPeriod {
   periodStart: string
   totalRequests: number
   billedRequests: number
-  missingRuleRequests: number
+  missingSkuRequests: number
   invalidUsageRequests: number
   totalInputTokens: number
   totalOutputTokens: number
@@ -303,7 +324,7 @@ export interface BillingUserModel {
   model: string
   totalRequests: number
   billedRequests: number
-  missingRuleRequests: number
+  missingSkuRequests: number
   invalidUsageRequests: number
   totalInputTokens: number
   totalOutputTokens: number
@@ -319,9 +340,7 @@ export interface BillingLineItem {
   usageRecordId: number
   requestId: string
   currency: BillingCurrency
-  status: 'billed' | 'missing_rule' | 'invalid_usage'
-  matchedRuleId?: string | null
-  matchedRuleName?: string | null
+  status: 'billed' | 'missing_sku' | 'invalid_usage'
   accountId?: string | null
   provider?: string | null
   model?: string | null
@@ -336,22 +355,42 @@ export interface BillingLineItem {
   usageCreatedAt: string
 }
 
-export interface BillingRule {
+export type BillingModelProvider = 'anthropic' | 'openai' | 'google'
+export type BillingModelVendor = 'anthropic' | 'openai' | 'google' | 'deepseek' | 'zhipu' | 'mimo' | 'custom'
+export type BillingModelProtocol = 'anthropic_messages' | 'openai_chat' | 'openai_responses' | 'gemini'
+
+export interface BillingBaseSku {
   id: string
-  name: string
-  isActive: boolean
-  priority: number
+  provider: BillingModelProvider
+  modelVendor: BillingModelVendor
+  protocol: BillingModelProtocol
+  model: string
   currency: BillingCurrency
-  provider?: string | null
-  accountId?: string | null
-  userId?: string | null
-  model?: string | null
-  effectiveFrom: string
-  effectiveTo?: string | null
+  displayName: string
+  isActive: boolean
+  supportsPromptCaching: boolean
   inputPriceMicrosPerMillion: string
   outputPriceMicrosPerMillion: string
   cacheCreationPriceMicrosPerMillion: string
   cacheReadPriceMicrosPerMillion: string
+  topupCurrency: BillingCurrency
+  topupAmountMicros: string
+  creditAmountMicros: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface BillingChannelMultiplier {
+  id: string
+  routingGroupId: string
+  provider: BillingModelProvider
+  modelVendor: BillingModelVendor
+  protocol: BillingModelProtocol
+  model: string
+  multiplierMicros: string
+  isActive: boolean
+  showInFrontend: boolean
+  allowCalls: boolean
   createdAt: string
   updatedAt: string
 }
@@ -359,7 +398,7 @@ export interface BillingRule {
 export interface BillingSyncResult {
   processedRequests: number
   billedRequests: number
-  missingRuleRequests: number
+  missingSkuRequests: number
   invalidUsageRequests: number
 }
 
@@ -465,4 +504,30 @@ export interface HealthCheck {
 export interface AdminSessionResponse {
   csrfToken: string
   user?: { name?: string; email?: string }
+}
+
+export interface BetterAuthOrganization {
+  id: string
+  name: string
+  slug: string
+  logo?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
+  memberCount: number
+}
+
+export interface BetterAuthUser {
+  id: string
+  name: string
+  email: string
+  emailVerified: boolean
+  image?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
+  organizations: Array<{
+    id: string
+    name: string
+    slug: string
+    role: string
+  }>
 }

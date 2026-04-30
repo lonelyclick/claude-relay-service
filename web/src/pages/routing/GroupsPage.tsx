@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { listRoutingGroups, createRoutingGroup, updateRoutingGroup, deleteRoutingGroup, getSchedulerStats } from '~/api/routing'
+import { listRoutingGroups, createRoutingGroup, updateRoutingGroup, getSchedulerStats } from '~/api/routing'
 import { listAccounts, updateAccountSettings } from '~/api/accounts'
 import { PageSkeleton } from '~/components/LoadingSkeleton'
 import { Badge } from '~/components/Badge'
@@ -24,81 +25,68 @@ export function GroupsPage() {
   return (
     <div className="space-y-5">
       <CreateForm toast={toast} qc={qc} />
-      <GroupTable groups={groupList} accounts={accountList} groupStats={groupStats} toast={toast} qc={qc} />
+      <GroupTable groups={groupList} accounts={accountList} groupStats={groupStats} />
       <AccountCapacityTable accounts={accountStats} toast={toast} qc={qc} />
     </div>
   )
 }
 
 function CreateForm({ toast, qc }: { toast: ReturnType<typeof useToast>; qc: ReturnType<typeof useQueryClient> }) {
-  const [id, setId] = useState('')
-  const [name, setName] = useState('')
-  const [desc, setDesc] = useState('')
-
-  const mut = useMutation({
-    mutationFn: () => createRoutingGroup({ id, name: name || id, description: desc || undefined, isActive: true }),
-    onSuccess: () => {
-      toast.success('Group created')
-      qc.invalidateQueries({ queryKey: ['routing-groups'] })
-      setId('')
-      setName('')
-      setDesc('')
-    },
-    onError: (e) => toast.error(e.message),
-  })
+  const [creating, setCreating] = useState(false)
 
   return (
-    <div className="bg-ccdash-card border border-ccdash-border rounded-xl p-4">
-      <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Create Routing Group</div>
-      <form onSubmit={(e) => { e.preventDefault(); if (id.trim()) mut.mutate() }} className="flex gap-2 flex-wrap items-end">
-        <label className="space-y-1">
-          <span className="text-xs text-slate-400">Group ID*</span>
-          <input value={id} onChange={(e) => setId(e.target.value)} required className="block bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200 w-40" />
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs text-slate-400">Name</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} className="block bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200 w-40" />
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs text-slate-400">Description</span>
-          <input value={desc} onChange={(e) => setDesc(e.target.value)} className="block bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200 w-48" />
-        </label>
-        <button type="submit" disabled={mut.isPending} className="px-4 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50">
-          Create
-        </button>
-      </form>
+    <div className="flex justify-end">
+      <button
+        type="button"
+        onClick={() => setCreating(true)}
+        className="px-4 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-500"
+      >
+        Create Routing Group
+      </button>
+      {creating ? (
+        <GroupDialog
+          mode="create"
+          onClose={() => setCreating(false)}
+          toast={toast}
+          qc={qc}
+        />
+      ) : null}
     </div>
   )
 }
 
-function GroupTable({ groups, accounts, groupStats, toast, qc }: {
+function groupTypeLabel(type: RoutingGroup['type']): string {
+  if (type === 'anthropic') return 'Anthropic'
+  if (type === 'openai') return 'Openai'
+  return 'Google'
+}
+
+function GroupTable({ groups, accounts, groupStats }: {
   groups: RoutingGroup[]
   accounts: Account[]
   groupStats: Record<string, { totalActiveSessions?: number; totalCapacity?: number }>
-  toast: ReturnType<typeof useToast>
-  qc: ReturnType<typeof useQueryClient>
 }) {
   if (groups.length === 0) {
     return <div className="text-center text-slate-500 py-8">No routing groups yet.</div>
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div className="max-w-full overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-xs text-slate-500 uppercase tracking-wider border-b border-ccdash-border">
+          <tr className="text-xs text-slate-500 uppercase tracking-wider border-b border-border-default">
             <th className="text-left py-2 px-3">ID</th>
-            <th className="text-left py-2 px-3">Name</th>
+            <th className="text-left py-2 px-3">Type</th>
             <th className="text-left py-2 px-3">Description</th>
+            <th className="text-left py-2 px-3">中文描述</th>
             <th className="text-center py-2 px-3">Status</th>
             <th className="text-center py-2 px-3">Accounts</th>
             <th className="text-center py-2 px-3">Sessions</th>
-            <th className="text-right py-2 px-3">Actions</th>
           </tr>
         </thead>
         <tbody>
           {groups.map((g) => (
-            <GroupRow key={g.id} group={g} accounts={accounts} stats={groupStats[g.id]} toast={toast} qc={qc} />
+            <GroupRow key={g.id} group={g} accounts={accounts} stats={groupStats[g.id]} />
           ))}
         </tbody>
       </table>
@@ -106,75 +94,131 @@ function GroupTable({ groups, accounts, groupStats, toast, qc }: {
   )
 }
 
-function GroupRow({ group: g, accounts, stats, toast, qc }: {
+function GroupRow({ group: g, accounts, stats }: {
   group: RoutingGroup
   accounts: Account[]
   stats?: { totalActiveSessions?: number; totalCapacity?: number }
-  toast: ReturnType<typeof useToast>
-  qc: ReturnType<typeof useQueryClient>
 }) {
-  const [name, setName] = useState(g.name)
-  const [desc, setDesc] = useState(g.description ?? '')
-  const [active, setActive] = useState(g.isActive)
-
   const linkedAccounts = accounts.filter((a) => a.routingGroupId === g.id).length
-  const dirty = name !== g.name || desc !== (g.description ?? '') || active !== g.isActive
-
-  const saveMut = useMutation({
-    mutationFn: () => updateRoutingGroup(g.id, { name, description: desc || undefined, isActive: active }),
-    onSuccess: () => {
-      toast.success('Group updated')
-      qc.invalidateQueries({ queryKey: ['routing-groups'] })
-    },
-    onError: (e) => toast.error(e.message),
-  })
-
-  const delMut = useMutation({
-    mutationFn: () => deleteRoutingGroup(g.id),
-    onSuccess: () => {
-      toast.success('Group deleted')
-      qc.invalidateQueries({ queryKey: ['routing-groups'] })
-    },
-    onError: (e) => toast.error(e.message),
-  })
 
   return (
-    <tr className="border-b border-ccdash-border/50 hover:bg-ccdash-card-strong/30">
-      <td className="py-2 px-3 font-mono text-xs text-slate-300">{g.id}</td>
-      <td className="py-2 px-3">
-        <input value={name} onChange={(e) => setName(e.target.value)} className="bg-transparent border-b border-transparent hover:border-ccdash-border focus:border-blue-500/50 text-slate-200 text-sm outline-none w-28" />
-      </td>
-      <td className="py-2 px-3">
-        <input value={desc} onChange={(e) => setDesc(e.target.value)} className="bg-transparent border-b border-transparent hover:border-ccdash-border focus:border-blue-500/50 text-slate-200 text-sm outline-none w-36" placeholder="—" />
-      </td>
-      <td className="py-2 px-3 text-center">
-        <label className="inline-flex items-center gap-1.5 cursor-pointer">
-          <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="accent-blue-500" />
-          <Badge tone={active ? 'green' : 'red'}>{active ? 'Active' : 'Disabled'}</Badge>
-        </label>
-      </td>
+    <tr className="border-b border-border-default/50 hover:bg-bg-card-raised/30">
+      <td className="py-2 px-3 font-mono text-xs"><Link to={`/routing/groups/${encodeURIComponent(g.id)}`} className="inline-flex items-center gap-1 rounded-md px-2 py-1 -ml-2 text-indigo-300 bg-accent-muted border border-blue-500/20 hover:bg-accent-muted hover:text-indigo-200">{g.id}<span className="text-[10px] opacity-80">↗</span></Link></td>
+      <td className="py-2 px-3"><Badge tone={g.type === 'anthropic' ? 'blue' : g.type === 'openai' ? 'green' : 'cyan'}>{groupTypeLabel(g.type)}</Badge></td>
+      <td className="py-2 px-3 text-slate-300">{g.description || '—'}</td>
+      <td className="py-2 px-3 text-slate-300">{g.descriptionZh || '—'}</td>
+      <td className="py-2 px-3 text-center"><Badge tone={g.isActive ? 'green' : 'red'}>{g.isActive ? 'Active' : 'Disabled'}</Badge></td>
       <td className="py-2 px-3 text-center text-slate-300">{linkedAccounts}</td>
       <td className="py-2 px-3 text-center text-slate-300">
         {stats ? `${stats.totalActiveSessions ?? 0} / ${stats.totalCapacity ?? 0}` : '—'}
       </td>
-      <td className="py-2 px-3 text-right space-x-2">
-        <button
-          onClick={() => saveMut.mutate()}
-          disabled={!dirty || saveMut.isPending}
-          className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-30"
-        >
-          Save
-        </button>
-        <button
-          onClick={() => { if (confirm(`Delete group "${g.id}"?`)) delMut.mutate() }}
-          disabled={linkedAccounts > 0 || delMut.isPending}
-          className="text-xs text-red-400 hover:text-red-300 disabled:opacity-30"
-          title={linkedAccounts > 0 ? `${linkedAccounts} accounts linked` : 'Delete'}
-        >
-          Delete
-        </button>
-      </td>
     </tr>
+  )
+}
+
+function GroupDialog({ mode, group: g, onClose, toast, qc }: {
+  mode: 'create' | 'edit'
+  group?: RoutingGroup
+  onClose: () => void
+  toast: ReturnType<typeof useToast>
+  qc: ReturnType<typeof useQueryClient>
+}) {
+  const [id, setId] = useState(g?.id ?? '')
+  const [type, setType] = useState<RoutingGroup['type']>(g?.type ?? 'anthropic')
+  const [desc, setDesc] = useState(g?.description ?? '')
+  const [descZh, setDescZh] = useState(g?.descriptionZh ?? '')
+  const [active, setActive] = useState(g?.isActive ?? true)
+
+  useEffect(() => {
+    setId(g?.id ?? '')
+    setType(g?.type ?? 'anthropic')
+    setDesc(g?.description ?? '')
+    setDescZh(g?.descriptionZh ?? '')
+    setActive(g?.isActive ?? true)
+  }, [g?.id, g?.type, g?.description, g?.descriptionZh, g?.isActive])
+
+  const normalizedId = id.trim()
+  const isEdit = mode === 'edit' && g != null
+  const dirty = !isEdit || normalizedId !== g.id || type !== g.type || desc !== (g.description ?? '') || descZh !== (g.descriptionZh ?? '') || active !== g.isActive
+
+  const saveMut = useMutation({
+    mutationFn: () => {
+      const payload = {
+        id: normalizedId,
+        name: normalizedId,
+        type,
+        description: desc || undefined,
+        descriptionZh: descZh || undefined,
+        isActive: active,
+      }
+      return isEdit ? updateRoutingGroup(g.id, payload) : createRoutingGroup(payload)
+    },
+    onSuccess: () => {
+      toast.success(isEdit ? 'Group updated' : 'Group created')
+      qc.invalidateQueries({ queryKey: ['routing-groups'] })
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['scheduler-stats'] })
+      onClose()
+    },
+    onError: (e) => toast.error(e.message),
+  })
+
+  const title = isEdit ? 'Edit Routing Group' : 'Create Routing Group'
+  const titleId = isEdit ? 'edit-routing-group-title' : 'create-routing-group-title'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <div className="w-full max-w-2xl rounded-xl border border-border-default bg-bg-card p-5 shadow-modal">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 id={titleId} className="text-base font-semibold text-slate-100">{title}</h2>
+            {isEdit ? <div className="mt-1 text-xs text-slate-500 font-mono">{g.id}</div> : null}
+          </div>
+          <button type="button" onClick={onClose} className="text-sm text-slate-400 hover:text-slate-200">Close</button>
+        </div>
+        <form
+          className="mt-4 grid grid-cols-2 gap-3 max-md:grid-cols-1"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (dirty && normalizedId) saveMut.mutate()
+          }}
+        >
+          <label className="space-y-1">
+            <span className="text-xs text-slate-400">Group ID*</span>
+            <input value={id} onChange={(e) => setId(e.target.value)} required className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200" />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-slate-400">Type*</span>
+            <select value={type} onChange={(e) => setType(e.target.value as RoutingGroup['type'])} className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200">
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">Openai</option>
+              <option value="google">Google</option>
+            </select>
+          </label>
+          <label className="flex items-end gap-2 text-sm text-slate-300">
+            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="mb-2 accent-indigo-500" />
+            <span className="pb-1.5">Active</span>
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-slate-400">Description</span>
+            <input value={desc} onChange={(e) => setDesc(e.target.value)} className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200" />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-slate-400">中文描述</span>
+            <input value={descZh} onChange={(e) => setDescZh(e.target.value)} className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200" />
+          </label>
+          <div className="col-span-2 flex justify-end gap-2 pt-2 max-md:col-span-1">
+            <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm border border-border-default text-slate-300 hover:text-slate-100 hover:border-slate-500">
+              Cancel
+            </button>
+            <button type="submit" disabled={!dirty || !normalizedId || saveMut.isPending} className="px-4 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors duration-150 disabled:opacity-50">
+              {isEdit ? 'Save' : 'Create'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   )
 }
 
@@ -187,24 +231,24 @@ function AccountCapacityTable({ accounts, toast, qc }: {
 }) {
   if (accounts.length === 0) {
     return (
-      <div className="bg-ccdash-card border border-ccdash-border rounded-xl p-4 text-sm text-slate-500">
+      <div className="bg-bg-card border border-border-default rounded-xl p-4 shadow-xs text-sm text-slate-500">
         No scheduler accounts yet.
       </div>
     )
   }
 
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-4">
+    <section className="bg-bg-card border border-border-default rounded-xl p-4 shadow-xs">
       <div className="flex items-start justify-between gap-3 mb-3">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400">Account Capacity</div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Account Capacity</div>
           <div className="text-xs text-slate-500 mt-1">Edit maxSessions directly from Scheduler. OpenAI Codex treats it as a soft cap while quota remains.</div>
         </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-xs text-slate-500 uppercase tracking-wider border-b border-ccdash-border">
+            <tr className="text-xs text-slate-500 uppercase tracking-wider border-b border-border-default">
               <th className="text-left py-2 px-3">Account</th>
               <th className="text-left py-2 px-3">Group</th>
               <th className="text-center py-2 px-3">Status</th>
@@ -252,7 +296,7 @@ function AccountCapacityRow({ account, toast, qc }: {
   })
 
   return (
-    <tr className="border-b border-ccdash-border/50 hover:bg-ccdash-card-strong/30">
+    <tr className="border-b border-border-default/50 hover:bg-bg-card-raised/30">
       <td className="py-2 px-3">
         <div className="text-slate-200">{account.label || account.emailAddress || account.accountId}</div>
         <div className="text-[11px] text-slate-500 font-mono">{account.accountId}</div>
@@ -270,12 +314,12 @@ function AccountCapacityRow({ account, toast, qc }: {
             step={1}
             value={maxSessionsInput}
             onChange={(event) => setMaxSessionsInput(event.target.value)}
-            className="bg-ccdash-input border border-ccdash-border rounded-lg px-2 py-1 text-xs text-slate-200 w-24"
+            className="bg-bg-input border border-border-default rounded-lg px-2 py-1 text-xs text-slate-200 w-24"
           />
           <button
             onClick={() => mut.mutate()}
             disabled={!valid || !changed || mut.isPending}
-            className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-30"
+            className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50"
           >
             Save
           </button>
@@ -286,4 +330,3 @@ function AccountCapacityRow({ account, toast, qc }: {
     </tr>
   )
 }
-

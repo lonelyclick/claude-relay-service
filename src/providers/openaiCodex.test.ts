@@ -62,6 +62,7 @@ function buildAccount(overrides: Partial<StoredAccount> = {}): StoredAccount {
     apiBaseUrl: overrides.apiBaseUrl ?? 'https://chatgpt.com/backend-api/codex',
     modelName: overrides.modelName ?? 'gpt-5-codex',
     modelTierMap: null,
+    modelMap: null,
     loginPassword: overrides.loginPassword ?? null,
   }
 }

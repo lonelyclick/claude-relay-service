@@ -12,6 +12,7 @@ import { AccountHealthTracker } from './scheduler/healthTracker.js'
 import { ProxyPool } from './scheduler/proxyPool.js'
 import { createServer } from './server.js'
 import { BillingStore } from './billing/billingStore.js'
+import { SupportStore } from './support/supportStore.js'
 import { UsageStore } from './usage/usageStore.js'
 import { ApiKeyStore } from './usage/apiKeyStore.js'
 import { UserStore } from './usage/userStore.js'
@@ -57,6 +58,8 @@ async function main(): Promise<void> {
   const billingStore = new BillingStore(appConfig.databaseUrl)
   await billingStore.ensureTables()
   await billingStore.syncLineItems()
+  const supportStore = new SupportStore(appConfig.databaseUrl)
+  await supportStore.ensureTable()
 
   const rateLimitedUntilMap = await tokenStore.getActiveRateLimitedUntilMap?.(Date.now()) ?? new Map<string, number>()
   for (const [accountId, until] of rateLimitedUntilMap) {
@@ -76,17 +79,21 @@ async function main(): Promise<void> {
     billingStore,
     apiKeyStore,
   )
-  const app = createServer({ oauthService, relayService, usageStore, proxyPool, userStore, billingStore, apiKeyStore, geminiLoopback })
+  const app = createServer({ serviceMode: appConfig.serviceMode, oauthService, relayService, usageStore, proxyPool, userStore, billingStore, apiKeyStore, supportStore, geminiLoopback })
   const server = createHttpServer(app)
 
-  server.on('upgrade', (req, socket, head) => {
-    void relayService.handleUpgrade(req, socket, head)
-  })
+  if (appConfig.serviceMode !== 'server') {
+    server.on('upgrade', (req, socket, head) => {
+      void relayService.handleUpgrade(req, socket, head)
+    })
+  }
 
   await listen(server)
-  keepAliveRefresher.start()
+  if (appConfig.serviceMode !== 'server') {
+    keepAliveRefresher.start()
+  }
   process.stdout.write(
-    `Claude OAuth Relay listening on http://${appConfig.host}:${appConfig.port}\n`,
+    `Claude OAuth Relay (${appConfig.serviceMode}) listening on http://${appConfig.host}:${appConfig.port}\n`,
   )
 
   let shuttingDown = false
@@ -96,7 +103,9 @@ async function main(): Promise<void> {
     }
     shuttingDown = true
     process.stdout.write(`[shutdown] signal=${signal} begin\n`)
-    keepAliveRefresher.stop()
+    if (appConfig.serviceMode !== 'server') {
+      keepAliveRefresher.stop()
+    }
     await new Promise<void>((resolve) => server.close(() => resolve()))
     await Promise.allSettled([
       tokenStore.close?.() ?? Promise.resolve(),

@@ -46,7 +46,7 @@ export function UsageDetailPage() {
     <div className="space-y-5">
       <button onClick={() => navigate('/usage')} className="text-sm text-slate-400 hover:text-slate-200">&larr; Back to Usage</button>
 
-      <div className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
+      <div className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
         <h2 className="text-lg font-bold text-slate-100 mb-1">{d.emailAddress ?? d.label ?? d.accountId}</h2>
         <div className="flex gap-2 text-xs text-slate-400">
           <Badge tone="blue">{fmtNum(d.totalRequests)} requests</Badge>
@@ -61,7 +61,7 @@ export function UsageDetailPage() {
             onClick={() => setPeriod(p)}
             className={cn(
               'px-3 py-1 rounded-lg text-xs font-medium',
-              period === p ? 'bg-blue-500/20 text-blue-400 border border-blue-500/40' : 'text-slate-400 border border-ccdash-border',
+              period === p ? 'bg-accent-muted text-indigo-400 border border-accent' : 'text-slate-400 border border-border-default',
             )}
           >
             {p === 'all' ? 'All' : p}
@@ -75,13 +75,13 @@ export function UsageDetailPage() {
         <StatCard value={fmtTokens(d.totalOutputTokens)} label="Output Tokens" />
       </div>
 
-      <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
+      <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
         <div className="flex items-center justify-between mb-3">
-          <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400">Rate Limit Snapshot</div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Rate Limit Snapshot</div>
           <button
             onClick={() => rateLimit.refetch()}
             disabled={rateLimit.isFetching}
-            className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50"
+            className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50"
           >
             {rateLimit.isFetching ? 'Probing...' : rateLimit.data ? 'Refresh' : 'Probe'}
           </button>
@@ -110,11 +110,11 @@ export function UsageDetailPage() {
       </section>
 
       {modelBreakdown.length > 0 && (
-        <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-          <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Model Breakdown</div>
+        <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+          <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Model Breakdown</div>
           <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
             {modelBreakdown.map((m) => (
-              <div key={m.model} className="bg-ccdash-card-strong rounded-lg p-3">
+              <div key={m.model} className="bg-bg-card-raised rounded-lg p-3">
                 <div className="text-sm font-medium text-slate-200 mb-1">{m.model}</div>
                 <div className="text-xs text-slate-400 space-x-3">
                   <span>{fmtNum(m.totalRequests)} req</span>
@@ -151,7 +151,7 @@ function UtilBar({ label, pct, reset }: { label: string; pct: number; reset?: st
         <span>{label} — {Math.round(pct)}%</span>
         {reset && <span>Reset: {timeAgo(reset)}</span>}
       </div>
-      <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+      <div className="h-2 bg-bg-card-raised rounded-full overflow-hidden">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(pct, 100)}%` }} />
       </div>
     </div>

@@ -9,12 +9,14 @@ import {
   getSessionRequests,
   listUserApiKeys,
   revokeUserApiKey,
+  updateUserApiKeyGroups,
   updateUser,
   deleteUser,
+  getUserApiKeyPlaintext,
 } from '~/api/users'
 import { getBillingUserBalance, getBillingUserLedger, createBillingLedgerEntry } from '~/api/billing'
-import type { BillingCurrency, RelayApiKey, RelayKeySource, RelayKeySourceSummary } from '~/api/types'
-import { listAccounts } from '~/api/accounts'
+import type { BillingCurrency, RelayApiKey, RelayKeySource, RoutingGroup } from '~/api/types'
+import { banBetterAuthUser, deleteBetterAuthUser, listBetterAuthSyncedUsers, unbanBetterAuthUser, updateBetterAuthUser, type BetterAuthManagedUser } from '~/api/betterAuth'
 import { listRoutingGroups } from '~/api/routing'
 import { Badge } from '~/components/Badge'
 import { cn } from '~/lib/cn'
@@ -34,7 +36,6 @@ import {
   resolveExpandedSessionKey,
   resolveRestoredSessionRequestId,
   type UserDetailReturnState,
-  type UsersListReturnState,
 } from './userDetailLinks'
 import {
   getUserDetailLedgerKindLabel,
@@ -43,6 +44,11 @@ import {
   getUserDetailRelayKeySourceTone,
   userDetailRelayKeySourceOptions,
 } from './userDetailPresentation'
+import {
+  findOrganizationByRelayOrgId,
+  formatOrganizationLabel,
+  type DisplayOrganization,
+} from './orgDisplay'
 
 function moneyInputToMicros(value: string): string | null {
   const trimmed = value.trim()
@@ -61,6 +67,15 @@ function moneyInputToMicros(value: string): string | null {
 }
 
 const billingCurrencies: BillingCurrency[] = ['CNY', 'USD']
+const customerTiers = ['standard', 'plus', 'business', 'enterprise', 'internal'] as const
+const riskStatuses = ['normal', 'watch', 'restricted', 'blocked'] as const
+
+function microsToMoneyInput(value?: string | null): string {
+  const micros = BigInt(value && /^\d+$/.test(value) ? value : '0')
+  const whole = micros / 1_000_000n
+  const fraction = (micros % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '')
+  return fraction ? `${whole}.${fraction}` : whole.toString()
+}
 
 export function UserDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -72,11 +87,9 @@ export function UserDetailPage() {
   const relayKeySourceFilter = pageState.relayKeySource
   const restoredSessionKey = pageState.sessionKey ?? null
   const restoredSessionRequestId = pageState.sessionRequestId ?? null
-  const usersListReturnState = pageState.usersListReturnState
   const requestDetailReturnState: UserDetailReturnState = {
     device: deviceFilter || null,
     relayKeySource: relayKeySourceFilter,
-    usersListReturnState,
   }
 
   const user = useQuery({ queryKey: ['user', id], queryFn: () => getUser(id!) })
@@ -87,14 +100,11 @@ export function UserDetailPage() {
   })
   const balance = useQuery({ queryKey: ['billing-balance', id], queryFn: () => getBillingUserBalance(id!), retry: false })
   const ledger = useQuery({ queryKey: ['billing-ledger', id], queryFn: () => getBillingUserLedger(id!, 20, 0), retry: false })
-  const accounts = useQuery({ queryKey: ['accounts'], queryFn: listAccounts })
-  const groups = useQuery({ queryKey: ['routing-groups'], queryFn: listRoutingGroups })
+  const betterAuthUsers = useQuery({ queryKey: ['better-auth-users'], queryFn: listBetterAuthSyncedUsers, retry: false })
 
   const sessionList = sessions.data?.sessions ?? []
   const requestList = requests.data?.requests ?? []
   const requestTotal = requests.data?.total ?? requestList.length
-  const accountList = accounts.data?.accounts ?? []
-  const groupList = groups.data?.routingGroups ?? []
 
   const devices = useMemo(() => {
     const devs = new Set<string>()
@@ -131,19 +141,23 @@ export function UserDetailPage() {
   if (!user.data) return <div className="text-slate-400 text-sm">User not found</div>
 
   const u = user.data
+  const betterAuthUser = betterAuthUsers.data?.users.find((item) => item.relay?.id === u.id) ?? null
+  const betterAuthOrganizations = betterAuthUsers.data?.organizations ?? []
+  const currentOrganization = findOrganizationByRelayOrgId(betterAuthOrganizations, u.orgId)
 
   return (
     <div className="space-y-5">
       <button
-        onClick={() => navigate(buildUsersHref(usersListReturnState))}
+        onClick={() => navigate(buildUsersHref())}
         className="text-sm text-slate-400 hover:text-slate-200"
       >
         &larr; Back to Users
       </button>
 
-      <UserHeader user={u} balance={balance.data ?? null} />
-      <ApiKeySection userId={u.id} legacyKeyPreview={u.apiKeyPreview} />
-      <RoutingSection user={u} accounts={accountList} groups={groupList} />
+      <UserHeader user={u} balance={balance.data ?? null} organization={currentOrganization} />
+      <UserManagementSection relayUser={u} betterAuthUser={betterAuthUser} />
+      <OrgSection user={u} organizations={betterAuthOrganizations} />
+      <ApiKeySection userId={u.id} />
       <BillingSection
         user={u}
         balance={balance.data ?? null}
@@ -156,7 +170,6 @@ export function UserDetailPage() {
         currentDevice={deviceFilter}
         currentRelayKeySource={relayKeySourceFilter}
         userId={u.id}
-        usersListReturnState={usersListReturnState}
       />
       <SessionsSection
         sessions={filteredSessions}
@@ -181,20 +194,23 @@ export function UserDetailPage() {
 function UserHeader({
   user: u,
   balance,
+  organization,
 }: {
-  user: { id: string; name: string; isActive: boolean; routingMode?: string; accountId?: string; routingGroupId?: string; totalRequests?: number; totalInputTokens?: number; totalOutputTokens?: number; billingMode?: 'postpaid' | 'prepaid'; billingCurrency?: BillingCurrency; balanceMicros?: string; relayKeySourceSummary?: RelayKeySourceSummary }
+  user: { id: string; name: string; isActive: boolean; orgId?: string | null; routingMode?: string; accountId?: string; routingGroupId?: string; totalRequests?: number; totalInputTokens?: number; totalOutputTokens?: number; billingMode?: 'postpaid' | 'prepaid'; billingCurrency?: BillingCurrency; customerTier?: string; creditLimitMicros?: string; salesOwner?: string | null; riskStatus?: string; balanceMicros?: string }
   balance: { balanceMicros: string; billingMode: 'postpaid' | 'prepaid'; billingCurrency?: BillingCurrency; currency?: BillingCurrency } | null
+  organization?: DisplayOrganization | null
 }) {
   const balanceMicros = balance?.balanceMicros ?? u.balanceMicros ?? '0'
   const billingMode = balance?.billingMode ?? u.billingMode ?? 'postpaid'
   const billingCurrency = balance?.billingCurrency ?? balance?.currency ?? u.billingCurrency ?? 'USD'
-  const relayKeySourceSummary = u.relayKeySourceSummary
+  const organizationLabel = organization ? formatOrganizationLabel(organization, u.orgId) : (u.orgId ?? '—')
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
       <div className="flex items-start justify-between">
         <div>
           <h2 className="text-lg font-bold text-slate-100">{u.name}</h2>
           <div className="text-xs text-slate-500 font-mono">{u.id}</div>
+          <div className="text-xs text-slate-500">Org: {organizationLabel}</div>
         </div>
         <Badge tone={u.isActive ? 'green' : 'red'}>{u.isActive ? 'Active' : 'Disabled'}</Badge>
       </div>
@@ -202,38 +218,236 @@ function UserHeader({
         <Badge tone="blue">{fmtNum(u.totalRequests ?? 0)} requests</Badge>
         <Badge tone="cyan">{fmtTokens((u.totalInputTokens ?? 0) + (u.totalOutputTokens ?? 0))} tokens</Badge>
         <Badge tone={billingMode === 'prepaid' ? 'yellow' : 'gray'}>{billingMode}</Badge>
+        <Badge tone={u.customerTier === 'enterprise'  ? 'blue' : u.customerTier === 'business' ? 'blue' : u.customerTier === 'plus' ? 'cyan' : 'gray'}>{u.customerTier ?? 'standard'}</Badge>
         <Badge tone="blue">{billingCurrency}</Badge>
         <Badge tone={balanceMicros.startsWith('-') ? 'red' : 'green'}>{fmtMoneyMicros(balanceMicros, billingCurrency)} balance</Badge>
       </div>
-      {relayKeySourceSummary ? (
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-          <span>Migration signal:</span>
-          <Badge tone={relayKeySourceSummary.legacyFallbackCount > 0 ? 'yellow' : 'green'}>
-            {fmtNum(relayKeySourceSummary.legacyFallbackCount)} legacy fallback
-          </Badge>
-          <Badge tone="cyan">{fmtNum(relayKeySourceSummary.relayApiKeysCount)} relay_api_keys</Badge>
-          <span>
-            from {fmtNum(relayKeySourceSummary.countedRequests)} of up to {fmtNum(relayKeySourceSummary.recentWindowLimit)} recent final requests
-          </span>
-        </div>
-      ) : null}
     </section>
   )
 }
 
-function ApiKeySection({ userId, legacyKeyPreview }: { userId: string; legacyKeyPreview?: string }) {
+function UserManagementSection({
+  relayUser,
+  betterAuthUser,
+}: {
+  relayUser: { id: string; name: string; isActive: boolean }
+  betterAuthUser: BetterAuthManagedUser | null
+}) {
+  const toast = useToast()
+  const qc = useQueryClient()
+  const navigate = useNavigate()
+  const [form, setForm] = useState({ name: '', email: '', role: 'user' })
+
+  useEffect(() => {
+    setForm({
+      name: betterAuthUser?.name || relayUser.name || '',
+      email: betterAuthUser?.email || '',
+      role: betterAuthUser?.role || 'user',
+    })
+  }, [betterAuthUser?.id, betterAuthUser?.name, betterAuthUser?.email, betterAuthUser?.role, relayUser.name])
+
+  const updateAuthMut = useMutation({
+    mutationFn: ({ userId, body }: { userId: string; body: Parameters<typeof updateBetterAuthUser>[1] }) => updateBetterAuthUser(userId, body),
+    onSuccess: (_data, variables) => {
+      const nextName = variables.body.name?.trim()
+      if (nextName) {
+        qc.setQueryData(['user', relayUser.id], (old: unknown) =>
+          old && typeof old === 'object' ? { ...old, name: nextName } : old,
+        )
+      }
+      toast.success('User updated')
+      qc.invalidateQueries({ queryKey: ['better-auth-users'] })
+      qc.invalidateQueries({ queryKey: ['user', relayUser.id] })
+      qc.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (e) => toast.error(e.message),
+  })
+  const banMut = useMutation({
+    mutationFn: ({ userId, reason }: { userId: string; reason?: string }) => banBetterAuthUser(userId, reason),
+    onSuccess: () => {
+      qc.setQueryData(['user', relayUser.id], (old: unknown) =>
+        old && typeof old === 'object' ? { ...old, isActive: false } : old,
+      )
+      toast.success('User disabled')
+      qc.invalidateQueries({ queryKey: ['better-auth-users'] })
+      qc.invalidateQueries({ queryKey: ['user', relayUser.id] })
+      qc.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (e) => toast.error(e.message),
+  })
+  const unbanMut = useMutation({
+    mutationFn: unbanBetterAuthUser,
+    onSuccess: () => {
+      qc.setQueryData(['user', relayUser.id], (old: unknown) =>
+        old && typeof old === 'object' ? { ...old, isActive: true } : old,
+      )
+      toast.success('User enabled')
+      qc.invalidateQueries({ queryKey: ['better-auth-users'] })
+      qc.invalidateQueries({ queryKey: ['user', relayUser.id] })
+      qc.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (e) => toast.error(e.message),
+  })
+  const deleteAuthMut = useMutation({
+    mutationFn: deleteBetterAuthUser,
+    onSuccess: () => {
+      toast.success('User deleted')
+      qc.invalidateQueries({ queryKey: ['better-auth-users'] })
+      qc.invalidateQueries({ queryKey: ['users'] })
+      navigate('/users')
+    },
+    onError: (e) => toast.error(e.message),
+  })
+
+  const onSave = () => {
+    if (!betterAuthUser) return
+    const name = form.name.trim()
+    const email = form.email.trim()
+    const role = form.role.trim() || 'user'
+    if (!name || !email) {
+      toast.error('Name and email are required')
+      return
+    }
+    updateAuthMut.mutate({ userId: betterAuthUser.id, body: { name, email, role } })
+  }
+
+  const isPending = updateAuthMut.isPending || banMut.isPending || unbanMut.isPending || deleteAuthMut.isPending
+  const dirty = Boolean(betterAuthUser) && (
+    form.name.trim() !== (betterAuthUser?.name || relayUser.name || '') ||
+    form.email.trim() !== (betterAuthUser?.email || '') ||
+    form.role.trim() !== (betterAuthUser?.role || 'user')
+  )
+
+  return (
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+      <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">User Management</div>
+      {betterAuthUser ? (
+        <div className="grid grid-cols-[1fr_auto] gap-4 max-lg:grid-cols-1">
+          <div className="grid grid-cols-3 gap-3 max-md:grid-cols-1">
+            <label className="text-xs font-medium text-slate-400">
+              Name
+              <input
+                className="mt-1 w-full rounded-lg border border-border-default bg-bg-input px-3 py-1.5 text-sm text-slate-100 outline-none focus:border-accent"
+                value={form.name}
+                onChange={(event) => setForm((next) => ({ ...next, name: event.target.value }))}
+              />
+            </label>
+            <label className="text-xs font-medium text-slate-400">
+              Email
+              <input
+                className="mt-1 w-full rounded-lg border border-border-default bg-bg-input px-3 py-1.5 font-mono text-sm text-slate-100 outline-none focus:border-accent"
+                value={form.email}
+                onChange={(event) => setForm((next) => ({ ...next, email: event.target.value }))}
+              />
+            </label>
+            <label className="text-xs font-medium text-slate-400">
+              Role
+              <select
+                className="mt-1 w-full rounded-lg border border-border-default bg-bg-input px-3 py-1.5 text-sm text-slate-100 outline-none focus:border-accent"
+                value={form.role}
+                onChange={(event) => setForm((next) => ({ ...next, role: event.target.value }))}
+              >
+                <option value="user">user</option>
+                <option value="admin">admin</option>
+              </select>
+            </label>
+            <div className="flex gap-2 md:col-span-3">
+              <Badge tone={betterAuthUser.banned || !relayUser.isActive ? 'red' : 'green'}>{betterAuthUser.banned || !relayUser.isActive ? 'Disabled' : 'Active'}</Badge>
+              <span className="font-mono text-[11px] text-slate-600">{betterAuthUser.id}</span>
+            </div>
+          </div>
+          <div className="flex gap-2 flex-wrap justify-end self-end">
+            <button onClick={onSave} disabled={isPending || !dirty} className="px-3 py-1.5 rounded-lg text-sm bg-accent-muted border border-blue-500/30 text-indigo-300 hover:bg-accent-muted disabled:opacity-50">Save</button>
+            {betterAuthUser.banned ? (
+              <button onClick={() => unbanMut.mutate(betterAuthUser.id)} disabled={isPending} className="px-3 py-1.5 rounded-lg text-sm bg-green-500/10 border border-green-500/30 text-green-300 hover:bg-green-500/20 disabled:opacity-50">Unban</button>
+            ) : (
+              <button onClick={() => banMut.mutate({ userId: betterAuthUser.id })} disabled={isPending} className="px-3 py-1.5 rounded-lg text-sm bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 hover:bg-yellow-500/20 disabled:opacity-50">Ban</button>
+            )}
+            <button onClick={() => { if (confirm(`Delete user "${betterAuthUser.email}"? This cannot be undone.`)) deleteAuthMut.mutate(betterAuthUser.id) }} disabled={isPending} className="px-3 py-1.5 rounded-lg text-sm bg-red-500/10 border border-red-500/30 text-red-300 hover:bg-red-500/20 disabled:opacity-50">Delete</button>
+          </div>
+        </div>
+      ) : (
+        <div className="text-sm text-slate-500">This usage record has not been attached to a Better Auth user yet.</div>
+      )}
+    </section>
+  )
+}
+
+function OrgSection({
+  user: u,
+  organizations,
+}: {
+  user: { id: string; orgId?: string | null }
+  organizations: DisplayOrganization[]
+}) {
+  const toast = useToast()
+  const qc = useQueryClient()
+  const [orgId, setOrgId] = useState(u.orgId ?? '')
+
+  useEffect(() => {
+    setOrgId(u.orgId ?? '')
+  }, [u.id, u.orgId])
+
+  const dirty = orgId !== (u.orgId ?? '')
+  const selectedOrganization = findOrganizationByRelayOrgId(organizations, orgId)
+
+  const mut = useMutation({
+    mutationFn: () => updateUser(u.id, { orgId: orgId.trim() || null }),
+    onSuccess: () => {
+      const nextOrgId = orgId.trim() || null
+      qc.setQueryData(['user', u.id], (old: unknown) =>
+        old && typeof old === 'object' ? { ...old, orgId: nextOrgId } : old,
+      )
+      toast.success('Org updated')
+      qc.invalidateQueries({ queryKey: ['user', u.id] })
+      qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['better-auth-users'] })
+    },
+    onError: (e) => toast.error(e.message),
+  })
+
+  return (
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+      <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Organization</div>
+      <div className="flex gap-3 max-md:flex-col">
+        <select
+          value={orgId}
+          onChange={(e) => setOrgId(e.target.value)}
+          className="flex-1 bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200 font-mono"
+        >
+          <option value="">No organization</option>
+          {orgId && !selectedOrganization ? <option value={orgId}>{orgId}</option> : null}
+          {organizations.map((org) => (
+            <option key={org.id} value={org.relayOrgId || org.slug || org.name || ''}>{formatOrganizationLabel(org)}</option>
+          ))}
+        </select>
+        <button onClick={() => mut.mutate()} disabled={!dirty || mut.isPending} className="px-4 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors duration-150 disabled:opacity-50">
+          Save Organization
+        </button>
+      </div>
+      <div className="text-xs text-slate-500 mt-2">选择这个用户所属的 Better Auth 组织；后台会用同一个组织关系承载访问和用量归属。</div>
+    </section>
+  )
+}
+
+function ApiKeySection({ userId }: { userId: string }) {
   const toast = useToast()
   const qc = useQueryClient()
   const [revealed, setRevealed] = useState<string | null>(null)
+  const [newKeyName, setNewKeyName] = useState('')
+  const [newGroups, setNewGroups] = useState<RelayApiKey['groupAssignments']>({ anthropic: '', openai: '', google: '' })
   const apiKeys = useQuery({
     queryKey: ['user-api-keys', userId],
     queryFn: () => listUserApiKeys(userId),
   })
+  const groups = useQuery({ queryKey: ['routing-groups'], queryFn: listRoutingGroups })
 
   const createMut = useMutation({
-    mutationFn: () => createUserApiKey(userId),
+    mutationFn: () => createUserApiKey(userId, { name: newKeyName || undefined, groupAssignments: normalizeKeyGroups(newGroups) }),
     onSuccess: (data) => {
       setRevealed(data.apiKey)
+      setNewKeyName('')
+      setNewGroups({ anthropic: '', openai: '', google: '' })
       toast.success('Relay API key created')
       qc.invalidateQueries({ queryKey: ['user-api-keys', userId] })
     },
@@ -251,23 +465,27 @@ function ApiKeySection({ userId, legacyKeyPreview }: { userId: string; legacyKey
   })
 
   const activeKeys = apiKeys.data?.apiKeys ?? []
+  const routingGroups = groups.data?.routingGroups ?? []
+  const canCreate = hasAtLeastOneGroup(newGroups)
 
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-      <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Relay API Keys</div>
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+      <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Relay API Keys</div>
       {revealed ? (
         <div className="flex items-center gap-2">
-          <code className="text-xs text-slate-200 bg-ccdash-input px-2 py-1 rounded font-mono break-all">{revealed}</code>
-          <button onClick={() => { navigator.clipboard.writeText(revealed); toast.success('Copied') }} className="text-xs text-blue-400 hover:text-blue-300 shrink-0">Copy</button>
+          <code className="text-xs text-slate-200 bg-bg-input px-2 py-1 rounded font-mono break-all">{revealed}</code>
+          <button onClick={() => { navigator.clipboard.writeText(revealed); toast.success('Copied') }} className="text-xs text-indigo-400 hover:text-indigo-300 shrink-0">Copy</button>
         </div>
       ) : (
         <div className="text-xs text-slate-500">Create a relay API key to disclose a fresh reseller credential.</div>
       )}
-      <div className="flex gap-2 mt-3">
+      <div className="mt-3 space-y-3 rounded-lg border border-border-default bg-bg-input/30 p-3">
+        <input value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} placeholder="Key name (optional)" className="w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200" />
+        <KeyGroupSelects groups={routingGroups} value={newGroups} onChange={setNewGroups} />
         <button
           onClick={() => createMut.mutate()}
-          disabled={createMut.isPending}
-          className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50"
+          disabled={!canCreate || createMut.isPending}
+          className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50"
         >
           Create Key
         </button>
@@ -275,7 +493,6 @@ function ApiKeySection({ userId, legacyKeyPreview }: { userId: string; legacyKey
       <div className="mt-4 space-y-2">
         <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-slate-500">
           <span>Active Keys ({activeKeys.length})</span>
-          <span>Legacy preview: <span className="font-mono text-slate-400">{legacyKeyPreview ?? '—'}</span></span>
         </div>
         {apiKeys.isLoading ? (
           <div className="text-xs text-slate-500">Loading relay API keys...</div>
@@ -287,6 +504,8 @@ function ApiKeySection({ userId, legacyKeyPreview }: { userId: string; legacyKey
               <ApiKeyRow
                 key={apiKey.id}
                 apiKey={apiKey}
+                groups={routingGroups}
+                userId={userId}
                 onRevoke={() => {
                   if (confirm(`Revoke relay API key "${apiKey.name}"? This key will stop working immediately.`)) {
                     revokeMut.mutate({ keyId: apiKey.id })
@@ -304,15 +523,46 @@ function ApiKeySection({ userId, legacyKeyPreview }: { userId: string; legacyKey
 
 function ApiKeyRow({
   apiKey,
+  groups,
+  userId,
   onRevoke,
   pending,
 }: {
   apiKey: RelayApiKey
+  groups: RoutingGroup[]
+  userId: string
   onRevoke: () => void
   pending: boolean
 }) {
+  const toast = useToast()
+  const qc = useQueryClient()
+  const [groupAssignments, setGroupAssignments] = useState<RelayApiKey['groupAssignments']>(apiKey.groupAssignments)
+
+  useEffect(() => {
+    setGroupAssignments(apiKey.groupAssignments)
+  }, [apiKey.id, apiKey.groupAssignments])
+
+  const dirty = JSON.stringify(normalizeKeyGroups(groupAssignments)) !== JSON.stringify(normalizeKeyGroups(apiKey.groupAssignments))
+  const canSave = dirty && hasAtLeastOneGroup(groupAssignments)
+  const saveMut = useMutation({
+    mutationFn: () => updateUserApiKeyGroups(userId, apiKey.id, normalizeKeyGroups(groupAssignments)),
+    onSuccess: () => {
+      toast.success('API key groups updated')
+      qc.invalidateQueries({ queryKey: ['user-api-keys', userId] })
+    },
+    onError: (e) => toast.error(e.message),
+  })
+  const copyMut = useMutation({
+    mutationFn: async () => {
+      const data = await getUserApiKeyPlaintext(userId, apiKey.id)
+      await navigator.clipboard.writeText(data.apiKey)
+    },
+    onSuccess: () => toast.success('Copied'),
+    onError: (e) => toast.error(e.message),
+  })
+
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-ccdash-border bg-ccdash-input/40 px-3 py-2 max-md:flex-col max-md:items-start">
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-border-default bg-bg-input/40 px-3 py-2 max-md:flex-col max-md:items-start">
       <div className="space-y-1">
         <div className="flex items-center gap-2">
           <span className="text-sm text-slate-200">{apiKey.name}</span>
@@ -323,71 +573,61 @@ function ApiKeyRow({
           Created {timeAgo(apiKey.createdAt)}
           {apiKey.lastUsedAt ? ` · Last used ${timeAgo(apiKey.lastUsedAt)}` : ' · Never used'}
         </div>
+        <KeyGroupSelects groups={groups} value={groupAssignments} onChange={setGroupAssignments} compact />
       </div>
-      <button
-        onClick={onRevoke}
-        disabled={pending}
-        className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
-      >
-        Revoke
-      </button>
+      <div className="flex gap-2">
+        <button onClick={() => copyMut.mutate()} disabled={copyMut.isPending} className="text-xs text-indigo-300 hover:text-indigo-300 disabled:opacity-50">Copy</button>
+        <button onClick={() => saveMut.mutate()} disabled={!canSave || saveMut.isPending} className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50">Save</button>
+        <button
+          onClick={onRevoke}
+          disabled={pending}
+          className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
+        >
+          Revoke
+        </button>
+      </div>
     </div>
   )
 }
 
-function RoutingSection({ user: u, accounts, groups }: {
-  user: { id: string; routingMode?: string; accountId?: string; routingGroupId?: string }
-  accounts: { id: string; emailAddress: string; label?: string; routingGroupId?: string }[]
-  groups: { id: string; name: string }[]
+function normalizeKeyGroups(value: RelayApiKey['groupAssignments']): RelayApiKey['groupAssignments'] {
+  return {
+    anthropic: value.anthropic || null,
+    openai: value.openai || null,
+    google: value.google || null,
+  }
+}
+
+function hasAtLeastOneGroup(value: RelayApiKey['groupAssignments']): boolean {
+  return Boolean(value.anthropic || value.openai || value.google)
+}
+
+function KeyGroupSelects({ groups, value, onChange, compact = false }: {
+  groups: RoutingGroup[]
+  value: RelayApiKey['groupAssignments']
+  onChange: (value: RelayApiKey['groupAssignments']) => void
+  compact?: boolean
 }) {
-  const toast = useToast()
-  const qc = useQueryClient()
-  const [mode, setMode] = useState(u.routingMode ?? 'auto')
-  const [accountId, setAccountId] = useState(u.accountId ?? '')
-  const [groupId, setGroupId] = useState(u.routingGroupId ?? '')
-
-  const mut = useMutation({
-    mutationFn: () => {
-      const updates: Record<string, unknown> = { routingMode: mode }
-      if (mode === 'pinned_account') updates.accountId = accountId || null
-      if (mode === 'preferred_group') updates.routingGroupId = groupId || null
-      return updateUser(u.id, updates)
-    },
-    onSuccess: () => {
-      toast.success('Routing updated')
-      qc.invalidateQueries({ queryKey: ['user', u.id] })
-    },
-    onError: (e) => toast.error(e.message),
-  })
-
+  const renderSelect = (type: keyof RelayApiKey['groupAssignments'], label: string) => {
+    const options = groups.filter((group) => group.type === type)
+    return (
+      <label className="space-y-1">
+        <span className="text-[10px] uppercase tracking-wider text-slate-500">{label}</span>
+        <select value={value[type] ?? ''} onChange={(e) => onChange({ ...value, [type]: e.target.value || null })} className="block bg-bg-input border border-border-default rounded-lg px-2 py-1 text-xs text-slate-200 w-full">
+          <option value="">—</option>
+          {options.map((group) => (
+            <option key={group.id} value={group.id}>{group.name || group.id}</option>
+          ))}
+        </select>
+      </label>
+    )
+  }
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-      <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Routing Configuration</div>
-      <div className="space-y-3">
-        <div className="flex gap-2 items-center">
-          <select value={mode} onChange={(e) => setMode(e.target.value)} className="bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200">
-            <option value="auto">Auto</option>
-            <option value="pinned_account">Pinned Account</option>
-            <option value="preferred_group">Group Only</option>
-          </select>
-        </div>
-        {mode === 'pinned_account' && (
-          <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200 w-full">
-            <option value="">Select account...</option>
-            {accounts.map((a) => <option key={a.id} value={a.id}>{a.label || a.emailAddress}</option>)}
-          </select>
-        )}
-        {mode === 'preferred_group' && (
-          <select value={groupId} onChange={(e) => setGroupId(e.target.value)} className="bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200 w-full">
-            <option value="">Select group...</option>
-            {groups.map((g) => <option key={g.id} value={g.id}>{g.name || g.id}</option>)}
-          </select>
-        )}
-        <button onClick={() => mut.mutate()} disabled={mut.isPending} className="px-4 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50">
-          Apply Routing
-        </button>
-      </div>
-    </section>
+    <div className={cn('grid gap-2', compact ? 'grid-cols-3 max-md:grid-cols-1' : 'grid-cols-3 max-md:grid-cols-1')}>
+      {renderSelect('anthropic', 'Anthropic')}
+      {renderSelect('openai', 'Openai')}
+      {renderSelect('google', 'Google')}
+    </div>
   )
 }
 
@@ -398,7 +638,7 @@ function BillingSection({
   ledgerTotal,
   requestDetailReturnState,
 }: {
-  user: { id: string; billingMode?: 'postpaid' | 'prepaid'; billingCurrency?: BillingCurrency }
+  user: { id: string; billingMode?: 'postpaid' | 'prepaid'; billingCurrency?: BillingCurrency; customerTier?: string; creditLimitMicros?: string; salesOwner?: string | null; riskStatus?: string }
   balance: {
     balanceMicros: string
     billingMode: 'postpaid' | 'prepaid'
@@ -424,11 +664,28 @@ function BillingSection({
   const qc = useQueryClient()
   const [billingMode, setBillingMode] = useState<'postpaid' | 'prepaid'>(u.billingMode ?? 'postpaid')
   const [billingCurrency, setBillingCurrency] = useState<BillingCurrency>(u.billingCurrency ?? balance?.billingCurrency ?? balance?.currency ?? 'CNY')
+  const [customerTier, setCustomerTier] = useState(u.customerTier ?? 'standard')
+  const [creditLimit, setCreditLimit] = useState(microsToMoneyInput(u.creditLimitMicros))
+  const [salesOwner, setSalesOwner] = useState(u.salesOwner ?? '')
+  const [riskStatus, setRiskStatus] = useState(u.riskStatus ?? 'normal')
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
 
   const updateModeMut = useMutation({
-    mutationFn: () => updateUser(u.id, { billingMode, billingCurrency }),
+    mutationFn: () => {
+      const creditLimitMicros = moneyInputToMicros(creditLimit)
+      if (creditLimitMicros == null || creditLimitMicros.startsWith('-')) {
+        throw new Error('Enter a valid non-negative credit limit')
+      }
+      return updateUser(u.id, {
+        billingMode,
+        billingCurrency,
+        customerTier,
+        creditLimitMicros,
+        salesOwner: salesOwner.trim() || null,
+        riskStatus,
+      })
+    },
     onSuccess: () => {
       toast.success('Billing settings updated')
       qc.invalidateQueries({ queryKey: ['user', u.id] })
@@ -466,32 +723,32 @@ function BillingSection({
   })
 
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5 space-y-4">
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs space-y-4">
       <div className="flex items-center justify-between">
-        <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400">Billing & Recharge</div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Billing & Recharge</div>
         {balance?.lastLedgerAt ? <div className="text-xs text-slate-500">Last change {timeAgo(balance.lastLedgerAt)}</div> : null}
       </div>
 
       <div className="grid grid-cols-4 gap-3 max-xl:grid-cols-2 max-md:grid-cols-1">
-        <div className="rounded-lg border border-ccdash-border bg-ccdash-card-strong p-3">
+        <div className="rounded-lg border border-border-default bg-bg-card-raised p-3">
           <div className="text-[11px] uppercase tracking-wider text-slate-500">Current Balance</div>
           <div className={`mt-2 text-lg font-semibold ${(balance?.balanceMicros ?? '0').startsWith('-') ? 'text-red-400' : 'text-slate-100'}`}>
             {fmtMoneyMicros(balance?.balanceMicros ?? '0', balance?.currency ?? 'USD')}
           </div>
         </div>
-        <div className="rounded-lg border border-ccdash-border bg-ccdash-card-strong p-3">
+        <div className="rounded-lg border border-border-default bg-bg-card-raised p-3">
           <div className="text-[11px] uppercase tracking-wider text-slate-500">Credited</div>
           <div className="mt-2 text-lg font-semibold text-slate-100">
             {fmtMoneyMicros(balance?.totalCreditedMicros ?? '0', balance?.currency ?? 'USD')}
           </div>
         </div>
-        <div className="rounded-lg border border-ccdash-border bg-ccdash-card-strong p-3">
+        <div className="rounded-lg border border-border-default bg-bg-card-raised p-3">
           <div className="text-[11px] uppercase tracking-wider text-slate-500">Debited</div>
           <div className="mt-2 text-lg font-semibold text-slate-100">
             {fmtMoneyMicros(balance?.totalDebitedMicros ?? '0', balance?.currency ?? 'USD')}
           </div>
         </div>
-        <div className="rounded-lg border border-ccdash-border bg-ccdash-card-strong p-3">
+        <div className="rounded-lg border border-border-default bg-bg-card-raised p-3">
           <div className="text-[11px] uppercase tracking-wider text-slate-500">Mode</div>
           <div className="mt-2">
             <Badge tone={(balance?.billingMode ?? billingMode) === 'prepaid' ? 'yellow' : 'gray'}>
@@ -502,30 +759,54 @@ function BillingSection({
       </div>
 
       <div className="grid grid-cols-2 gap-4 max-xl:grid-cols-1">
-        <div className="rounded-lg border border-ccdash-border bg-ccdash-card-strong p-4 space-y-3">
+        <div className="rounded-lg border border-border-default bg-bg-card-raised p-4 space-y-3">
           <div className="text-sm font-medium text-slate-100">Billing Settings</div>
-          <div className="text-xs text-slate-500">`prepaid` users are blocked when balance is zero or below. Currency can only be changed before any balance or billed history exists.</div>
+          <div className="text-xs text-slate-500">New users stay `standard + prepaid`; only admins should manually switch approved business/enterprise users to `postpaid`. 欠款额度=允许余额透支到负数的上限；正余额充值不需要额度。</div>
           <div className="grid grid-cols-2 gap-2 max-md:grid-cols-1">
-            <select value={billingMode} onChange={(e) => setBillingMode(e.target.value as 'postpaid' | 'prepaid')} className="bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200">
-              <option value="postpaid">postpaid</option>
-              <option value="prepaid">prepaid</option>
-            </select>
-            <select value={billingCurrency} onChange={(e) => setBillingCurrency(e.target.value as BillingCurrency)} className="bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200">
-              {billingCurrencies.map((currency) => (
-                <option key={currency} value={currency}>
-                  {currency === 'CNY' ? 'RMB (CNY)' : 'USD'}
-                </option>
-              ))}
-            </select>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-400">客户等级</span>
+              <select value={customerTier} onChange={(e) => setCustomerTier(e.target.value)} className="w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200">
+                {customerTiers.map((tier) => <option key={tier} value={tier}>{tier}</option>)}
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-400">计费模式</span>
+              <select value={billingMode} onChange={(e) => setBillingMode(e.target.value as 'postpaid' | 'prepaid')} className="w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200">
+                <option value="postpaid">postpaid</option>
+                <option value="prepaid">prepaid</option>
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-400">币种</span>
+              <select value={billingCurrency} onChange={(e) => setBillingCurrency(e.target.value as BillingCurrency)} className="w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200">
+                {billingCurrencies.map((currency) => (
+                  <option key={currency} value={currency}>{currency === 'CNY' ? 'RMB (CNY)' : 'USD'}</option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-400">欠款额度 / Credit Limit（{billingCurrency}）</span>
+              <input value={creditLimit} onChange={(e) => setCreditLimit(e.target.value)} placeholder="0 = 不允许欠款" className="w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200" />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-400">风控状态</span>
+              <select value={riskStatus} onChange={(e) => setRiskStatus(e.target.value)} className="w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200">
+                {riskStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-400">客户负责人</span>
+              <input value={salesOwner} onChange={(e) => setSalesOwner(e.target.value)} placeholder="Sales owner" className="w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200" />
+            </label>
           </div>
           <div className="flex gap-2 items-center">
-            <button onClick={() => updateModeMut.mutate()} disabled={updateModeMut.isPending} className="px-4 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50">
+            <button onClick={() => updateModeMut.mutate()} disabled={updateModeMut.isPending} className="px-4 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors duration-150 disabled:opacity-50">
               Save
             </button>
           </div>
         </div>
 
-        <div className="rounded-lg border border-ccdash-border bg-ccdash-card-strong p-4 space-y-3">
+        <div className="rounded-lg border border-border-default bg-bg-card-raised p-4 space-y-3">
           <div className="text-sm font-medium text-slate-100">Recharge / Adjustment</div>
           <div className="text-xs text-slate-500">Enter a currency amount, for example `10`, `5.25`, or `-2`.</div>
           <label className="space-y-1 block">
@@ -534,7 +815,7 @@ function BillingSection({
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="10.00"
-              className="block w-full bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200"
+              className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200"
             />
           </label>
           <label className="space-y-1 block">
@@ -543,7 +824,7 @@ function BillingSection({
               value={note}
               onChange={(e) => setNote(e.target.value)}
               placeholder="manual top-up / correction"
-              className="block w-full bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200"
+              className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200"
             />
           </label>
           <div className="flex gap-2 flex-wrap">
@@ -576,7 +857,7 @@ function BillingSection({
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="text-slate-500 uppercase tracking-wider border-b border-ccdash-border">
+                <tr className="text-slate-500 uppercase tracking-wider border-b border-border-default">
                   <th className="text-left py-1.5 px-2">Time</th>
                   <th className="text-center py-1.5 px-2">Kind</th>
                   <th className="text-right py-1.5 px-2">Amount</th>
@@ -586,7 +867,7 @@ function BillingSection({
               </thead>
               <tbody>
                 {ledgerEntries.map((entry) => (
-                  <tr key={entry.id} className="border-b border-ccdash-border/30 hover:bg-ccdash-card-strong/30">
+                  <tr key={entry.id} className="border-b border-border-default/30 hover:bg-bg-card-raised/30">
                     <td className="py-1.5 px-2 text-slate-500 whitespace-nowrap">{timeAgo(entry.createdAt)}</td>
                     <td className="py-1.5 px-2 text-center">
                       <Badge tone={getUserDetailLedgerKindTone(entry.kind)}>{getUserDetailLedgerKindLabel(entry.kind)}</Badge>
@@ -602,7 +883,7 @@ function BillingSection({
                             usageRecordId: entry.usageRecordId,
                             returnState: requestDetailReturnState,
                           })}
-                          className="text-blue-400 hover:underline"
+                          className="text-indigo-400 hover:underline"
                         >
                           View
                         </Link>
@@ -626,18 +907,16 @@ function InventoryFilters({
   currentDevice,
   currentRelayKeySource,
   userId,
-  usersListReturnState,
 }: {
   devices: string[]
   currentDevice: string
   currentRelayKeySource: RelayKeySource | null
   userId: string
-  usersListReturnState: UsersListReturnState
 }) {
   const navigate = useNavigate()
 
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-4">
+    <section className="bg-bg-card border border-border-default rounded-xl p-4 shadow-xs">
       <div className="flex items-center gap-2 flex-wrap justify-between">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-slate-500">Request inventory filters</span>
@@ -646,7 +925,7 @@ function InventoryFilters({
         </div>
         {(currentDevice || currentRelayKeySource) ? (
           <button
-            onClick={() => navigate(buildUserDetailHref(userId, {}, undefined, usersListReturnState))}
+            onClick={() => navigate(buildUserDetailHref(userId, {}))}
             className="text-xs text-slate-400 hover:text-slate-200"
           >
             Clear filters
@@ -661,8 +940,8 @@ function InventoryFilters({
             onChange={(event) => navigate(buildUserDetailHref(userId, {
               device: event.target.value || null,
               relayKeySource: currentRelayKeySource,
-            }, undefined, usersListReturnState))}
-            className="w-full bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200"
+            }))}
+            className="w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200"
           >
             <option value="">All devices</option>
             {devices.map((device) => (
@@ -673,14 +952,14 @@ function InventoryFilters({
           </select>
         </label>
         <label className="space-y-1">
-          <span className="text-[11px] uppercase tracking-wider text-slate-500">Relay Key Source</span>
+          <span className="text-[11px] uppercase tracking-wider text-slate-500">API Key Source</span>
           <select
             value={currentRelayKeySource ?? ''}
             onChange={(event) => navigate(buildUserDetailHref(userId, {
               device: currentDevice || null,
               relayKeySource: normalizeUserDetailRelayKeySource(event.target.value || null),
-            }, undefined, usersListReturnState))}
-            className="w-full bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200"
+            }))}
+            className="w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200"
           >
             <option value="">All key sources</option>
             {userDetailRelayKeySourceOptions.map((option) => (
@@ -724,9 +1003,9 @@ function SessionsSection({
   }, [restoredExpandedSessionKey, restoredSessionKey])
 
   return (
-    <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
       <div className="flex items-center gap-2 mb-3">
-        <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400">Sessions ({sessions.length})</div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Sessions ({sessions.length})</div>
         {relayKeySourceFilter ? <Badge tone={getUserDetailRelayKeySourceTone(relayKeySourceFilter)}>{getUserDetailRelayKeySourceLabel(relayKeySourceFilter)}</Badge> : null}
       </div>
       {sessions.length === 0 ? (
@@ -737,11 +1016,11 @@ function SessionsSection({
             <div
               key={s.sessionKey}
               id={buildSessionAnchorId(s.sessionKey)}
-              className="bg-ccdash-card-strong rounded-lg text-xs"
+              className="bg-bg-card-raised rounded-lg text-xs"
             >
               <button
                 onClick={() => setExpanded(expanded === s.sessionKey ? null : s.sessionKey)}
-                className="w-full p-3 text-left hover:bg-ccdash-card-strong/80 rounded-lg transition-colors"
+                className="w-full p-3 text-left hover:bg-bg-card-raised/80 rounded-lg transition-colors"
               >
                 <div className="flex items-center justify-between mb-1">
                   <span className="font-mono text-slate-300">{truncateMiddle(s.sessionKey, 28)}</span>
@@ -753,7 +1032,7 @@ function SessionsSection({
                 <div className="flex gap-3 text-slate-400">
                   {s.clientDeviceId && <span>Device: <Badge tone="blue">{truncateMiddle(s.clientDeviceId, 12)}</Badge></span>}
                   {s.accountId && (
-                    <span>Account: <Link to={`/accounts/${encodeURIComponent(s.accountId)}`} className="text-blue-400 hover:underline" onClick={(e) => e.stopPropagation()}>{truncateMiddle(s.accountId, 12)}</Link></span>
+                    <span>Account: <Link to={`/accounts/${encodeURIComponent(s.accountId)}`} className="text-indigo-400 hover:underline" onClick={(e) => e.stopPropagation()}>{truncateMiddle(s.accountId, 12)}</Link></span>
                   )}
                   <span>{fmtNum(s.requestCount)} requests</span>
                 </div>
@@ -835,7 +1114,7 @@ function SessionRequestsPanel({
     <div className="px-3 pb-3 overflow-x-auto">
       <table className="w-full text-xs">
         <thead>
-          <tr className="text-slate-500 uppercase tracking-wider border-b border-ccdash-border">
+          <tr className="text-slate-500 uppercase tracking-wider border-b border-border-default">
             <th className="text-left py-1 px-2">Time</th>
             <th className="text-left py-1 px-2">Model</th>
             <th className="text-right py-1 px-2">Input</th>
@@ -853,7 +1132,7 @@ function SessionRequestsPanel({
                   key={r.usageRecordId ?? r.requestId}
                   id={buildSessionRequestAnchorId(sessionKey, r.requestId)}
                   className={cn(
-                    'border-b border-ccdash-border/30 transition-colors duration-700 hover:bg-ccdash-card/30',
+                    'border-b border-border-default/30 transition-colors duration-700 hover:bg-bg-card/30',
                     isRestored && 'bg-amber-500/10 animate-pulse',
                   )}
                 >
@@ -877,7 +1156,7 @@ function SessionRequestsPanel({
                           sessionKey,
                         },
                       })}
-                      className="text-blue-400 hover:underline"
+                      className="text-indigo-400 hover:underline"
                     >
                       View
                     </Link>
@@ -905,9 +1184,9 @@ function RequestsSection({
   requestDetailReturnState: UserDetailReturnState
 }) {
   return (
-    <section id="requests" className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
+    <section id="requests" className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
       <div className="flex items-center gap-2 mb-3">
-        <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400">Recent Requests ({fmtNum(total)})</div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Recent Requests ({fmtNum(total)})</div>
         {relayKeySourceFilter ? <Badge tone={getUserDetailRelayKeySourceTone(relayKeySourceFilter)}>{getUserDetailRelayKeySourceLabel(relayKeySourceFilter)}</Badge> : null}
       </div>
       {requests.length === 0 ? (
@@ -916,7 +1195,7 @@ function RequestsSection({
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-slate-500 uppercase tracking-wider border-b border-ccdash-border">
+              <tr className="text-slate-500 uppercase tracking-wider border-b border-border-default">
                 <th className="text-left py-1.5 px-2">Time</th>
                 <th className="text-left py-1.5 px-2">Model</th>
                 <th className="text-right py-1.5 px-2">Input</th>
@@ -928,7 +1207,7 @@ function RequestsSection({
             </thead>
             <tbody>
               {requests.map((r) => (
-                <tr key={r.usageRecordId ?? r.requestId} className="border-b border-ccdash-border/30 hover:bg-ccdash-card-strong/30">
+                <tr key={r.usageRecordId ?? r.requestId} className="border-b border-border-default/30 hover:bg-bg-card-raised/30">
                   <td className="py-1.5 px-2 text-slate-500 whitespace-nowrap">{timeAgo(r.createdAt)}</td>
                   <td className="py-1.5 px-2 text-slate-300">{r.model ?? '—'}</td>
                   <td className="py-1.5 px-2 text-right text-slate-300">{fmtTokens(r.inputTokens)}</td>
@@ -945,7 +1224,7 @@ function RequestsSection({
                         usageRecordId: r.usageRecordId,
                         returnState: requestDetailReturnState,
                       })}
-                      className="text-blue-400 hover:underline"
+                      className="text-indigo-400 hover:underline"
                     >
                       View
                     </Link>
@@ -986,7 +1265,7 @@ function DangerZone({ user: u }: { user: { id: string; name: string; isActive: b
   })
 
   return (
-    <section className="bg-ccdash-card border border-red-500/20 rounded-xl p-5">
+    <section className="bg-bg-card border border-red-500/20 rounded-xl p-5">
       <div className="text-xs font-semibold uppercase tracking-wider text-red-400 mb-3">Danger Zone</div>
       <div className="flex gap-2 flex-wrap">
         <button

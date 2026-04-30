@@ -17,6 +17,8 @@ import type {
   RelayKeySource,
   RelayUser,
   RelayUserBillingMode,
+  RelayUserCustomerTier,
+  RelayUserRiskStatus,
   RelayUserRoutingMode,
   SessionHandoff,
   SessionRoute,
@@ -32,12 +34,17 @@ CREATE TABLE IF NOT EXISTS relay_users (
   api_key     TEXT NOT NULL UNIQUE,
   name        TEXT NOT NULL,
   external_user_id TEXT,
+  org_id TEXT,
   account_id  TEXT,
   routing_mode TEXT,
   preferred_group TEXT,
   routing_group_id TEXT,
-  billing_mode TEXT NOT NULL DEFAULT 'postpaid',
+  billing_mode TEXT NOT NULL DEFAULT 'prepaid',
   billing_currency TEXT NOT NULL DEFAULT '${DEFAULT_BILLING_CURRENCY}',
+  customer_tier TEXT NOT NULL DEFAULT 'standard',
+  credit_limit_micros BIGINT NOT NULL DEFAULT 0,
+  sales_owner TEXT,
+  risk_status TEXT NOT NULL DEFAULT 'normal',
   balance_micros BIGINT NOT NULL DEFAULT 0,
   is_active   BOOLEAN NOT NULL DEFAULT true,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -70,8 +77,14 @@ ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS preferred_group TEXT;
 ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS routing_group_id TEXT;
 ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS billing_mode TEXT;
 ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS billing_currency TEXT;
+ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS customer_tier TEXT NOT NULL DEFAULT 'standard';
+ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS credit_limit_micros BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS sales_owner TEXT;
+ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS risk_status TEXT NOT NULL DEFAULT 'normal';
 ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS balance_micros BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS external_user_id TEXT;
+ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS org_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_relay_users_org_id ON relay_users (org_id);
 ALTER TABLE relay_users ALTER COLUMN api_key DROP NOT NULL;
 UPDATE relay_users SET api_key = NULL WHERE external_user_id IS NOT NULL AND api_key IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_relay_users_external_user_id
@@ -90,8 +103,17 @@ SET routing_mode = CASE
 END
 WHERE routing_mode IS NULL;
 UPDATE relay_users
-SET billing_mode = 'postpaid'
+SET billing_mode = 'prepaid'
 WHERE billing_mode IS NULL OR billing_mode NOT IN ('postpaid', 'prepaid');
+UPDATE relay_users
+SET customer_tier = 'standard'
+WHERE customer_tier IS NULL OR customer_tier NOT IN ('standard', 'plus', 'business', 'enterprise', 'internal');
+UPDATE relay_users
+SET risk_status = 'normal'
+WHERE risk_status IS NULL OR risk_status NOT IN ('normal', 'watch', 'restricted', 'blocked');
+UPDATE relay_users
+SET credit_limit_micros = 0
+WHERE credit_limit_micros IS NULL OR credit_limit_micros < 0;
 `
 
 const CREATE_SESSION_ROUTES_SQL = `
@@ -209,12 +231,17 @@ function rowToUser(row: Record<string, unknown>): RelayUser {
     apiKey: (row.api_key as string | null) ?? null,
     name: row.name as string,
     externalUserId: (row.external_user_id as string) ?? null,
+    orgId: (row.org_id as string) ?? null,
     accountId: (row.account_id as string) ?? null,
     routingMode,
     routingGroupId,
     preferredGroup: routingGroupId,
     billingMode: normalizeBillingMode(row.billing_mode as string | null),
     billingCurrency: normalizeStoredBillingCurrency(row.billing_currency),
+    customerTier: normalizeCustomerTier(row.customer_tier),
+    creditLimitMicros: normalizeCreditLimitMicros(row.credit_limit_micros),
+    salesOwner: (row.sales_owner as string | null) ?? null,
+    riskStatus: normalizeRiskStatus(row.risk_status),
     balanceMicros: String(row.balance_micros ?? '0'),
     isActive: row.is_active as boolean,
     createdAt: (row.created_at as Date).toISOString(),
@@ -303,6 +330,31 @@ function normalizeBillingMode(
   return billingMode === 'prepaid' ? 'prepaid' : 'postpaid'
 }
 
+function normalizeCustomerTier(value: unknown): RelayUserCustomerTier {
+  return value === 'plus' || value === 'business' || value === 'enterprise' || value === 'internal'
+    ? value
+    : 'standard'
+}
+
+function normalizeRiskStatus(value: unknown): RelayUserRiskStatus {
+  return value === 'watch' || value === 'restricted' || value === 'blocked'
+    ? value
+    : 'normal'
+}
+
+function normalizeCreditLimitMicros(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(Math.max(0, Math.trunc(value)))
+  }
+  if (typeof value === 'bigint') {
+    return String(value < 0n ? 0n : value)
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    return value.trim()
+  }
+  return '0'
+}
+
 function normalizeStoredBillingCurrency(value: unknown): BillingCurrency {
   return normalizeBillingCurrency(value, {
     field: 'billingCurrency',
@@ -370,9 +422,27 @@ export class UserStore {
     return rows.map(rowToUser)
   }
 
+  async updateUsersOrg(oldOrgId: unknown, newOrgId: unknown): Promise<number> {
+    const normalizedOldOrgId = normalizeRequiredText(oldOrgId, {
+      field: 'oldOrgId',
+      maxLength: MAX_SCOPE_FIELD_LENGTH,
+    })
+    const normalizedNewOrgId = normalizeOptionalText(newOrgId, {
+      field: 'newOrgId',
+      maxLength: MAX_SCOPE_FIELD_LENGTH,
+    })
+    const { rowCount } = await this.pool.query(
+      'UPDATE relay_users SET org_id = $1, updated_at = NOW() WHERE org_id = $2',
+      [normalizedNewOrgId, normalizedOldOrgId],
+    )
+    await this.reloadCache()
+    return rowCount ?? 0
+  }
+
   async createUser(
     name: unknown,
     billingCurrency: unknown = DEFAULT_BILLING_CURRENCY,
+    orgId?: unknown,
   ): Promise<RelayUser> {
     const normalizedName = normalizeRequiredText(name, {
       field: 'name',
@@ -382,13 +452,17 @@ export class UserStore {
       field: 'billingCurrency',
       fallback: DEFAULT_BILLING_CURRENCY,
     })
+    const normalizedOrgId = normalizeOptionalText(orgId, {
+      field: 'orgId',
+      maxLength: MAX_SCOPE_FIELD_LENGTH,
+    })
     const id = crypto.randomUUID()
     const apiKey = generateApiKey()
     const { rows } = await this.pool.query(
-      `INSERT INTO relay_users (id, api_key, name, routing_mode, billing_currency)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO relay_users (id, api_key, name, org_id, routing_mode, billing_mode, billing_currency)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [id, apiKey, normalizedName, 'auto', normalizedBillingCurrency],
+      [id, apiKey, normalizedName, normalizedOrgId, 'auto', 'prepaid', normalizedBillingCurrency],
     )
     const user = rowToUser(rows[0])
     if (user.apiKey) this.cache.set(user.apiKey, user)
@@ -405,10 +479,32 @@ export class UserStore {
     return rows.length ? rowToUser(rows[0]) : null
   }
 
+  async setExternalUserId(id: string, externalUserId: unknown): Promise<RelayUser | null> {
+    const normalizedExternalUserId = normalizeOptionalText(externalUserId, {
+      field: 'externalUserId',
+      maxLength: MAX_SCOPE_FIELD_LENGTH,
+    })
+    const { rows } = await this.pool.query(
+      'UPDATE relay_users SET external_user_id = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+      [normalizedExternalUserId, id],
+    )
+    if (!rows.length) return null
+    const user = rowToUser(rows[0])
+    for (const [key, cached] of this.cache) {
+      if (cached.id === id) {
+        this.cache.delete(key)
+        break
+      }
+    }
+    if (user.apiKey) this.cache.set(user.apiKey, user)
+    return user
+  }
+
   async findOrCreateByExternalId(input: {
     externalUserId: unknown
     name?: unknown
     billingCurrency?: unknown
+    orgId?: unknown
   }): Promise<{ user: RelayUser; created: boolean }> {
     const externalUserId = normalizeRequiredText(input.externalUserId, {
       field: 'externalUserId',
@@ -426,13 +522,17 @@ export class UserStore {
       input.billingCurrency ?? DEFAULT_BILLING_CURRENCY,
       { field: 'billingCurrency', fallback: DEFAULT_BILLING_CURRENCY },
     )
+    const normalizedOrgId = normalizeOptionalText(input.orgId, {
+      field: 'orgId',
+      maxLength: MAX_SCOPE_FIELD_LENGTH,
+    })
     const id = crypto.randomUUID()
     try {
       const { rows } = await this.pool.query(
-        `INSERT INTO relay_users (id, api_key, name, external_user_id, routing_mode, billing_currency)
-         VALUES ($1, NULL, $2, $3, $4, $5)
+        `INSERT INTO relay_users (id, api_key, name, external_user_id, org_id, routing_mode, billing_mode, billing_currency)
+         VALUES ($1, NULL, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [id, normalizedName, externalUserId, 'auto', normalizedBillingCurrency],
+        [id, normalizedName, externalUserId, normalizedOrgId, 'auto', 'prepaid', normalizedBillingCurrency],
       )
       const user = rowToUser(rows[0])
       return { user, created: true }
@@ -462,12 +562,17 @@ export class UserStore {
     id: string,
     updates: {
       name?: unknown
+      orgId?: unknown
       accountId?: unknown
       routingMode?: RelayUserRoutingMode
       routingGroupId?: unknown
       preferredGroup?: unknown
       billingMode?: RelayUserBillingMode
       billingCurrency?: unknown
+      customerTier?: unknown
+      creditLimitMicros?: unknown
+      salesOwner?: unknown
+      riskStatus?: unknown
       isActive?: boolean
     },
   ): Promise<RelayUser | null> {
@@ -489,6 +594,15 @@ export class UserStore {
       values.push(
         normalizeOptionalText(updates.accountId, {
           field: 'accountId',
+          maxLength: MAX_SCOPE_FIELD_LENGTH,
+        }),
+      )
+    }
+    if (updates.orgId !== undefined) {
+      sets.push(`org_id = $${idx++}`)
+      values.push(
+        normalizeOptionalText(updates.orgId, {
+          field: 'orgId',
           maxLength: MAX_SCOPE_FIELD_LENGTH,
         }),
       )
@@ -523,6 +637,27 @@ export class UserStore {
           fallback: DEFAULT_BILLING_CURRENCY,
         }),
       )
+    }
+    if (updates.customerTier !== undefined) {
+      sets.push(`customer_tier = $${idx++}`)
+      values.push(normalizeCustomerTier(updates.customerTier))
+    }
+    if (updates.creditLimitMicros !== undefined) {
+      sets.push(`credit_limit_micros = $${idx++}`)
+      values.push(normalizeCreditLimitMicros(updates.creditLimitMicros))
+    }
+    if (updates.salesOwner !== undefined) {
+      sets.push(`sales_owner = $${idx++}`)
+      values.push(
+        normalizeOptionalText(updates.salesOwner, {
+          field: 'salesOwner',
+          maxLength: MAX_SCOPE_FIELD_LENGTH,
+        }),
+      )
+    }
+    if (updates.riskStatus !== undefined) {
+      sets.push(`risk_status = $${idx++}`)
+      values.push(normalizeRiskStatus(updates.riskStatus))
     }
     if (updates.isActive !== undefined) {
       sets.push(`is_active = $${idx++}`)
@@ -603,6 +738,17 @@ export class UserStore {
 
   async clearSessionRoutes(): Promise<void> {
     await this.pool.query('DELETE FROM session_routes')
+  }
+
+  async renameRoutingGroup(oldGroupId: string, newGroupId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE relay_users
+       SET routing_group_id = CASE WHEN routing_group_id = $1 THEN $2 ELSE routing_group_id END,
+           preferred_group = CASE WHEN preferred_group = $1 THEN $2 ELSE preferred_group END,
+           updated_at = NOW()
+       WHERE routing_group_id = $1 OR preferred_group = $1`,
+      [oldGroupId, newGroupId],
+    )
   }
 
   async listSessionHandoffs(limit = 200): Promise<SessionHandoff[]> {

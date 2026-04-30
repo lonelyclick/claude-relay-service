@@ -31,6 +31,26 @@ function normalizeClaudeCompatibleTierMap(input: unknown): StoredAccount['modelT
   return next.opus || next.sonnet || next.haiku ? next : null
 }
 
+const MODEL_MAP_MAX_ENTRIES = 64
+
+function normalizeOpenAICompatibleModelMap(input: unknown): StoredAccount['modelMap'] {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  const src = input as Record<string, unknown>
+  const next: Record<string, string> = {}
+  let count = 0
+  for (const rawKey of Object.keys(src)) {
+    if (count >= MODEL_MAP_MAX_ENTRIES) break
+    const key = typeof rawKey === 'string' ? rawKey.trim() : ''
+    if (!key) continue
+    const rawValue = src[rawKey]
+    const value = typeof rawValue === 'string' ? rawValue.trim() : ''
+    if (!value) continue
+    next[key] = value
+    count += 1
+  }
+  return count > 0 ? next : null
+}
+
 function deriveAccountLocalId(input: {
   accountUuid: string | null
   emailAddress: string | null
@@ -179,6 +199,7 @@ export function normalizeStoredAccount(account: StoredAccount): StoredAccount {
         ? account.modelName.trim()
         : null,
     modelTierMap: normalizeClaudeCompatibleTierMap(account.modelTierMap),
+    modelMap: normalizeOpenAICompatibleModelMap(account.modelMap),
     loginPassword:
       typeof account.loginPassword === 'string' && account.loginPassword.trim()
         ? account.loginPassword.trim()
@@ -254,7 +275,13 @@ export class PgTokenStore implements ITokenStore {
   private tablesEnsured = false
 
   constructor(connectionString: string) {
-    this.pool = new pg.Pool({ connectionString, max: 5 })
+    this.pool = new pg.Pool({
+      connectionString,
+      max: 5,
+      connectionTimeoutMillis: 10_000,
+      idleTimeoutMillis: 30_000,
+      statement_timeout: 30_000,
+    })
   }
 
   async getData(): Promise<TokenStoreData> {
@@ -277,19 +304,23 @@ export class PgTokenStore implements ITokenStore {
     try {
       await this.ensureTablesWithClient(client)
       const result = await client.query(
-        'SELECT id, name, description, is_active, created_at, updated_at FROM routing_groups',
+        'SELECT id, name, type, description, description_zh, is_active, created_at, updated_at FROM routing_groups',
       )
       return result.rows.map((row: {
         id: string
         name: string
+        type: RoutingGroup['type']
         description: string | null
+        description_zh: string | null
         is_active: boolean
         created_at: Date
         updated_at: Date
       }) => ({
         id: row.id,
         name: row.name,
+        type: row.type,
         description: row.description,
+        descriptionZh: row.description_zh,
         isActive: row.is_active,
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
@@ -434,7 +465,7 @@ export class PgTokenStore implements ITokenStore {
       'SELECT id, label, url, local_url, created_at FROM proxies',
     )
     const routingGroupsResult = await client.query(
-      'SELECT id, name, description, is_active, created_at, updated_at FROM routing_groups',
+      'SELECT id, name, type, description, description_zh, is_active, created_at, updated_at FROM routing_groups',
     )
 
     const accounts: StoredAccount[] = accountsResult.rows.map(
@@ -465,14 +496,18 @@ export class PgTokenStore implements ITokenStore {
       (row: {
         id: string
         name: string
+        type: RoutingGroup['type']
         description: string | null
+        description_zh: string | null
         is_active: boolean
         created_at: Date
         updated_at: Date
       }) => ({
         id: row.id,
         name: row.name,
+        type: row.type,
         description: row.description,
+        descriptionZh: row.description_zh,
         isActive: row.is_active,
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
@@ -544,12 +579,29 @@ export class PgTokenStore implements ITokenStore {
       CREATE TABLE IF NOT EXISTS routing_groups (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'anthropic',
         description TEXT,
+        description_zh TEXT,
         is_active BOOLEAN NOT NULL DEFAULT true,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `)
+    await client.query(
+      "ALTER TABLE routing_groups ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'anthropic'",
+    )
+    await client.query(
+      'ALTER TABLE routing_groups ADD COLUMN IF NOT EXISTS description_zh TEXT',
+    )
+    await client.query(
+      `UPDATE routing_groups
+       SET type = CASE type
+         WHEN 'claude' THEN 'anthropic'
+         WHEN 'gemini' THEN 'google'
+         ELSE type
+       END
+       WHERE type IN ('claude', 'gemini')`,
+    )
     await client.query(
       'ALTER TABLE accounts ADD COLUMN IF NOT EXISTS rate_limited_until BIGINT',
     )
@@ -689,18 +741,22 @@ export class PgTokenStore implements ITokenStore {
 
     for (const group of newRoutingGroups) {
       await client.query(
-        `INSERT INTO routing_groups (id, name, description, is_active, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO routing_groups (id, name, type, description, description_zh, is_active, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (id) DO UPDATE SET
            name = $2,
-           description = $3,
-           is_active = $4,
-           created_at = $5,
-           updated_at = $6`,
+           type = $3,
+           description = $4,
+           description_zh = $5,
+           is_active = $6,
+           created_at = $7,
+           updated_at = $8`,
         [
           group.id,
           group.name,
+          group.type,
           group.description,
+          group.descriptionZh,
           group.isActive,
           group.createdAt,
           group.updatedAt,

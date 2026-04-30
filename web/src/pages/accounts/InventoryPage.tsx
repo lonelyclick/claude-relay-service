@@ -164,7 +164,7 @@ export function InventoryPage() {
           placeholder="Search accounts..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-blue-500/50 w-56"
+          className="bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-accent w-56"
         />
         <Select value={provider} onChange={setProvider} options={[['all', 'All Providers'], ...providers.map((p) => [p, p])]} />
         <Select value={scheduler} onChange={setScheduler} options={[['all', 'All States'], ...schedulerStates.map((s) => [s!, s!])]} />
@@ -172,7 +172,7 @@ export function InventoryPage() {
         <Select value={health} onChange={(v) => setHealth(v as HealthLevel)} options={[['all', 'All Health'], ['critical', 'Critical'], ['warning', 'Warning'], ['healthy', 'Healthy']]} />
 
         {viewMode === 'table' && (
-          <label className="inline-flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none px-2 py-1.5 rounded-lg border border-ccdash-border hover:border-ccdash-border-hover">
+          <label className="inline-flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none px-2 py-1.5 rounded-lg border border-border-default hover:border-border-hover transition-all duration-150">
             <input
               type="checkbox"
               checked={stressedOnly}
@@ -295,7 +295,7 @@ function KpiTile({
   sparkline?: React.ReactNode
 }) {
   return (
-    <div className="bg-ccdash-card border border-ccdash-border rounded-xl p-4 relative overflow-hidden">
+    <div className="bg-bg-card border border-border-default rounded-xl p-4 shadow-xs relative overflow-hidden">
       {accent && <div className={cn('absolute left-0 top-0 bottom-0 w-1', accent)} />}
       <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-slate-400">
         <span aria-hidden>{icon}</span>
@@ -313,7 +313,7 @@ function KpiTile({
 function FleetBar({ pct, severity }: { pct: number; severity: ReturnType<typeof getUtilSeverity> }) {
   const cls = getSeverityClasses(severity)
   return (
-    <div className="h-1.5 bg-slate-700/60 rounded-full overflow-hidden">
+    <div className="h-1.5 bg-bg-card-raised/60 rounded-full overflow-hidden">
       <div className={cn('h-full rounded-full transition-all', cls.bar)} style={{ width: `${Math.min(pct, 100)}%` }} />
     </div>
   )
@@ -325,7 +325,7 @@ function shortLabel(a: Account): string {
 
 function ViewToggle({ value, onChange }: { value: ViewMode; onChange: (v: ViewMode) => void }) {
   return (
-    <div className="inline-flex border border-ccdash-border rounded-lg overflow-hidden bg-ccdash-input">
+    <div className="inline-flex border border-border-default rounded-lg overflow-hidden bg-bg-input">
       {(['table', 'cards'] as const).map((mode) => (
         <button
           key={mode}
@@ -333,7 +333,7 @@ function ViewToggle({ value, onChange }: { value: ViewMode; onChange: (v: ViewMo
           className={cn(
             'px-3 py-1.5 text-xs font-medium transition-colors',
             value === mode
-              ? 'bg-blue-600/30 text-blue-200'
+              ? 'bg-indigo-600/30 text-indigo-200'
               : 'text-slate-400 hover:text-slate-200',
           )}
         >
@@ -357,7 +357,7 @@ function Select({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500/50"
+      className="bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-accent"
     >
       {options.map(([val, label]) => (
         <option key={val} value={val}>

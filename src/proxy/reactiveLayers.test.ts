@@ -73,6 +73,7 @@ function buildAccount(input: Partial<StoredAccount> & { id: string }): StoredAcc
     apiBaseUrl: null,
     modelName: null,
     modelTierMap: null,
+    modelMap: null,
     loginPassword: null,
   }
 }

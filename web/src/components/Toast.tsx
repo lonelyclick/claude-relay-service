@@ -29,14 +29,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ success, error }}>
       {children}
-      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+      <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none">
         {toasts.map((t) => (
           <div
             key={t.id}
             className={cn(
-              'px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg animate-[slideIn_0.2s_ease]',
-              t.type === 'success' && 'bg-green-500/15 text-green-400 border border-green-500/30',
-              t.type === 'error' && 'bg-red-500/15 text-red-400 border border-red-500/30',
+              'px-4 py-2.5 rounded-lg text-[13px] font-medium shadow-dropdown backdrop-blur-md pointer-events-auto',
+              'animate-[slideIn_0.25s_ease]',
+              t.type === 'success' && 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30',
+              t.type === 'error' && 'bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/30',
             )}
           >
             {t.message}

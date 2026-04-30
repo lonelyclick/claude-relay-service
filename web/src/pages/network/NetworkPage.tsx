@@ -91,18 +91,18 @@ export function NetworkPage() {
           placeholder="Search proxies..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-64 focus:outline-none focus:border-blue-500/50"
+          className="bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-64 focus:outline-none focus:border-accent"
         />
         <button
           onClick={() => qc.invalidateQueries({ queryKey: ['proxies'] })}
-          className="text-xs text-blue-400 hover:text-blue-300"
+          className="text-xs text-indigo-400 hover:text-indigo-300"
         >
           Refresh
         </button>
         <button
           onClick={probeAll}
           disabled={probing.size > 0}
-          className="text-xs text-cyan-400 hover:text-cyan-300 disabled:opacity-50"
+          className="text-xs text-indigo-300 hover:text-indigo-300 disabled:opacity-50"
         >
           Probe All ({filtered.length})
         </button>
@@ -134,10 +134,10 @@ function ProxyCard({ proxy: p, diag, isProbing, onProbe }: {
   const statusLabel = isProbing ? 'Probing...' : diag?.status ?? 'Idle'
 
   return (
-    <div className="bg-ccdash-card border border-ccdash-border rounded-xl p-4">
+    <div className="bg-bg-card border border-border-default rounded-xl p-4 shadow-xs">
       <div className="flex items-start justify-between mb-3">
         <div>
-          <Link to={`/network/${encodeURIComponent(p.id)}`} className="text-sm font-medium text-slate-100 hover:text-blue-400">
+          <Link to={`/network/${encodeURIComponent(p.id)}`} className="text-sm font-medium text-slate-100 hover:text-indigo-400">
             {p.label}
           </Link>
           <div className="text-[10px] text-slate-500">{p.accounts?.length ?? 0} accounts linked</div>
@@ -162,7 +162,7 @@ function ProxyCard({ proxy: p, diag, isProbing, onProbe }: {
         {p.localUrl && (
           <button onClick={() => { navigator.clipboard.writeText(p.localUrl!); toast.success('Copied local URL') }} className="text-[10px] text-slate-400 hover:text-slate-200">Copy Local</button>
         )}
-        <button onClick={onProbe} disabled={isProbing} className="text-[10px] text-blue-400 hover:text-blue-300 disabled:opacity-50">
+        <button onClick={onProbe} disabled={isProbing} className="text-[10px] text-indigo-400 hover:text-indigo-300 disabled:opacity-50">
           {isProbing ? 'Probing...' : 'Probe'}
         </button>
         <button onClick={() => setExpanded(!expanded)} className="text-[10px] text-slate-500 hover:text-slate-300 ml-auto">
@@ -171,7 +171,7 @@ function ProxyCard({ proxy: p, diag, isProbing, onProbe }: {
       </div>
 
       {expanded && (
-        <div className="mt-3 pt-3 border-t border-ccdash-border/50 space-y-2">
+        <div className="mt-3 pt-3 border-t border-border-default/50 space-y-2">
           <div className="text-[10px] text-slate-400 break-all">
             <div>Full Remote: <span className="font-mono text-slate-300">{p.url}</span></div>
             <div>Full Local: <span className="font-mono text-slate-300">{p.localUrl ?? '—'}</span></div>
@@ -181,7 +181,7 @@ function ProxyCard({ proxy: p, diag, isProbing, onProbe }: {
               <div className="text-[10px] text-slate-500 mb-1">Linked Accounts:</div>
               <div className="flex flex-wrap gap-1">
                 {p.accounts.map((a) => (
-                  <Link key={a.id} to={`/accounts/${encodeURIComponent(a.id)}`} className="text-[10px] text-blue-400 hover:underline">
+                  <Link key={a.id} to={`/accounts/${encodeURIComponent(a.id)}`} className="text-[10px] text-indigo-400 hover:underline">
                     {a.label || a.emailAddress}
                   </Link>
                 ))}

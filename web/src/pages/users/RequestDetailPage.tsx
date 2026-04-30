@@ -8,7 +8,7 @@ import { buildUserDetailReturnHref, readUserDetailReturnState } from './userDeta
 
 function relayKeySourceLabel(source: 'relay_api_keys' | 'relay_users_legacy' | null | undefined): string {
   if (source === 'relay_api_keys') return 'relay_api_keys'
-  if (source === 'relay_users_legacy') return 'legacy fallback'
+  if (source === 'relay_users_legacy') return 'legacy key'
   return 'unknown'
 }
 
@@ -50,7 +50,7 @@ export function RequestDetailPage() {
         &larr; Back to User
       </button>
 
-      <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
+      <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
         <div className="flex items-start justify-between mb-3">
           <div>
             <h2 className="text-lg font-bold text-slate-100">Request Detail</h2>
@@ -79,37 +79,37 @@ export function RequestDetailPage() {
       </section>
 
       {r.requestHeaders != null && (
-        <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-          <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-2">Request Headers</div>
-          <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words max-h-64 overflow-y-auto bg-ccdash-input rounded-lg p-3">{JSON.stringify(r.requestHeaders, null, 2)}</pre>
+        <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+          <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-2">Request Headers</div>
+          <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words max-h-64 overflow-y-auto bg-bg-input rounded-lg p-3">{JSON.stringify(r.requestHeaders, null, 2)}</pre>
         </section>
       )}
 
       {r.requestBodyPreview && (
-        <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-          <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-2">Request Body Preview</div>
-          <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words max-h-96 overflow-y-auto bg-ccdash-input rounded-lg p-3">{r.requestBodyPreview}</pre>
+        <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+          <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-2">Request Body Preview</div>
+          <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words max-h-96 overflow-y-auto bg-bg-input rounded-lg p-3">{r.requestBodyPreview}</pre>
         </section>
       )}
 
       {r.responseHeaders != null && (
-        <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-          <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-2">Response Headers</div>
-          <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words max-h-64 overflow-y-auto bg-ccdash-input rounded-lg p-3">{JSON.stringify(r.responseHeaders, null, 2)}</pre>
+        <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+          <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-2">Response Headers</div>
+          <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words max-h-64 overflow-y-auto bg-bg-input rounded-lg p-3">{JSON.stringify(r.responseHeaders, null, 2)}</pre>
         </section>
       )}
 
       {r.responseBodyPreview && (
-        <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-          <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-2">Response Body Preview</div>
-          <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words max-h-96 overflow-y-auto bg-ccdash-input rounded-lg p-3">{r.responseBodyPreview}</pre>
+        <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+          <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-2">Response Body Preview</div>
+          <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words max-h-96 overflow-y-auto bg-bg-input rounded-lg p-3">{r.responseBodyPreview}</pre>
         </section>
       )}
 
       {r.upstreamRequestHeaders != null && (
-        <section className="bg-ccdash-card border border-ccdash-border rounded-xl p-5">
-          <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-2">Upstream Request Headers</div>
-          <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words max-h-64 overflow-y-auto bg-ccdash-input rounded-lg p-3">{JSON.stringify(r.upstreamRequestHeaders, null, 2)}</pre>
+        <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+          <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-2">Upstream Request Headers</div>
+          <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words max-h-64 overflow-y-auto bg-bg-input rounded-lg p-3">{JSON.stringify(r.upstreamRequestHeaders, null, 2)}</pre>
         </section>
       )}
     </div>

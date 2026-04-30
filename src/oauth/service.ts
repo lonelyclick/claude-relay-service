@@ -23,6 +23,7 @@ import type {
 import { AccountScheduler } from '../scheduler/accountScheduler.js'
 import { FingerprintCache } from '../scheduler/fingerprintCache.js'
 import type { UserStore } from '../usage/userStore.js'
+import { InputValidationError } from '../security/inputValidation.js'
 import {
   buildAuthorizeUrl,
   generateCodeChallenge,
@@ -82,6 +83,27 @@ function normalizeClaudeCompatibleTierMap(
     haiku: trimToNull(input.haiku ?? null),
   }
   return next.opus || next.sonnet || next.haiku ? next : null
+}
+
+const OPENAI_COMPATIBLE_MODEL_MAP_MAX_ENTRIES = 64
+
+function normalizeOpenAICompatibleModelMapInput(
+  input: Record<string, string> | null | undefined,
+): Record<string, string> | null {
+  if (!input || typeof input !== 'object') return null
+  const next: Record<string, string> = {}
+  let count = 0
+  for (const rawKey of Object.keys(input)) {
+    if (count >= OPENAI_COMPATIBLE_MODEL_MAP_MAX_ENTRIES) break
+    const key = typeof rawKey === 'string' ? rawKey.trim() : ''
+    if (!key) continue
+    const rawValue = input[rawKey]
+    const value = typeof rawValue === 'string' ? rawValue.trim() : ''
+    if (!value) continue
+    next[key] = value
+    count += 1
+  }
+  return count > 0 ? next : null
 }
 
 function normalizeMaxSessions(value: number | null): number | null {
@@ -148,9 +170,50 @@ function sortRoutingGroups(groups: RoutingGroup[]): RoutingGroup[] {
   return [...groups].sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
 }
 
+function normalizeRoutingGroupType(value: string | null | undefined): RoutingGroup['type'] {
+  const normalized = trimToNull(value)?.toLowerCase()
+  if (normalized === 'openai' || normalized === 'google' || normalized === 'anthropic') {
+    return normalized
+  }
+  return 'anthropic'
+}
+
+function routingGroupTypeForProvider(provider: AccountProvider): RoutingGroup['type'] {
+  if (provider === 'openai-codex' || provider === 'openai-compatible') {
+    return 'openai'
+  }
+  if (provider === 'google-gemini-oauth') {
+    return 'google'
+  }
+  return 'anthropic'
+}
+
+function requireRoutingGroupForProvider(
+  routingGroups: RoutingGroup[],
+  routingGroupId: string | null,
+  provider: AccountProvider,
+): RoutingGroup {
+  if (!routingGroupId) {
+    throw new InputValidationError('routingGroupId is required')
+  }
+  const group = routingGroups.find((item) => item.id === routingGroupId) ?? null
+  if (!group) {
+    throw new InputValidationError(`Routing group not found: ${routingGroupId}`)
+  }
+  const expectedType = routingGroupTypeForProvider(provider)
+  if (group.type !== expectedType) {
+    throw new InputValidationError(`Routing group ${routingGroupId} type must be ${expectedType} for provider ${provider}`)
+  }
+  if (!group.isActive) {
+    throw new InputValidationError(`Routing group is disabled: ${routingGroupId}`)
+  }
+  return group
+}
+
 function ensureRoutingGroupStub(
   routingGroups: RoutingGroup[],
   routingGroupId: string | null,
+  provider: AccountProvider,
   nowIso: string,
 ): RoutingGroup[] {
   if (!routingGroupId || routingGroups.some((group) => group.id === routingGroupId)) {
@@ -159,7 +222,9 @@ function ensureRoutingGroupStub(
   return sortRoutingGroups(routingGroups.concat({
     id: routingGroupId,
     name: routingGroupId,
+    type: routingGroupTypeForProvider(provider),
     description: null,
+    descriptionZh: null,
     isActive: true,
     createdAt: nowIso,
     updatedAt: nowIso,
@@ -697,7 +762,9 @@ export class OAuthService {
       const created: RoutingGroup = {
         id: normalizedRoutingGroupId,
         name: normalizedRoutingGroupId,
+        type: 'anthropic',
         description: null,
+        descriptionZh: null,
         isActive: true,
         createdAt: nowIso,
         updatedAt: nowIso,
@@ -715,7 +782,9 @@ export class OAuthService {
   async createRoutingGroup(input: {
     id: string
     name?: string | null
+    type?: string | null
     description?: string | null
+    descriptionZh?: string | null
     isActive?: boolean
   }): Promise<RoutingGroup> {
     const routingGroupId = trimToNull(input.id)
@@ -731,7 +800,9 @@ export class OAuthService {
       const created: RoutingGroup = {
         id: routingGroupId,
         name: trimToNull(input.name) ?? routingGroupId,
+        type: normalizeRoutingGroupType(input.type),
         description: trimToNull(input.description),
+        descriptionZh: trimToNull(input.descriptionZh),
         isActive: input.isActive ?? true,
         createdAt: nowIso,
         updatedAt: nowIso,
@@ -750,7 +821,9 @@ export class OAuthService {
     id: string,
     updates: {
       name?: string | null
+      type?: string | null
       description?: string | null
+      descriptionZh?: string | null
       isActive?: boolean
     },
   ): Promise<RoutingGroup | null> {
@@ -767,10 +840,15 @@ export class OAuthService {
       const updated: RoutingGroup = {
         ...existing,
         name: updates.name !== undefined ? trimToNull(updates.name) ?? routingGroupId : existing.name,
+        type: updates.type !== undefined ? normalizeRoutingGroupType(updates.type) : existing.type,
         description:
           updates.description !== undefined
             ? trimToNull(updates.description)
             : existing.description,
+        descriptionZh:
+          updates.descriptionZh !== undefined
+            ? trimToNull(updates.descriptionZh)
+            : existing.descriptionZh,
         isActive: updates.isActive ?? existing.isActive,
         updatedAt: new Date().toISOString(),
       }
@@ -782,6 +860,48 @@ export class OAuthService {
               group.id === routingGroupId ? updated : group,
             ),
           ),
+        },
+        result: updated,
+      }
+    })
+  }
+
+  async renameRoutingGroup(id: string, newId: string): Promise<RoutingGroup | null> {
+    const oldGroupId = trimToNull(id)
+    const nextGroupId = trimToNull(newId)
+    if (!oldGroupId || !nextGroupId) {
+      throw new InputValidationError('group id is required')
+    }
+    if (oldGroupId === nextGroupId) {
+      return this.getRoutingGroup(oldGroupId)
+    }
+    return this.store.updateData((current) => {
+      const data = this.pruneExpiredStickySessions(current)
+      const existing = (data.routingGroups ?? []).find((group) => group.id === oldGroupId) ?? null
+      if (!existing) {
+        return { data, result: null }
+      }
+      if ((data.routingGroups ?? []).some((group) => group.id === nextGroupId)) {
+        throw new InputValidationError(`Routing group already exists: ${nextGroupId}`)
+      }
+      const updated: RoutingGroup = {
+        ...existing,
+        id: nextGroupId,
+        name: existing.name === oldGroupId ? nextGroupId : existing.name,
+        updatedAt: new Date().toISOString(),
+      }
+      const accounts = data.accounts.map((account) => {
+        const routingGroupId = account.routingGroupId === oldGroupId ? nextGroupId : account.routingGroupId
+        const group = account.group === oldGroupId ? nextGroupId : account.group
+        return routingGroupId === account.routingGroupId && group === account.group
+          ? account
+          : { ...account, routingGroupId, group, updatedAt: updated.updatedAt }
+      })
+      return {
+        data: {
+          ...data,
+          accounts,
+          routingGroups: sortRoutingGroups((data.routingGroups ?? []).map((group) => group.id === oldGroupId ? updated : group)),
         },
         result: updated,
       }
@@ -874,6 +994,7 @@ export class OAuthService {
       apiBaseUrl: null,
       modelName: null,
       modelTierMap: null,
+      modelMap: null,
       loginPassword: input.password?.trim() || null,
     }
     await this.store.updateData((current) => {
@@ -883,7 +1004,8 @@ export class OAuthService {
         item.emailAddress === account.emailAddress,
       )
       const data = this.pruneExpiredStickySessions(current)
-      const routingGroups = ensureRoutingGroupStub(data.routingGroups ?? [], routingGroupId, now)
+      const routingGroups = ensureRoutingGroupStub(data.routingGroups ?? [], routingGroupId, CLAUDE_OFFICIAL_PROVIDER.id, now)
+      requireRoutingGroupForProvider(routingGroups, routingGroupId, CLAUDE_OFFICIAL_PROVIDER.id)
       const accounts = [...current.accounts]
       if (existing >= 0) {
         accounts[existing] = {
@@ -901,8 +1023,8 @@ export class OAuthService {
       return {
         data: {
           ...data,
-          accounts,
           routingGroups,
+          accounts,
         },
         result: account,
       }
@@ -951,6 +1073,7 @@ export class OAuthService {
     apiKey: string
     apiBaseUrl: string
     modelName?: string | null
+    modelMap?: Record<string, string> | null
     label?: string
     proxyUrl?: string | null
     routingGroupId?: string | null
@@ -959,6 +1082,7 @@ export class OAuthService {
     const apiKey = input.apiKey.trim()
     const apiBaseUrl = normalizeApiBaseUrl(input.apiBaseUrl)
     const modelName = input.modelName?.trim() || null
+    const modelMap = normalizeOpenAICompatibleModelMapInput(input.modelMap)
     const routingGroupId = resolveRoutingGroupId(input.routingGroupId, input.group)
 
     if (!apiKey) {
@@ -1025,17 +1149,19 @@ export class OAuthService {
       apiBaseUrl,
       modelName,
       modelTierMap: null,
+      modelMap,
       loginPassword: null,
     }
 
     return this.store.updateData((current) => {
       const data = this.pruneExpiredStickySessions(current)
-      const routingGroups = ensureRoutingGroupStub(data.routingGroups ?? [], routingGroupId, now)
+      const routingGroups = ensureRoutingGroupStub(data.routingGroups ?? [], routingGroupId, OPENAI_COMPATIBLE_PROVIDER.id, now)
+      requireRoutingGroupForProvider(routingGroups, routingGroupId, OPENAI_COMPATIBLE_PROVIDER.id)
       return {
         data: {
           ...data,
-          accounts: [account, ...data.accounts],
           routingGroups,
+          accounts: [account, ...data.accounts],
         },
         result: account,
       }
@@ -1125,17 +1251,19 @@ export class OAuthService {
       apiBaseUrl,
       modelName,
       modelTierMap,
+      modelMap: null,
       loginPassword: null,
     }
 
     return this.store.updateData((current) => {
       const data = this.pruneExpiredStickySessions(current)
-      const routingGroups = ensureRoutingGroupStub(data.routingGroups ?? [], routingGroupId, now)
+      const routingGroups = ensureRoutingGroupStub(data.routingGroups ?? [], routingGroupId, CLAUDE_COMPATIBLE_PROVIDER.id, now)
+      requireRoutingGroupForProvider(routingGroups, routingGroupId, CLAUDE_COMPATIBLE_PROVIDER.id)
       return {
         data: {
           ...data,
-          accounts: [account, ...data.accounts],
           routingGroups,
+          accounts: [account, ...data.accounts],
         },
         result: account,
       }
@@ -1530,6 +1658,7 @@ export class OAuthService {
       apiBaseUrl?: string | null
       modelName?: string | null
       modelTierMap?: Partial<ClaudeCompatibleTierMap> | ClaudeCompatibleTierMap | null
+      modelMap?: Record<string, string> | null
     },
   ): Promise<StoredAccount> {
     const enabledTransition = settings.schedulerState === 'enabled'
@@ -1557,6 +1686,8 @@ export class OAuthService {
             ? resolveRoutingGroupId(settings.group)
             : undefined
       if (nextRoutingGroupId !== undefined) {
+        data.routingGroups = ensureRoutingGroupStub(data.routingGroups ?? [], nextRoutingGroupId, account.provider, nowIso)
+        requireRoutingGroupForProvider(data.routingGroups, nextRoutingGroupId, account.provider)
         updated.routingGroupId = nextRoutingGroupId
         updated.group = nextRoutingGroupId
       }
@@ -1595,8 +1726,13 @@ export class OAuthService {
       if (settings.modelTierMap !== undefined) {
         updated.modelTierMap = normalizeClaudeCompatibleTierMap(settings.modelTierMap)
       }
+      if (settings.modelMap !== undefined) {
+        updated.modelMap = normalizeOpenAICompatibleModelMapInput(settings.modelMap)
+      }
 
-      const routingGroups = ensureRoutingGroupStub(data.routingGroups ?? [], updated.routingGroupId, nowIso)
+      if (updated.routingGroupId) {
+        requireRoutingGroupForProvider(data.routingGroups ?? [], updated.routingGroupId, updated.provider)
+      }
       if (account.bodyTemplatePath && account.bodyTemplatePath !== updated.bodyTemplatePath) {
         this.fingerprintCache.invalidate(account.bodyTemplatePath)
       }
@@ -1613,7 +1749,6 @@ export class OAuthService {
         data: {
           ...data,
           accounts: data.accounts.map((a) => (a.id === accountId ? updated : a)),
-          routingGroups,
         },
         result: updated,
       }
@@ -2238,19 +2373,25 @@ export class OAuthService {
         apiBaseUrl: existing?.apiBaseUrl ?? null,
         modelName: existing?.modelName ?? null,
         modelTierMap: existing?.modelTierMap ?? null,
+        modelMap: existing?.modelMap ?? null,
         loginPassword: existing?.loginPassword ?? null,
       }
 
-      const routingGroups = ensureRoutingGroupStub(data.routingGroups ?? [], routingGroupId, nowIso)
+      const routingGroups = routingGroupId
+        ? ensureRoutingGroupStub(data.routingGroups ?? [], routingGroupId, CLAUDE_OFFICIAL_PROVIDER.id, nowIso)
+        : (data.routingGroups ?? [])
+      if (routingGroupId) {
+        requireRoutingGroupForProvider(routingGroups, routingGroupId, CLAUDE_OFFICIAL_PROVIDER.id)
+      }
       return {
         data: {
           ...data,
+          routingGroups,
           accounts: sortAccountsForDisplay(
             data.accounts
               .filter((account) => account.id !== stored.id)
               .concat(stored),
           ),
-          routingGroups,
         },
         result: stored,
       }
@@ -2364,19 +2505,25 @@ export class OAuthService {
           existing?.modelName ??
           appConfig.openAICodexModel,
         modelTierMap: existing?.modelTierMap ?? null,
+        modelMap: existing?.modelMap ?? null,
         loginPassword: existing?.loginPassword ?? null,
       }
 
-      const routingGroups = ensureRoutingGroupStub(data.routingGroups ?? [], routingGroupId, nowIso)
+      const routingGroups = routingGroupId
+        ? ensureRoutingGroupStub(data.routingGroups ?? [], routingGroupId, OPENAI_CODEX_PROVIDER.id, nowIso)
+        : (data.routingGroups ?? [])
+      if (routingGroupId) {
+        requireRoutingGroupForProvider(routingGroups, routingGroupId, OPENAI_CODEX_PROVIDER.id)
+      }
       return {
         data: {
           ...data,
+          routingGroups,
           accounts: sortAccountsForDisplay(
             data.accounts
               .filter((account) => account.id !== stored.id)
               .concat(stored),
           ),
-          routingGroups,
         },
         result: stored,
       }
@@ -2587,19 +2734,25 @@ export class OAuthService {
         apiBaseUrl: existing?.apiBaseUrl ?? null,
         modelName: trimToNull(options.modelName) ?? existing?.modelName ?? appConfig.geminiDefaultModel,
         modelTierMap: existing?.modelTierMap ?? null,
+        modelMap: existing?.modelMap ?? null,
         loginPassword: existing?.loginPassword ?? null,
       }
 
-      const routingGroups = ensureRoutingGroupStub(data.routingGroups ?? [], routingGroupId, nowIso)
+      const routingGroups = routingGroupId
+        ? ensureRoutingGroupStub(data.routingGroups ?? [], routingGroupId, GOOGLE_GEMINI_OAUTH_PROVIDER.id, nowIso)
+        : (data.routingGroups ?? [])
+      if (routingGroupId) {
+        requireRoutingGroupForProvider(routingGroups, routingGroupId, GOOGLE_GEMINI_OAUTH_PROVIDER.id)
+      }
       return {
         data: {
           ...data,
+          routingGroups,
           accounts: sortAccountsForDisplay(
             data.accounts
               .filter((account) => account.id !== stored.id)
               .concat(stored),
           ),
-          routingGroups,
         },
         result: stored,
       }

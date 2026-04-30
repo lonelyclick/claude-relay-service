@@ -101,6 +101,34 @@ export function isOpenAICompatibleAccount(account: StoredAccount): boolean {
   return account.provider === 'openai-compatible'
 }
 
+export interface OpenAICompatibleRouteInfo {
+  sourceModel: string | null
+  targetModel: string | null
+  mapHit: boolean
+}
+
+export function planOpenAICompatibleModelRouting(
+  sourceModel: unknown,
+  account: StoredAccount,
+): OpenAICompatibleRouteInfo {
+  const source = typeof sourceModel === 'string' && sourceModel.trim() ? sourceModel.trim() : null
+  if (source && account.modelMap) {
+    const mapped = account.modelMap[source]
+    if (typeof mapped === 'string' && mapped.trim()) {
+      return { sourceModel: source, targetModel: mapped.trim(), mapHit: true }
+    }
+  }
+  const fallback = account.modelName?.trim() || null
+  return { sourceModel: source, targetModel: fallback ?? source, mapHit: false }
+}
+
+export function resolveOpenAICompatibleTargetModel(
+  sourceModel: unknown,
+  account: StoredAccount,
+): string | null {
+  return planOpenAICompatibleModelRouting(sourceModel, account).targetModel
+}
+
 export function buildOpenAICompatibleRequest(
   body: Buffer | undefined,
   account: StoredAccount,

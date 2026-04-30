@@ -2,9 +2,10 @@ import { get, post } from './client'
 import type {
   BillingCurrency,
   BillingBalanceSummary,
+  BillingBaseSku,
+  BillingChannelMultiplier,
   BillingLineItem,
   BillingLedgerEntry,
-  BillingRule,
   BillingSummary,
   BillingSyncResult,
   BillingUser,
@@ -43,10 +44,11 @@ export const getBillingUserItems = (userId: string, limit = 100, offset = 0, sin
 export const getBillingUserBalance = (userId: string) =>
   get<BillingBalanceSummary>(`/admin/billing/users/${enc(userId)}/balance`)
 
-export const getBillingUserLedger = (userId: string, limit = 100, offset = 0) => {
+export const getBillingUserLedger = (userId: string, limit = 100, offset = 0, kind?: BillingLedgerEntry['kind'] | 'all') => {
   const params = new URLSearchParams()
   params.set('limit', String(limit))
   params.set('offset', String(offset))
+  if (kind && kind !== 'all') params.set('kind', kind)
   return get<{ entries: BillingLedgerEntry[]; total: number }>(`/admin/billing/users/${enc(userId)}/ledger?${params.toString()}`)
 }
 
@@ -59,19 +61,59 @@ export const createBillingLedgerEntry = (
     payload,
   )
 
-export const listBillingRules = (currency?: BillingCurrency) => {
-  const suffix = currency ? `?currency=${encodeURIComponent(currency)}` : ''
-  return get<{ rules: BillingRule[]; currency: BillingCurrency }>(`/admin/billing/rules${suffix}`)
+export const listBaseSkus = () =>
+  get<{ skus: BillingBaseSku[] }>('/admin/billing/base-skus')
+
+export const upsertBaseSku = (payload: Partial<BillingBaseSku> & {
+  provider: BillingBaseSku['provider']
+  modelVendor?: BillingBaseSku['modelVendor']
+  protocol?: BillingBaseSku['protocol']
+  model: string
+  currency: BillingCurrency
+}) =>
+  post<{ ok: true; sku: BillingBaseSku; result: BillingSyncResult }>('/admin/billing/base-skus', payload)
+
+export const deleteBaseSku = (skuId: string) =>
+  post<{ ok: true }>(`/admin/billing/base-skus/${enc(skuId)}/delete`)
+
+export const listChannelMultipliers = (routingGroupId?: string) => {
+  const suffix = routingGroupId ? `?routingGroupId=${encodeURIComponent(routingGroupId)}` : ''
+  return get<{ multipliers: BillingChannelMultiplier[] }>(`/admin/billing/channel-multipliers${suffix}`)
 }
 
-export const createBillingRule = (payload: Record<string, unknown>) =>
-  post<{ ok: true; rule: BillingRule; result: BillingSyncResult; currency: BillingCurrency }>('/admin/billing/rules', payload)
+export const upsertChannelMultiplier = (payload: {
+  routingGroupId: string
+  provider: BillingChannelMultiplier['provider']
+  modelVendor?: BillingChannelMultiplier['modelVendor']
+  protocol?: BillingChannelMultiplier['protocol']
+  model: string
+  multiplierMicros?: string | number
+  isActive?: boolean
+  showInFrontend?: boolean
+  allowCalls?: boolean
+}) =>
+  post<{ ok: true; multiplier: BillingChannelMultiplier; result: BillingSyncResult }>(
+    '/admin/billing/channel-multipliers',
+    payload,
+  )
 
-export const updateBillingRule = (ruleId: string, payload: Record<string, unknown>) =>
-  post<{ ok: true; rule: BillingRule; currency: BillingCurrency }>(`/admin/billing/rules/${enc(ruleId)}/update`, payload)
+export const deleteChannelMultiplier = (multiplierId: string) =>
+  post<{ ok: true }>(`/admin/billing/channel-multipliers/${enc(multiplierId)}/delete`)
 
-export const deleteBillingRule = (ruleId: string) =>
-  post<{ ok: true }>(`/admin/billing/rules/${enc(ruleId)}/delete`)
+export const copyChannelMultipliers = (payload: {
+  fromRoutingGroupId: string
+  toRoutingGroupId: string
+  overwrite?: boolean
+}) =>
+  post<{ ok: true; copied: number; skipped: number }>('/admin/billing/channel-multipliers/copy', payload)
+
+export const bulkAdjustChannelMultipliers = (payload: {
+  routingGroupId: string
+  multiplierIds?: string[]
+  scale?: number
+  setMultiplierMicros?: string
+}) =>
+  post<{ ok: true; updated: number }>('/admin/billing/channel-multipliers/bulk-adjust', payload)
 
 export const syncBilling = (reconcileMissing = false) =>
   post<{ ok: true; result: BillingSyncResult }>('/admin/billing/sync', { reconcileMissing })

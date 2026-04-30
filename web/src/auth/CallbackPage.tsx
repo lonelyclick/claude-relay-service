@@ -22,17 +22,17 @@ export function CallbackPage() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-screen bg-ccdash-bg">
+      <div className="flex items-center justify-center h-screen bg-bg-primary">
         <div className="text-center">
           <p className="text-red-400 mb-4">{error}</p>
-          <a href="/login" className="text-cyan-400 hover:underline text-sm">返回登录</a>
+          <a href="/login" className="text-indigo-300 hover:underline text-sm">返回登录</a>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="flex items-center justify-center h-screen bg-ccdash-bg">
+    <div className="flex items-center justify-center h-screen bg-bg-primary">
       <div className="text-slate-400 text-sm">正在完成登录...</div>
     </div>
   )

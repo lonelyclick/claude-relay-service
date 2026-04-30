@@ -34,13 +34,18 @@ export interface ClaudeCompatibleTierMap {
 export type SchedulerState = 'enabled' | 'paused' | 'draining' | 'auto_blocked'
 export type RelayUserRoutingMode = 'auto' | 'pinned_account' | 'preferred_group'
 export type RelayUserBillingMode = 'postpaid' | 'prepaid'
+export type RelayUserCustomerTier = 'standard' | 'plus' | 'business' | 'enterprise' | 'internal'
+export type RelayUserRiskStatus = 'normal' | 'watch' | 'restricted' | 'blocked'
 export type BillingCurrency = 'USD' | 'CNY'
 export type RelayKeySource = 'relay_api_keys' | 'relay_users_legacy'
+export type RoutingGroupType = 'anthropic' | 'openai' | 'google'
 
 export interface RoutingGroup {
   id: string
   name: string
+  type: RoutingGroupType
   description: string | null
+  descriptionZh: string | null
   isActive: boolean
   createdAt: string
   updatedAt: string
@@ -129,6 +134,7 @@ export interface StoredAccount {
   apiBaseUrl: string | null
   modelName: string | null
   modelTierMap: ClaudeCompatibleTierMap | null
+  modelMap: Record<string, string> | null
 
   // ── Credential info (display only) ──
   loginPassword: string | null
@@ -226,12 +232,17 @@ export interface RelayUser {
   apiKey: string | null
   name: string
   externalUserId?: string | null
+  orgId: string | null
   accountId: string | null
   routingMode: RelayUserRoutingMode
   routingGroupId: string | null
   preferredGroup: string | null
   billingMode: RelayUserBillingMode
   billingCurrency: BillingCurrency
+  customerTier?: RelayUserCustomerTier
+  creditLimitMicros?: string
+  salesOwner?: string | null
+  riskStatus?: RelayUserRiskStatus
   balanceMicros: string
   isActive: boolean
   createdAt: string

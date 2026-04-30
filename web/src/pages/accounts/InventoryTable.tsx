@@ -93,10 +93,10 @@ export function InventoryTable({ accounts }: { accounts: Account[] }) {
   }
 
   return (
-    <div className="border border-ccdash-border rounded-xl overflow-hidden bg-ccdash-card">
-      <div className="overflow-x-auto">
+    <div className="border border-border-default rounded-xl overflow-hidden bg-bg-card">
+      <div className="max-w-full overflow-x-auto">
         <table className="w-full text-sm border-collapse">
-          <thead className="sticky top-0 z-10 bg-ccdash-card-strong">
+          <thead className="sticky top-0 z-10 bg-bg-card-raised">
             <tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
               <SortableHeader label="" sortKey="severity" current={sortKey} dir={sortDir} onClick={onHeaderClick} className="w-8" />
               <SortableHeader label="Account" sortKey="account" current={sortKey} dir={sortDir} onClick={onHeaderClick} />
@@ -106,7 +106,6 @@ export function InventoryTable({ accounts }: { accounts: Account[] }) {
               <SortableHeader label="7d" sortKey="7d" current={sortKey} dir={sortDir} onClick={onHeaderClick} className="w-32" />
               <SortableHeader label="Reset" sortKey="reset" current={sortKey} dir={sortDir} onClick={onHeaderClick} className="w-28" />
               <SortableHeader label="Probed" sortKey="probed" current={sortKey} dir={sortDir} onClick={onHeaderClick} className="w-24" />
-              <th className="px-3 py-2 font-semibold w-20">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -162,7 +161,7 @@ function Row({ account }: { account: Account }) {
   const stale = probedAtMs != null && Date.now() - probedAtMs > STALE_PROBE_MS
 
   return (
-    <tr className={cn('border-t border-ccdash-border/60 hover:bg-slate-500/5 transition-colors', sevCls.rowTint)}>
+    <tr className={cn('border-t border-border-default/60 hover:bg-slate-500/5 transition-colors', sevCls.rowTint)}>
       <td className="px-3 py-2 align-middle">
         <span
           aria-label={`severity-${sev}`}
@@ -172,7 +171,7 @@ function Row({ account }: { account: Account }) {
       </td>
       <td className="px-3 py-2 align-middle min-w-[200px]">
         <Link to={`/accounts/${encodeURIComponent(account.id)}`} className="block group">
-          <div className="text-slate-100 font-medium truncate group-hover:text-blue-300">
+          <div className="inline-flex max-w-full items-center gap-1 rounded-md px-2 py-1 -ml-2 text-indigo-300 bg-accent-muted border border-blue-500/20 truncate group-hover:bg-accent-muted group-hover:text-indigo-200">
             {account.label || account.emailAddress || account.id}
           </div>
           {account.label && account.emailAddress && (
@@ -209,14 +208,6 @@ function Row({ account }: { account: Account }) {
           {account.lastRateLimitAt ? timeAgo(account.lastRateLimitAt) : '—'}
         </span>
       </td>
-      <td className="px-3 py-2 align-middle">
-        <Link
-          to={`/accounts/${encodeURIComponent(account.id)}`}
-          className="text-xs text-blue-400 hover:text-blue-300"
-        >
-          Detail →
-        </Link>
-      </td>
     </tr>
   )
 }
@@ -239,7 +230,7 @@ function UtilCell({
   const tooltip = `${window} util ${formatUtilPct(util)}${status ? ` · ${status}` : ''}`
   return (
     <div className="flex items-center gap-2 min-w-[110px]" title={tooltip}>
-      <div className="flex-1 h-1.5 bg-slate-700/60 rounded-full overflow-hidden min-w-[50px]">
+      <div className="flex-1 h-1.5 bg-bg-card-raised/60 rounded-full overflow-hidden min-w-[50px]">
         <div className={cn('h-full rounded-full transition-all', cls.bar)} style={{ width: `${pct}%` }} />
       </div>
       <span className={cn('text-xs tabular-nums w-9 text-right', cls.fg)}>{formatUtilPct(util)}</span>

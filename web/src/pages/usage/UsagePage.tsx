@@ -41,8 +41,8 @@ export function UsagePage() {
             className={cn(
               'px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
               period === p.id
-                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/40'
-                : 'bg-ccdash-card border border-ccdash-border text-slate-400 hover:text-slate-200',
+                ? 'bg-accent-muted text-indigo-400 border border-accent'
+                : 'bg-bg-card border border-border-default text-slate-400 hover:text-slate-200',
             )}
           >
             {p.label}
@@ -61,14 +61,14 @@ export function UsagePage() {
       {trendDays.length > 0 && <TrendChart days={trendDays} />}
 
       <section>
-        <div className="text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">Account Activity</div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Account Activity</div>
         {accts.length === 0 ? (
           <div className="text-sm text-slate-500">No usage data for this period.</div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="max-w-full overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-xs text-slate-500 uppercase tracking-wider border-b border-ccdash-border">
+                <tr className="text-xs text-slate-500 uppercase tracking-wider border-b border-border-default">
                   <th className="text-left py-2 px-3">Account</th>
                   <th className="text-right py-2 px-3">Requests</th>
                   <th className="text-right py-2 px-3">Input</th>
@@ -80,10 +80,10 @@ export function UsagePage() {
                 {[...accts]
                   .sort((a, b) => b.totalInputTokens - a.totalInputTokens)
                   .map((a) => (
-                    <tr key={a.accountId} className="border-b border-ccdash-border/50 hover:bg-ccdash-card-strong/30">
+                    <tr key={a.accountId} className="border-b border-border-default/50 hover:bg-bg-card-raised/30">
                       <td className="py-2 px-3">
-                        <Link to={`/usage/${encodeURIComponent(a.accountId)}`} className="text-blue-400 hover:underline text-xs">
-                          {a.emailAddress ?? a.label ?? a.accountId}
+                        <Link to={`/usage/${encodeURIComponent(a.accountId)}`} className="inline-flex items-center gap-1 rounded-md px-2 py-1 -ml-2 text-xs font-medium text-indigo-300 bg-accent-muted border border-blue-500/20 hover:bg-accent-muted hover:text-indigo-200">
+                          {a.emailAddress ?? a.label ?? a.accountId}<span className="text-[10px] opacity-80">↗</span>
                         </Link>
                       </td>
                       <td className="py-2 px-3 text-right text-slate-300">{fmtNum(a.totalRequests)}</td>
@@ -109,7 +109,7 @@ function TrendChart({ days }: { days: UsageTrendDay[] }) {
   const barW = Math.max(2, Math.floor((w - 40) / days.length) - 1)
 
   return (
-    <div className="bg-ccdash-card border border-ccdash-border rounded-xl p-4 overflow-x-auto">
+    <div className="bg-bg-card border border-border-default rounded-xl p-4 shadow-xs overflow-x-auto">
       <div className="text-xs text-slate-400 mb-2">Daily Trend</div>
       <svg viewBox={`0 0 ${w} ${h}`} className="w-full max-w-[600px]" preserveAspectRatio="none">
         {days.map((d, i) => {

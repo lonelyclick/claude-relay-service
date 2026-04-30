@@ -6,7 +6,7 @@ export function RequireAuth() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-ccdash-bg">
+      <div className="flex items-center justify-center h-screen bg-bg-primary">
         <div className="text-slate-400 text-sm">Connecting...</div>
       </div>
     )

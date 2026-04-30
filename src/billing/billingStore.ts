@@ -18,7 +18,13 @@ import {
 import type { BillingCurrency } from '../types.js'
 import {
   BILLABLE_USAGE_TARGETS,
-  type BillingRule,
+  applyMultiplier,
+  type BillingBaseSku,
+  type BillingChannelMultiplier,
+  type BillingModelProvider,
+  type BillingModelProtocol,
+  type BillingModelVendor,
+  type BillingResolvedSku,
   type BillingUsageCandidate,
   isBillableUsageTarget,
   resolveBillingLineItem,
@@ -27,30 +33,44 @@ import {
 const DEFAULT_BILLING_CURRENCY = normalizeBillingCurrency(appConfig.billingCurrency, {
   field: 'BILLING_CURRENCY',
 })
-export const SYSTEM_FALLBACK_RULE_ID_PREFIX = 'system-default-all-models'
 
-export interface BillingRuleInput {
-  name: string
-  currency?: BillingCurrency
+const ONE_MILLION_MICROS = '1000000'
+
+export interface BillingBaseSkuInput {
+  provider: BillingModelProvider
+  modelVendor?: BillingModelVendor | null
+  protocol?: BillingModelProtocol | null
+  model: string
+  currency: BillingCurrency
+  displayName?: string | null
   isActive?: boolean
-  priority?: number
-  provider?: string | null
-  accountId?: string | null
-  userId?: string | null
-  model?: string | null
-  effectiveFrom?: string | null
-  effectiveTo?: string | null
+  supportsPromptCaching?: boolean
   inputPriceMicrosPerMillion?: string | number | bigint
   outputPriceMicrosPerMillion?: string | number | bigint
   cacheCreationPriceMicrosPerMillion?: string | number | bigint
   cacheReadPriceMicrosPerMillion?: string | number | bigint
+  topupCurrency?: BillingCurrency
+  topupAmountMicros?: string | number | bigint
+  creditAmountMicros?: string | number | bigint
+}
+
+export interface BillingChannelMultiplierInput {
+  routingGroupId: string
+  provider: BillingModelProvider
+  modelVendor?: BillingModelVendor | null
+  protocol?: BillingModelProtocol | null
+  model: string
+  multiplierMicros?: string | number | bigint
+  isActive?: boolean
+  showInFrontend?: boolean
+  allowCalls?: boolean
 }
 
 export interface BillingSummary {
   currency: BillingCurrency
   totalRequests: number
   billedRequests: number
-  missingRuleRequests: number
+  missingSkuRequests: number
   invalidUsageRequests: number
   totalInputTokens: number
   totalOutputTokens: number
@@ -58,7 +78,7 @@ export interface BillingSummary {
   totalCacheReadTokens: number
   totalAmountMicros: string
   uniqueUsers: number
-  activeRules: number
+  activeSkus: number
   period: { from: string; to: string }
 }
 
@@ -68,7 +88,7 @@ export interface BillingUserRow {
   currency: BillingCurrency
   totalRequests: number
   billedRequests: number
-  missingRuleRequests: number
+  missingSkuRequests: number
   invalidUsageRequests: number
   totalInputTokens: number
   totalOutputTokens: number
@@ -82,7 +102,7 @@ export interface BillingUserPeriodRow {
   periodStart: string
   totalRequests: number
   billedRequests: number
-  missingRuleRequests: number
+  missingSkuRequests: number
   invalidUsageRequests: number
   totalInputTokens: number
   totalOutputTokens: number
@@ -93,7 +113,7 @@ export interface BillingUserModelRow {
   model: string
   totalRequests: number
   billedRequests: number
-  missingRuleRequests: number
+  missingSkuRequests: number
   invalidUsageRequests: number
   totalInputTokens: number
   totalOutputTokens: number
@@ -106,7 +126,7 @@ export interface BillingUserDetail {
   currency: BillingCurrency
   totalRequests: number
   billedRequests: number
-  missingRuleRequests: number
+  missingSkuRequests: number
   invalidUsageRequests: number
   totalInputTokens: number
   totalOutputTokens: number
@@ -122,12 +142,11 @@ export interface BillingLineItemRow {
   usageRecordId: number
   requestId: string
   currency: BillingCurrency
-  status: 'billed' | 'missing_rule' | 'invalid_usage'
-  matchedRuleId: string | null
-  matchedRuleName: string | null
+  status: 'billed' | 'missing_sku' | 'invalid_usage'
   accountId: string | null
   provider: string | null
   model: string | null
+  routingGroupId: string | null
   target: string
   sessionKey: string | null
   clientDeviceId: string | null
@@ -155,7 +174,7 @@ export interface BillingUserUsageSnapshot {
   currency: BillingCurrency | null
   totalRequests: number
   billedRequests: number
-  missingRuleRequests: number
+  missingSkuRequests: number
   invalidUsageRequests: number
   totalInputTokens: number
   totalOutputTokens: number
@@ -199,10 +218,21 @@ export interface BillingLedgerEntry {
   updatedAt: string
 }
 
+export interface BillingLedgerExternalRefEntry {
+  id: string
+  userId: string
+  kind: BillingLedgerKind
+  amountMicros: string
+  currency: BillingCurrency
+  note: string | null
+  externalRef: string
+  createdAt: string
+}
+
 export interface BillingSyncResult {
   processedRequests: number
   billedRequests: number
-  missingRuleRequests: number
+  missingSkuRequests: number
   invalidUsageRequests: number
 }
 
@@ -212,38 +242,99 @@ export interface BillingPreflightInput {
   accountId: string | null
   provider: string | null
   model: string | null
+  routingGroupId: string | null
   target: string
+  /** Override the protocol inferred from `target` (e.g. when an adapter rewrites the upstream wire format). */
+  protocolOverride?: BillingModelProtocol | null
 }
 
 export interface BillingPreflightResult {
   ok: boolean
-  status: 'billed' | 'missing_rule' | 'zero_price'
-  matchedRuleId: string | null
-  matchedRuleName: string | null
+  status: 'billed' | 'missing_sku' | 'zero_price'
 }
 
-const CREATE_RULES_SQL = `
-CREATE TABLE IF NOT EXISTS billing_price_rules (
+export interface ChannelUsageWindowSnapshot {
+  totalRequests: number
+  successRequests: number
+  successRate: number | null
+  p50Ms: number | null
+  p99Ms: number | null
+}
+
+export interface ChannelUsageWindowStats {
+  last5m: ChannelUsageWindowSnapshot
+  last1h: ChannelUsageWindowSnapshot
+  last24h: ChannelUsageWindowSnapshot
+}
+
+export interface ChannelUsageHistoryBucket {
+  bucketStart: string
+  totalRequests: number
+  successRequests: number
+  successRate: number | null
+}
+
+export interface ChannelLastVerified {
+  durationMs: number
+  atIso: string
+}
+
+function emptyWindowSnapshot(): ChannelUsageWindowSnapshot {
+  return {
+    totalRequests: 0,
+    successRequests: 0,
+    successRate: null,
+    p50Ms: null,
+    p99Ms: null,
+  }
+}
+
+const CREATE_BASE_SKUS_SQL = `
+CREATE TABLE IF NOT EXISTS billing_base_skus (
   id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
+  provider TEXT NOT NULL CHECK (provider IN ('anthropic', 'openai', 'google')),
+  model_vendor TEXT NOT NULL DEFAULT 'custom' CHECK (model_vendor IN ('anthropic', 'openai', 'google', 'deepseek', 'zhipu', 'mimo', 'custom')),
+  protocol TEXT NOT NULL DEFAULT 'anthropic_messages' CHECK (protocol IN ('anthropic_messages', 'openai_chat', 'openai_responses', 'gemini')),
+  model TEXT NOT NULL,
+  currency TEXT NOT NULL CHECK (currency IN ('USD', 'CNY')),
+  display_name TEXT NOT NULL,
   is_active BOOLEAN NOT NULL DEFAULT true,
-  priority INTEGER NOT NULL DEFAULT 0,
-  currency TEXT NOT NULL DEFAULT '${DEFAULT_BILLING_CURRENCY}',
-  provider TEXT,
-  account_id TEXT,
-  user_id TEXT,
-  model TEXT,
-  effective_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  effective_to TIMESTAMPTZ,
+  supports_prompt_caching BOOLEAN NOT NULL DEFAULT false,
   input_price_micros_per_million BIGINT NOT NULL DEFAULT 0,
   output_price_micros_per_million BIGINT NOT NULL DEFAULT 0,
   cache_creation_price_micros_per_million BIGINT NOT NULL DEFAULT 0,
   cache_read_price_micros_per_million BIGINT NOT NULL DEFAULT 0,
+  topup_currency TEXT NOT NULL DEFAULT 'CNY',
+  topup_amount_micros BIGINT NOT NULL DEFAULT 1000000,
+  credit_amount_micros BIGINT NOT NULL DEFAULT 1000000,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_billing_price_rules_active ON billing_price_rules (is_active, priority DESC, effective_from DESC);
-CREATE INDEX IF NOT EXISTS idx_billing_price_rules_scope ON billing_price_rules (provider, account_id, user_id, model);
+CREATE INDEX IF NOT EXISTS idx_billing_base_skus_provider_model_currency
+  ON billing_base_skus (provider, model, currency);
+`
+
+const CREATE_CHANNEL_MULTIPLIERS_SQL = `
+CREATE TABLE IF NOT EXISTS billing_channel_multipliers (
+  id TEXT PRIMARY KEY,
+  routing_group_id TEXT NOT NULL,
+  provider TEXT NOT NULL CHECK (provider IN ('anthropic', 'openai', 'google')),
+  model_vendor TEXT NOT NULL DEFAULT 'custom' CHECK (model_vendor IN ('anthropic', 'openai', 'google', 'deepseek', 'zhipu', 'mimo', 'custom')),
+  protocol TEXT NOT NULL DEFAULT 'anthropic_messages' CHECK (protocol IN ('anthropic_messages', 'openai_chat', 'openai_responses', 'gemini')),
+  model TEXT NOT NULL,
+  multiplier_micros BIGINT NOT NULL DEFAULT 1000000,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  show_in_frontend BOOLEAN NOT NULL DEFAULT true,
+  allow_calls BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_billing_channel_multipliers_group_provider_model
+  ON billing_channel_multipliers (routing_group_id, provider, model);
+CREATE INDEX IF NOT EXISTS idx_billing_channel_multipliers_group
+  ON billing_channel_multipliers (routing_group_id);
+ALTER TABLE billing_channel_multipliers ADD COLUMN IF NOT EXISTS show_in_frontend BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE billing_channel_multipliers ADD COLUMN IF NOT EXISTS allow_calls BOOLEAN NOT NULL DEFAULT true;
 `
 
 const CREATE_LINE_ITEMS_SQL = `
@@ -256,13 +347,14 @@ CREATE TABLE IF NOT EXISTS billing_line_items (
   account_id TEXT,
   provider TEXT,
   model TEXT,
+  routing_group_id TEXT,
   session_key TEXT,
   client_device_id TEXT,
   target TEXT NOT NULL,
   currency TEXT NOT NULL DEFAULT '${DEFAULT_BILLING_CURRENCY}',
-  status TEXT NOT NULL CHECK (status IN ('billed', 'missing_rule', 'invalid_usage')),
-  matched_rule_id TEXT,
-  matched_rule_name TEXT,
+  status TEXT NOT NULL CHECK (status IN ('billed', 'missing_sku', 'invalid_usage')),
+  matched_base_sku_id TEXT,
+  matched_multiplier_micros BIGINT,
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
   cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
@@ -280,6 +372,7 @@ CREATE INDEX IF NOT EXISTS idx_billing_line_items_user_created_at ON billing_lin
 CREATE INDEX IF NOT EXISTS idx_billing_line_items_status_created_at ON billing_line_items (status, usage_created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_billing_line_items_provider_created_at ON billing_line_items (provider, usage_created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_billing_line_items_request_id ON billing_line_items (request_id);
+CREATE INDEX IF NOT EXISTS idx_billing_line_items_routing_group_created ON billing_line_items (routing_group_id, usage_created_at DESC);
 `
 
 const CREATE_META_SQL = `
@@ -313,45 +406,69 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_balance_ledger_external_ref
   ON billing_balance_ledger (external_ref) WHERE external_ref IS NOT NULL;
 `
 
-const LINE_ITEM_MIGRATIONS_SQL = `
-ALTER TABLE billing_line_items DROP CONSTRAINT IF EXISTS billing_line_items_request_id_key;
-CREATE INDEX IF NOT EXISTS idx_billing_line_items_request_id ON billing_line_items (request_id);
-`
-
 const USER_BILLING_MIGRATIONS_SQL = `
-ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS billing_mode TEXT NOT NULL DEFAULT 'postpaid';
+ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS billing_mode TEXT NOT NULL DEFAULT 'prepaid';
 ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS billing_currency TEXT NOT NULL DEFAULT '${DEFAULT_BILLING_CURRENCY}';
+ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS customer_tier TEXT NOT NULL DEFAULT 'standard';
+ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS credit_limit_micros BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS sales_owner TEXT;
+ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS risk_status TEXT NOT NULL DEFAULT 'normal';
 ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS balance_micros BIGINT NOT NULL DEFAULT 0;
 UPDATE relay_users
-SET billing_mode = 'postpaid'
+SET billing_mode = 'prepaid'
 WHERE billing_mode IS NULL OR billing_mode NOT IN ('postpaid', 'prepaid');
+UPDATE relay_users
+SET customer_tier = 'standard'
+WHERE customer_tier IS NULL OR customer_tier NOT IN ('standard', 'plus', 'business', 'enterprise', 'internal');
+UPDATE relay_users
+SET risk_status = 'normal'
+WHERE risk_status IS NULL OR risk_status NOT IN ('normal', 'watch', 'restricted', 'blocked');
+UPDATE relay_users
+SET credit_limit_micros = 0
+WHERE credit_limit_micros IS NULL OR credit_limit_micros < 0;
 `
 
-const BILLING_MIGRATIONS_SQL = `
-ALTER TABLE billing_price_rules ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT '${DEFAULT_BILLING_CURRENCY}';
-ALTER TABLE billing_line_items ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT '${DEFAULT_BILLING_CURRENCY}';
-CREATE INDEX IF NOT EXISTS idx_billing_price_rules_currency_scope ON billing_price_rules (currency, provider, account_id, user_id, model);
-CREATE INDEX IF NOT EXISTS idx_billing_line_items_currency_created_at ON billing_line_items (currency, usage_created_at DESC);
-`
-
-type BillingRuleRow = {
+type BillingBaseSkuRow = {
   id: string
-  name: string
-  is_active: boolean
-  priority: number
+  provider: string
+  model_vendor: string
+  protocol: string
+  model: string
   currency: string
-  provider: string | null
-  account_id: string | null
-  user_id: string | null
-  model: string | null
-  effective_from: Date
-  effective_to: Date | null
+  display_name: string
+  is_active: boolean
+  supports_prompt_caching: boolean
   input_price_micros_per_million: string | number | bigint
   output_price_micros_per_million: string | number | bigint
   cache_creation_price_micros_per_million: string | number | bigint
   cache_read_price_micros_per_million: string | number | bigint
+  topup_currency: string
+  topup_amount_micros: string | number | bigint
+  credit_amount_micros: string | number | bigint
   created_at: Date
   updated_at: Date
+}
+
+type BillingChannelMultiplierRow = {
+  id: string
+  routing_group_id: string
+  provider: string
+  model_vendor: string
+  protocol: string
+  model: string
+  multiplier_micros: string | number | bigint
+  is_active: boolean
+  show_in_frontend: boolean
+  allow_calls: boolean
+  created_at: Date
+  updated_at: Date
+}
+
+type BillingResolvedSkuRow = BillingBaseSkuRow & {
+  multiplier_id: string
+  routing_group_id: string
+  multiplier_micros: string | number | bigint
+  multiplier_active: boolean
 }
 
 type BillingLedgerRow = {
@@ -371,7 +488,7 @@ type BillingLedgerRow = {
 type AggregateRow = {
   total_requests: number
   billed_requests: number
-  missing_rule_requests: number
+  missing_sku_requests: number
   invalid_usage_requests: number
   total_input_tokens: string | number | bigint
   total_output_tokens: string | number | bigint
@@ -408,68 +525,142 @@ function normalizeRuleMicros(value: unknown, field: string): string {
   return normalizeUnsignedBigIntString(value, { field, allowZero: true })
 }
 
-function normalizeRuleDate(
-  value: unknown,
-  fallback: string,
-  field: 'effectiveFrom' | 'effectiveTo',
-): string {
-  if (value == null || value === '') {
-    return fallback
+function normalizeBillingModelProvider(value: unknown): BillingModelProvider {
+  if (value === 'anthropic' || value === 'openai' || value === 'google') {
+    return value
   }
-  if (typeof value !== 'string') {
-    throw new InputValidationError(`${field} must be a string`)
-  }
-  const trimmed = normalizeNullable(value)
-  if (!trimmed) {
-    return fallback
-  }
-  const timestamp = Date.parse(trimmed)
-  if (!Number.isFinite(timestamp)) {
-    throw new InputValidationError(`${field} must be a valid date`)
-  }
-  return new Date(timestamp).toISOString()
+  throw new InputValidationError('provider must be one of: anthropic, openai, google')
 }
 
-function normalizeOptionalRuleDate(
-  value: unknown,
-  field: 'effectiveFrom' | 'effectiveTo',
-): string | null {
-  if (value == null || value === '') {
-    return null
-  }
-  if (typeof value !== 'string') {
-    throw new InputValidationError(`${field} must be a string`)
-  }
-  const trimmed = normalizeNullable(value)
-  if (!trimmed) {
-    return null
-  }
-  const timestamp = Date.parse(trimmed)
-  if (!Number.isFinite(timestamp)) {
-    throw new InputValidationError(`${field} must be a valid date`)
-  }
-  return new Date(timestamp).toISOString()
+function defaultProtocolForProvider(provider: BillingModelProvider): BillingModelProtocol {
+  if (provider === 'openai') return 'openai_chat'
+  if (provider === 'google') return 'gemini'
+  return 'anthropic_messages'
 }
 
-function toBillingRule(row: BillingRuleRow): BillingRule {
+function normalizeBillingModelProtocol(value: unknown, provider: BillingModelProvider): BillingModelProtocol {
+  if (value === 'anthropic_messages' || value === 'openai_chat' || value === 'openai_responses' || value === 'gemini') {
+    return value
+  }
+  if (value == null || value === '') {
+    return defaultProtocolForProvider(provider)
+  }
+  throw new InputValidationError('protocol must be one of: anthropic_messages, openai_chat, openai_responses, gemini')
+}
+
+function inferModelVendorFromModel(model: string, provider: BillingModelProvider): BillingModelVendor {
+  const normalized = model.trim().toLowerCase()
+  if (normalized.startsWith('claude')) return 'anthropic'
+  if (normalized.startsWith('gpt') || normalized.startsWith('o1') || normalized.startsWith('o3') || normalized.startsWith('o4')) return 'openai'
+  if (normalized.startsWith('gemini')) return 'google'
+  if (normalized.startsWith('deepseek')) return 'deepseek'
+  if (normalized.startsWith('glm')) return 'zhipu'
+  if (normalized.startsWith('mimo')) return 'mimo'
+  if (provider === 'anthropic' || provider === 'openai' || provider === 'google') return provider
+  return 'custom'
+}
+
+function normalizeBillingModelVendor(value: unknown, model: string, provider: BillingModelProvider): BillingModelVendor {
+  if (value === 'anthropic' || value === 'openai' || value === 'google' || value === 'deepseek' || value === 'zhipu' || value === 'mimo' || value === 'custom') {
+    return value
+  }
+  if (value == null || value === '') {
+    return inferModelVendorFromModel(model, provider)
+  }
+  throw new InputValidationError('modelVendor must be one of: anthropic, openai, google, deepseek, zhipu, mimo, custom')
+}
+
+function normalizeUsageProvider(value: string | null | undefined): BillingModelProvider | null {
+  if (value === 'anthropic' || value === 'claude-official' || value === 'claude-compatible') {
+    return 'anthropic'
+  }
+  if (value === 'openai' || value === 'openai-codex' || value === 'openai-compatible') {
+    return 'openai'
+  }
+  if (value === 'google' || value === 'google-gemini-oauth') {
+    return 'google'
+  }
+  return null
+}
+
+function protocolForUsageTarget(target: string): BillingModelProtocol | null {
+  const normalizedTarget = target.split('?', 1)[0] ?? target
+  if (normalizedTarget === '/v1/messages') return 'anthropic_messages'
+  if (normalizedTarget === '/v1/chat/completions') return 'openai_chat'
+  if (normalizedTarget === '/v1/responses' || normalizedTarget.startsWith('/v1/responses/')) return 'openai_responses'
+  return null
+}
+
+function baseSkuId(protocol: BillingModelProtocol, modelVendor: BillingModelVendor, model: string, currency: BillingCurrency): string {
+  return protocol + ':' + modelVendor + ':' + model + ':' + currency.toLowerCase()
+}
+
+function channelMultiplierId(routingGroupId: string, protocol: BillingModelProtocol, modelVendor: BillingModelVendor, model: string): string {
+  return routingGroupId + ':' + protocol + ':' + modelVendor + ':' + model
+}
+
+function displayNameFromModel(model: string): string {
+  return model
+}
+
+function toBillingBaseSku(row: BillingBaseSkuRow): BillingBaseSku {
   return {
     id: row.id,
-    name: row.name,
-    isActive: row.is_active,
-    priority: Number(row.priority ?? 0),
-    currency: normalizeStoredBillingCurrency(row.currency),
-    provider: row.provider,
-    accountId: row.account_id,
-    userId: row.user_id,
+    provider: normalizeBillingModelProvider(row.provider),
+    modelVendor: normalizeBillingModelVendor(row.model_vendor, row.model, normalizeBillingModelProvider(row.provider)),
+    protocol: normalizeBillingModelProtocol(row.protocol, normalizeBillingModelProvider(row.provider)),
     model: row.model,
-    effectiveFrom: row.effective_from.toISOString(),
-    effectiveTo: row.effective_to ? row.effective_to.toISOString() : null,
-    inputPriceMicrosPerMillion: String(row.input_price_micros_per_million ?? '0'),
-    outputPriceMicrosPerMillion: String(row.output_price_micros_per_million ?? '0'),
-    cacheCreationPriceMicrosPerMillion: String(row.cache_creation_price_micros_per_million ?? '0'),
-    cacheReadPriceMicrosPerMillion: String(row.cache_read_price_micros_per_million ?? '0'),
+    currency: normalizeStoredBillingCurrency(row.currency),
+    displayName: row.display_name,
+    isActive: row.is_active,
+    supportsPromptCaching: row.supports_prompt_caching,
+    inputPriceMicrosPerMillion: readBigIntString(row.input_price_micros_per_million),
+    outputPriceMicrosPerMillion: readBigIntString(row.output_price_micros_per_million),
+    cacheCreationPriceMicrosPerMillion: readBigIntString(row.cache_creation_price_micros_per_million),
+    cacheReadPriceMicrosPerMillion: readBigIntString(row.cache_read_price_micros_per_million),
+    topupCurrency: normalizeStoredBillingCurrency(row.topup_currency),
+    topupAmountMicros: readBigIntString(row.topup_amount_micros),
+    creditAmountMicros: readBigIntString(row.credit_amount_micros),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
+  }
+}
+
+function toBillingChannelMultiplier(row: BillingChannelMultiplierRow): BillingChannelMultiplier {
+  return {
+    id: row.id,
+    routingGroupId: row.routing_group_id,
+    provider: normalizeBillingModelProvider(row.provider),
+    modelVendor: normalizeBillingModelVendor(row.model_vendor, row.model, normalizeBillingModelProvider(row.provider)),
+    protocol: normalizeBillingModelProtocol(row.protocol, normalizeBillingModelProvider(row.provider)),
+    model: row.model,
+    multiplierMicros: readBigIntString(row.multiplier_micros),
+    isActive: row.is_active,
+    showInFrontend: row.show_in_frontend,
+    allowCalls: row.allow_calls,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  }
+}
+
+function toResolvedSku(row: BillingResolvedSkuRow): BillingResolvedSku {
+  const base = toBillingBaseSku(row)
+  const multiplierMicros = readBigIntString(row.multiplier_micros)
+  return {
+    baseSkuId: base.id,
+    multiplierId: row.multiplier_id,
+    multiplierMicros,
+    routingGroupId: row.routing_group_id,
+    provider: base.provider,
+    modelVendor: base.modelVendor,
+    protocol: base.protocol,
+    model: base.model,
+    currency: base.currency,
+    displayName: base.displayName,
+    finalInputPriceMicrosPerMillion: applyMultiplier(base.inputPriceMicrosPerMillion, multiplierMicros),
+    finalOutputPriceMicrosPerMillion: applyMultiplier(base.outputPriceMicrosPerMillion, multiplierMicros),
+    finalCacheCreationPriceMicrosPerMillion: applyMultiplier(base.cacheCreationPriceMicrosPerMillion, multiplierMicros),
+    finalCacheReadPriceMicrosPerMillion: applyMultiplier(base.cacheReadPriceMicrosPerMillion, multiplierMicros),
   }
 }
 
@@ -535,22 +726,119 @@ export class BillingStore {
     const client = await this.pool.connect()
     try {
       await client.query(USER_BILLING_MIGRATIONS_SQL)
-      await client.query(CREATE_RULES_SQL)
+      await client.query(CREATE_BASE_SKUS_SQL)
+      await client.query(CREATE_CHANNEL_MULTIPLIERS_SQL)
       await client.query(CREATE_LINE_ITEMS_SQL)
-      await client.query(BILLING_MIGRATIONS_SQL)
-      await client.query(LINE_ITEM_MIGRATIONS_SQL)
       await client.query(CREATE_LEDGER_SQL)
       await client.query(CREATE_META_SQL)
+      await client.query(
+        `ALTER TABLE billing_base_skus ADD COLUMN IF NOT EXISTS model_vendor TEXT NOT NULL DEFAULT 'custom'`,
+      )
+      await client.query(
+        `ALTER TABLE billing_base_skus ADD COLUMN IF NOT EXISTS protocol TEXT NOT NULL DEFAULT 'anthropic_messages'`,
+      )
+      await client.query(
+        `ALTER TABLE billing_channel_multipliers ADD COLUMN IF NOT EXISTS model_vendor TEXT NOT NULL DEFAULT 'custom'`,
+      )
+      await client.query(
+        `ALTER TABLE billing_channel_multipliers ADD COLUMN IF NOT EXISTS protocol TEXT NOT NULL DEFAULT 'anthropic_messages'`,
+      )
+      await client.query(
+        `UPDATE billing_base_skus
+         SET protocol = CASE provider
+           WHEN 'openai' THEN 'openai_chat'
+           WHEN 'google' THEN 'gemini'
+           ELSE 'anthropic_messages'
+         END
+         WHERE protocol IS NULL OR protocol = '' OR (protocol = 'anthropic_messages' AND split_part(id, ':', 1) = provider)`,
+      )
+      await client.query(
+        `UPDATE billing_channel_multipliers
+         SET protocol = CASE provider
+           WHEN 'openai' THEN 'openai_chat'
+           WHEN 'google' THEN 'gemini'
+           ELSE 'anthropic_messages'
+         END
+         WHERE protocol IS NULL OR protocol = '' OR (protocol = 'anthropic_messages' AND split_part(id, ':', 2) = provider)`,
+      )
+      await client.query(
+        `UPDATE billing_base_skus
+         SET model_vendor = CASE
+           WHEN lower(model) LIKE 'claude%' THEN 'anthropic'
+           WHEN lower(model) LIKE 'gpt%' OR lower(model) LIKE 'o1%' OR lower(model) LIKE 'o3%' OR lower(model) LIKE 'o4%' THEN 'openai'
+           WHEN lower(model) LIKE 'gemini%' THEN 'google'
+           WHEN lower(model) LIKE 'deepseek%' THEN 'deepseek'
+           WHEN lower(model) LIKE 'glm%' THEN 'zhipu'
+           WHEN lower(model) LIKE 'mimo%' THEN 'mimo'
+           ELSE provider
+         END
+         WHERE model_vendor IS NULL OR model_vendor = '' OR (model_vendor = 'custom' AND split_part(id, ':', 1) = provider)`,
+      )
+      await client.query(
+        `UPDATE billing_channel_multipliers
+         SET model_vendor = CASE
+           WHEN lower(model) LIKE 'claude%' THEN 'anthropic'
+           WHEN lower(model) LIKE 'gpt%' OR lower(model) LIKE 'o1%' OR lower(model) LIKE 'o3%' OR lower(model) LIKE 'o4%' THEN 'openai'
+           WHEN lower(model) LIKE 'gemini%' THEN 'google'
+           WHEN lower(model) LIKE 'deepseek%' THEN 'deepseek'
+           WHEN lower(model) LIKE 'glm%' THEN 'zhipu'
+           WHEN lower(model) LIKE 'mimo%' THEN 'mimo'
+           ELSE provider
+         END
+         WHERE model_vendor IS NULL OR model_vendor = '' OR (model_vendor = 'custom' AND split_part(id, ':', 2) = provider)`,
+      )
+      await client.query('DROP INDEX IF EXISTS uq_billing_base_skus_provider_model_currency')
+      await client.query('DROP INDEX IF EXISTS uq_billing_channel_multipliers_group_provider_model')
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS idx_billing_base_skus_provider_model_currency
+         ON billing_base_skus (provider, model, currency)`,
+      )
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS idx_billing_channel_multipliers_group_provider_model
+         ON billing_channel_multipliers (routing_group_id, provider, model)`,
+      )
+      await client.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS uq_billing_base_skus_protocol_vendor_model_currency
+         ON billing_base_skus (protocol, model_vendor, model, currency)`,
+      )
+      await client.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS uq_billing_channel_multipliers_group_protocol_vendor_model
+         ON billing_channel_multipliers (routing_group_id, protocol, model_vendor, model)`,
+      )
+      await client.query(
+        `INSERT INTO billing_base_skus (
+           id, provider, model_vendor, protocol, model, currency, display_name, is_active, supports_prompt_caching,
+           input_price_micros_per_million, output_price_micros_per_million,
+           cache_creation_price_micros_per_million, cache_read_price_micros_per_million,
+           topup_currency, topup_amount_micros, credit_amount_micros, created_at, updated_at
+         )
+         SELECT
+           'openai_responses:' || model_vendor || ':' || model || ':' || lower(currency),
+           provider, model_vendor, 'openai_responses', model, currency, display_name, is_active, supports_prompt_caching,
+           input_price_micros_per_million, output_price_micros_per_million,
+           cache_creation_price_micros_per_million, cache_read_price_micros_per_million,
+           topup_currency, topup_amount_micros, credit_amount_micros, created_at, NOW()
+         FROM billing_base_skus
+         WHERE provider = 'openai'
+           AND protocol = 'openai_chat'
+         ON CONFLICT (protocol, model_vendor, model, currency) DO NOTHING`,
+      )
+      await client.query(
+        `INSERT INTO billing_channel_multipliers (
+           id, routing_group_id, provider, model_vendor, protocol, model, multiplier_micros, is_active, created_at, updated_at
+         )
+         SELECT
+           routing_group_id || ':openai_responses:' || model_vendor || ':' || model,
+           routing_group_id, provider, model_vendor, 'openai_responses', model, multiplier_micros, is_active, created_at, NOW()
+         FROM billing_channel_multipliers
+         WHERE provider = 'openai'
+           AND protocol = 'openai_chat'
+         ON CONFLICT (routing_group_id, protocol, model_vendor, model) DO NOTHING`,
+      )
       await client.query(
         `UPDATE relay_users
          SET billing_currency = $1
          WHERE billing_currency IS NULL OR billing_currency NOT IN ('USD', 'CNY')`,
-        [DEFAULT_BILLING_CURRENCY],
-      )
-      await client.query(
-        `UPDATE billing_price_rules
-         SET currency = $1
-         WHERE currency IS NULL OR currency NOT IN ('USD', 'CNY')`,
         [DEFAULT_BILLING_CURRENCY],
       )
       await client.query(
@@ -570,56 +858,523 @@ export class BillingStore {
          VALUES ('last_usage_record_id', '0')
          ON CONFLICT (key) DO NOTHING`,
       )
-      await this.ensureSystemFallbackRule(client)
     } finally {
       client.release()
     }
   }
 
-  private async ensureSystemFallbackRule(client: pg.PoolClient): Promise<void> {
-    for (const currency of ['USD', 'CNY'] satisfies BillingCurrency[]) {
-      await client.query(
-        `INSERT INTO billing_price_rules (
-           id, name, is_active, priority, currency, provider, account_id, user_id, model,
-           effective_from, effective_to,
-           input_price_micros_per_million, output_price_micros_per_million,
-           cache_creation_price_micros_per_million, cache_read_price_micros_per_million
-         ) VALUES ($1,$2,true,$3,$4,NULL,NULL,NULL,NULL,'1970-01-01T00:00:00.000Z',NULL,$5,$6,$7,$8)
-         ON CONFLICT (id) DO UPDATE SET
-           is_active = true,
-           priority = LEAST(billing_price_rules.priority, EXCLUDED.priority),
-           currency = EXCLUDED.currency,
-           input_price_micros_per_million = EXCLUDED.input_price_micros_per_million,
-           output_price_micros_per_million = EXCLUDED.output_price_micros_per_million,
-           cache_creation_price_micros_per_million = EXCLUDED.cache_creation_price_micros_per_million,
-           cache_read_price_micros_per_million = EXCLUDED.cache_read_price_micros_per_million,
-           updated_at = NOW()`,
-        [
-          `${SYSTEM_FALLBACK_RULE_ID_PREFIX}-${currency.toLowerCase()}`,
-          `System default fallback (${currency}, all Claude Code / ChatGPT models)`,
-          -1_000_000,
-          currency,
-          appConfig.billingFallbackInputPriceMicrosPerMillion,
-          appConfig.billingFallbackOutputPriceMicrosPerMillion,
-          appConfig.billingFallbackCacheCreationPriceMicrosPerMillion,
-          appConfig.billingFallbackCacheReadPriceMicrosPerMillion,
-        ],
-      )
+  private normalizeBaseSkuInput(input: BillingBaseSkuInput): Omit<BillingBaseSku, 'createdAt' | 'updatedAt'> {
+    const provider = normalizeBillingModelProvider(input.provider)
+    const model = normalizeRequiredText(input.model, { field: 'model', maxLength: MAX_SCOPE_FIELD_LENGTH })
+    const modelVendor = normalizeBillingModelVendor(input.modelVendor, model, provider)
+    const protocol = normalizeBillingModelProtocol(input.protocol, provider)
+    const currency = normalizeBillingCurrency(input.currency, { field: 'currency', fallback: 'USD' })
+    const topupCurrency = normalizeBillingCurrency(input.topupCurrency ?? 'CNY', { field: 'topupCurrency', fallback: 'CNY' })
+    return {
+      id: baseSkuId(protocol, modelVendor, model, currency),
+      provider,
+      modelVendor,
+      protocol,
+      model,
+      currency,
+      displayName: normalizeOptionalText(input.displayName, { field: 'displayName', maxLength: MAX_BILLING_RULE_NAME_LENGTH }) ?? displayNameFromModel(model),
+      isActive: input.isActive ?? true,
+      supportsPromptCaching: input.supportsPromptCaching ?? false,
+      inputPriceMicrosPerMillion: normalizeRuleMicros(input.inputPriceMicrosPerMillion, 'inputPriceMicrosPerMillion'),
+      outputPriceMicrosPerMillion: normalizeRuleMicros(input.outputPriceMicrosPerMillion, 'outputPriceMicrosPerMillion'),
+      cacheCreationPriceMicrosPerMillion: normalizeRuleMicros(input.cacheCreationPriceMicrosPerMillion, 'cacheCreationPriceMicrosPerMillion'),
+      cacheReadPriceMicrosPerMillion: normalizeRuleMicros(input.cacheReadPriceMicrosPerMillion, 'cacheReadPriceMicrosPerMillion'),
+      topupCurrency,
+      topupAmountMicros: normalizeRuleMicros(input.topupAmountMicros ?? '1000000', 'topupAmountMicros'),
+      creditAmountMicros: normalizeRuleMicros(input.creditAmountMicros ?? '1000000', 'creditAmountMicros'),
     }
   }
 
-  async listRules(currency?: BillingCurrency | null): Promise<BillingRule[]> {
-    const normalizedCurrency = currency
-      ? normalizeBillingCurrency(currency, { field: 'currency', fallback: DEFAULT_BILLING_CURRENCY })
-      : null
-    const result = await this.pool.query<BillingRuleRow>(
-      `SELECT *
-       FROM billing_price_rules
-       WHERE ($1::text IS NULL OR currency = $1)
-       ORDER BY is_active DESC, priority DESC, effective_from DESC, created_at DESC`,
-      [normalizedCurrency],
+  private async upsertBaseSkuWithClient(client: pg.PoolClient, input: BillingBaseSkuInput): Promise<BillingBaseSku> {
+    const sku = this.normalizeBaseSkuInput(input)
+    const result = await client.query<BillingBaseSkuRow>(
+      `INSERT INTO billing_base_skus (
+         id, provider, model_vendor, protocol, model, currency, display_name, is_active, supports_prompt_caching,
+         input_price_micros_per_million, output_price_micros_per_million,
+         cache_creation_price_micros_per_million, cache_read_price_micros_per_million,
+         topup_currency, topup_amount_micros, credit_amount_micros
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+       ON CONFLICT (id) DO UPDATE SET
+         provider = EXCLUDED.provider,
+         model_vendor = EXCLUDED.model_vendor,
+         protocol = EXCLUDED.protocol,
+         model = EXCLUDED.model,
+         currency = EXCLUDED.currency,
+         display_name = EXCLUDED.display_name,
+         is_active = EXCLUDED.is_active,
+         supports_prompt_caching = EXCLUDED.supports_prompt_caching,
+         input_price_micros_per_million = EXCLUDED.input_price_micros_per_million,
+         output_price_micros_per_million = EXCLUDED.output_price_micros_per_million,
+         cache_creation_price_micros_per_million = EXCLUDED.cache_creation_price_micros_per_million,
+         cache_read_price_micros_per_million = EXCLUDED.cache_read_price_micros_per_million,
+         topup_currency = EXCLUDED.topup_currency,
+         topup_amount_micros = EXCLUDED.topup_amount_micros,
+         credit_amount_micros = EXCLUDED.credit_amount_micros,
+         updated_at = NOW()
+       RETURNING *`,
+      [
+        sku.id,
+        sku.provider,
+        sku.modelVendor,
+        sku.protocol,
+        sku.model,
+        sku.currency,
+        sku.displayName,
+        sku.isActive,
+        sku.supportsPromptCaching,
+        sku.inputPriceMicrosPerMillion,
+        sku.outputPriceMicrosPerMillion,
+        sku.cacheCreationPriceMicrosPerMillion,
+        sku.cacheReadPriceMicrosPerMillion,
+        sku.topupCurrency,
+        sku.topupAmountMicros,
+        sku.creditAmountMicros,
+      ],
     )
-    return result.rows.map(toBillingRule)
+    return toBillingBaseSku(result.rows[0]!)
+  }
+
+  async listBaseSkus(): Promise<BillingBaseSku[]> {
+    const result = await this.pool.query<BillingBaseSkuRow>(
+      `SELECT *
+       FROM billing_base_skus
+       ORDER BY protocol ASC, model_vendor ASC, model ASC, currency ASC`,
+    )
+    return result.rows.map(toBillingBaseSku)
+  }
+
+  async upsertBaseSku(input: BillingBaseSkuInput): Promise<BillingBaseSku> {
+    const client = await this.pool.connect()
+    try {
+      await client.query('BEGIN')
+      const sku = await this.upsertBaseSkuWithClient(client, input)
+      await client.query('COMMIT')
+      return sku
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {})
+      throw error
+    } finally {
+      client.release()
+    }
+  }
+
+  async deleteBaseSku(skuId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      'DELETE FROM billing_base_skus WHERE id = $1',
+      [skuId],
+    )
+    return Boolean(result.rowCount)
+  }
+
+  private normalizeChannelMultiplierInput(input: BillingChannelMultiplierInput): Omit<BillingChannelMultiplier, 'createdAt' | 'updatedAt'> {
+    const routingGroupId = normalizeRequiredText(input.routingGroupId, {
+      field: 'routingGroupId',
+      maxLength: MAX_SCOPE_FIELD_LENGTH,
+    })
+    const provider = normalizeBillingModelProvider(input.provider)
+    const model = normalizeRequiredText(input.model, { field: 'model', maxLength: MAX_SCOPE_FIELD_LENGTH })
+    const modelVendor = normalizeBillingModelVendor(input.modelVendor, model, provider)
+    const protocol = normalizeBillingModelProtocol(input.protocol, provider)
+    const multiplierMicros = normalizeRuleMicros(input.multiplierMicros ?? ONE_MILLION_MICROS, 'multiplierMicros')
+    if (BigInt(multiplierMicros) === 0n) {
+      throw new InputValidationError('multiplierMicros must be > 0 (use isActive=false to disable instead)')
+    }
+    return {
+      id: channelMultiplierId(routingGroupId, protocol, modelVendor, model),
+      routingGroupId,
+      provider,
+      modelVendor,
+      protocol,
+      model,
+      multiplierMicros,
+      isActive: input.isActive ?? true,
+      showInFrontend: input.showInFrontend ?? true,
+      allowCalls: input.allowCalls ?? true,
+    }
+  }
+
+  private async upsertChannelMultiplierWithClient(
+    client: pg.PoolClient,
+    input: BillingChannelMultiplierInput,
+  ): Promise<BillingChannelMultiplier> {
+    const m = this.normalizeChannelMultiplierInput(input)
+    const result = await client.query<BillingChannelMultiplierRow>(
+      `INSERT INTO billing_channel_multipliers (
+         id, routing_group_id, provider, model_vendor, protocol, model, multiplier_micros, is_active, show_in_frontend, allow_calls
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       ON CONFLICT (id) DO UPDATE SET
+         provider = EXCLUDED.provider,
+         model_vendor = EXCLUDED.model_vendor,
+         protocol = EXCLUDED.protocol,
+         model = EXCLUDED.model,
+         multiplier_micros = EXCLUDED.multiplier_micros,
+         is_active = EXCLUDED.is_active,
+         show_in_frontend = EXCLUDED.show_in_frontend,
+         allow_calls = EXCLUDED.allow_calls,
+         updated_at = NOW()
+       RETURNING *`,
+      [m.id, m.routingGroupId, m.provider, m.modelVendor, m.protocol, m.model, m.multiplierMicros, m.isActive, m.showInFrontend, m.allowCalls],
+    )
+    return toBillingChannelMultiplier(result.rows[0]!)
+  }
+
+  async listChannelMultipliers(routingGroupId?: string | null): Promise<BillingChannelMultiplier[]> {
+    const filter = routingGroupId
+      ? normalizeRequiredText(routingGroupId, { field: 'routingGroupId', maxLength: MAX_SCOPE_FIELD_LENGTH })
+      : null
+    const result = await this.pool.query<BillingChannelMultiplierRow>(
+      `SELECT *
+       FROM billing_channel_multipliers
+       WHERE ($1::text IS NULL OR routing_group_id = $1)
+       ORDER BY routing_group_id ASC, protocol ASC, model_vendor ASC, model ASC`,
+      [filter],
+    )
+    return result.rows.map(toBillingChannelMultiplier)
+  }
+
+  async upsertChannelMultiplier(input: BillingChannelMultiplierInput): Promise<BillingChannelMultiplier> {
+    const client = await this.pool.connect()
+    try {
+      await client.query('BEGIN')
+      const m = await this.upsertChannelMultiplierWithClient(client, input)
+      await client.query('COMMIT')
+      return m
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {})
+      throw error
+    } finally {
+      client.release()
+    }
+  }
+
+  async deleteChannelMultiplier(multiplierId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      'DELETE FROM billing_channel_multipliers WHERE id = $1',
+      [multiplierId],
+    )
+    return Boolean(result.rowCount)
+  }
+
+  async copyMultipliersBetweenGroups(input: {
+    fromRoutingGroupId: string
+    toRoutingGroupId: string
+    overwrite?: boolean
+  }): Promise<{ copied: number; skipped: number }> {
+    const fromGroup = normalizeRequiredText(input.fromRoutingGroupId, {
+      field: 'fromRoutingGroupId',
+      maxLength: MAX_SCOPE_FIELD_LENGTH,
+    })
+    const toGroup = normalizeRequiredText(input.toRoutingGroupId, {
+      field: 'toRoutingGroupId',
+      maxLength: MAX_SCOPE_FIELD_LENGTH,
+    })
+    if (fromGroup === toGroup) {
+      throw new InputValidationError('Source and destination routing groups must differ')
+    }
+    const overwrite = input.overwrite ?? false
+    const client = await this.pool.connect()
+    try {
+      await client.query('BEGIN')
+      const sources = await client.query<BillingChannelMultiplierRow>(
+        `SELECT * FROM billing_channel_multipliers WHERE routing_group_id = $1`,
+        [fromGroup],
+      )
+      let copied = 0
+      let skipped = 0
+      for (const row of sources.rows) {
+        const m = toBillingChannelMultiplier(row)
+        const existing = await client.query<{ id: string }>(
+          `SELECT id FROM billing_channel_multipliers WHERE routing_group_id = $1 AND protocol = $2 AND model_vendor = $3 AND model = $4`,
+          [toGroup, m.protocol, m.modelVendor, m.model],
+        )
+        if ((existing.rowCount ?? 0) > 0 && !overwrite) {
+          skipped += 1
+          continue
+        }
+        await this.upsertChannelMultiplierWithClient(client, {
+          routingGroupId: toGroup,
+          provider: m.provider,
+          modelVendor: m.modelVendor,
+          protocol: m.protocol,
+          model: m.model,
+          multiplierMicros: m.multiplierMicros,
+          isActive: m.isActive,
+          showInFrontend: m.showInFrontend,
+          allowCalls: m.allowCalls,
+        })
+        copied += 1
+      }
+      await client.query('COMMIT')
+      return { copied, skipped }
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {})
+      throw error
+    } finally {
+      client.release()
+    }
+  }
+
+  async bulkAdjustChannelMultipliers(input: {
+    routingGroupId: string
+    multiplierIds?: string[]
+    scale?: number
+    setMultiplierMicros?: string | number | bigint
+  }): Promise<{ updated: number }> {
+    const groupId = normalizeRequiredText(input.routingGroupId, {
+      field: 'routingGroupId',
+      maxLength: MAX_SCOPE_FIELD_LENGTH,
+    })
+    const filterIds = (input.multiplierIds ?? []).filter((id) => typeof id === 'string' && id.length)
+    const setMultiplier = input.setMultiplierMicros != null
+      ? normalizeRuleMicros(input.setMultiplierMicros, 'setMultiplierMicros')
+      : null
+    const scale = typeof input.scale === 'number' && Number.isFinite(input.scale) ? input.scale : null
+    if (setMultiplier == null && scale == null) {
+      throw new InputValidationError('Provide either scale or setMultiplierMicros')
+    }
+    if (scale != null && scale <= 0) {
+      throw new InputValidationError('scale must be > 0')
+    }
+    if (setMultiplier != null && BigInt(setMultiplier) === 0n) {
+      throw new InputValidationError('setMultiplierMicros must be > 0')
+    }
+
+    const client = await this.pool.connect()
+    try {
+      await client.query('BEGIN')
+      const targets = filterIds.length
+        ? await client.query<BillingChannelMultiplierRow>(
+          `SELECT * FROM billing_channel_multipliers
+           WHERE routing_group_id = $1 AND id = ANY($2::text[])`,
+          [groupId, filterIds],
+        )
+        : await client.query<BillingChannelMultiplierRow>(
+          `SELECT * FROM billing_channel_multipliers WHERE routing_group_id = $1`,
+          [groupId],
+        )
+      let updated = 0
+      for (const row of targets.rows) {
+        const current = toBillingChannelMultiplier(row)
+        let nextMicros: string
+        if (setMultiplier != null) {
+          nextMicros = setMultiplier
+        } else {
+          const cur = BigInt(current.multiplierMicros)
+          nextMicros = ((cur * BigInt(Math.round(scale! * 1_000_000))) / 1_000_000n).toString()
+          if (BigInt(nextMicros) === 0n) {
+            throw new InputValidationError('Resulting multiplier rounds to 0')
+          }
+        }
+        await client.query(
+          `UPDATE billing_channel_multipliers
+           SET multiplier_micros = $2,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [current.id, nextMicros],
+        )
+        updated += 1
+      }
+      await client.query('COMMIT')
+      return { updated }
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {})
+      throw error
+    } finally {
+      client.release()
+    }
+  }
+
+  private async findResolvedSkuForUsage(
+    candidate: BillingUsageCandidate,
+    protocolOverride: BillingModelProtocol | null = null,
+  ): Promise<BillingResolvedSku | null> {
+    if (!candidate.routingGroupId || !candidate.provider || !candidate.model) {
+      return null
+    }
+    const protocol = protocolOverride ?? protocolForUsageTarget(candidate.target)
+    if (!protocol) {
+      return null
+    }
+    const result = await this.pool.query<BillingResolvedSkuRow>(
+      `SELECT
+         b.id, b.provider, b.model_vendor, b.protocol, b.model, b.currency, b.display_name, b.is_active, b.supports_prompt_caching,
+         b.input_price_micros_per_million, b.output_price_micros_per_million,
+         b.cache_creation_price_micros_per_million, b.cache_read_price_micros_per_million,
+         b.topup_currency, b.topup_amount_micros, b.credit_amount_micros,
+         b.created_at, b.updated_at,
+         m.id AS multiplier_id,
+         m.routing_group_id,
+         m.multiplier_micros,
+         m.is_active AS multiplier_active
+       FROM billing_channel_multipliers m
+       INNER JOIN billing_base_skus b
+         ON b.protocol = m.protocol AND b.model_vendor = m.model_vendor AND b.model = m.model AND b.currency = $4
+       WHERE m.routing_group_id = $1
+         AND m.provider = $2
+         AND m.model = $3
+         AND m.protocol = $5
+         AND m.is_active = true
+         AND m.allow_calls = true
+         AND b.is_active = true
+       LIMIT 1`,
+      [
+        candidate.routingGroupId,
+        candidate.provider,
+        candidate.model,
+        candidate.billingCurrency,
+        protocol,
+      ],
+    )
+    const row = result.rows[0]
+    return row ? toResolvedSku(row) : null
+  }
+
+  async getChannelUsageStats(): Promise<{
+    windows: Map<string, ChannelUsageWindowStats>
+    history: Map<string, ChannelUsageHistoryBucket[]>
+    lastVerified: Map<string, ChannelLastVerified>
+  }> {
+    const windowQuery = `
+      WITH base AS (
+        SELECT
+          COALESCE(routing_group_id, '') AS routing_group_id,
+          status_code,
+          duration_ms,
+          created_at
+        FROM usage_records
+        WHERE created_at > NOW() - INTERVAL '24 hours'
+          AND attempt_kind = 'final'
+          AND (
+            split_part(target, '?', 1) IN ('/v1/messages', '/v1/chat/completions', '/v1/responses')
+            OR split_part(target, '?', 1) LIKE '/v1/responses/%'
+          )
+      )
+      SELECT
+        routing_group_id,
+        window_label,
+        COUNT(*)::bigint AS total,
+        COUNT(*) FILTER (WHERE status_code BETWEEN 200 AND 299)::bigint AS success,
+        PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY duration_ms)
+          FILTER (WHERE duration_ms IS NOT NULL) AS p50_ms,
+        PERCENTILE_DISC(0.99) WITHIN GROUP (ORDER BY duration_ms)
+          FILTER (WHERE duration_ms IS NOT NULL) AS p99_ms
+      FROM base
+      CROSS JOIN LATERAL (VALUES
+        ('5m', NOW() - INTERVAL '5 minutes'),
+        ('1h', NOW() - INTERVAL '1 hour'),
+        ('24h', NOW() - INTERVAL '24 hours')
+      ) AS w(window_label, since)
+      WHERE base.created_at > w.since
+      GROUP BY routing_group_id, window_label
+    `
+    const historyQuery = `
+      SELECT
+        COALESCE(routing_group_id, '') AS routing_group_id,
+        date_trunc('hour', created_at)
+          + (date_part('minute', created_at)::int / 5) * INTERVAL '5 minutes' AS bucket_start,
+        COUNT(*)::bigint AS total,
+        COUNT(*) FILTER (WHERE status_code BETWEEN 200 AND 299)::bigint AS success
+      FROM usage_records
+      WHERE created_at > NOW() - INTERVAL '5 hours'
+        AND attempt_kind = 'final'
+        AND (
+          split_part(target, '?', 1) IN ('/v1/messages', '/v1/chat/completions', '/v1/responses')
+          OR split_part(target, '?', 1) LIKE '/v1/responses/%'
+        )
+      GROUP BY routing_group_id, bucket_start
+      ORDER BY routing_group_id, bucket_start
+    `
+
+    const lastVerifiedQuery = `
+      SELECT DISTINCT ON (COALESCE(routing_group_id, ''))
+        COALESCE(routing_group_id, '') AS routing_group_id,
+        duration_ms,
+        created_at
+      FROM usage_records
+      WHERE created_at > NOW() - INTERVAL '24 hours'
+        AND attempt_kind = 'final'
+        AND status_code BETWEEN 200 AND 299
+        AND duration_ms IS NOT NULL
+        AND (
+          split_part(target, '?', 1) IN ('/v1/messages', '/v1/chat/completions', '/v1/responses')
+          OR split_part(target, '?', 1) LIKE '/v1/responses/%'
+        )
+      ORDER BY COALESCE(routing_group_id, ''), created_at DESC
+    `
+
+    const [windowResult, historyResult, lastVerifiedResult] = await Promise.all([
+      this.pool.query<{
+        routing_group_id: string
+        window_label: '5m' | '1h' | '24h'
+        total: string | number | bigint
+        success: string | number | bigint
+        p50_ms: string | number | null
+        p99_ms: string | number | null
+      }>(windowQuery),
+      this.pool.query<{
+        routing_group_id: string
+        bucket_start: Date
+        total: string | number | bigint
+        success: string | number | bigint
+      }>(historyQuery),
+      this.pool.query<{
+        routing_group_id: string
+        duration_ms: number
+        created_at: Date
+      }>(lastVerifiedQuery),
+    ])
+
+    const windows = new Map<string, ChannelUsageWindowStats>()
+    for (const row of windowResult.rows) {
+      const key = row.routing_group_id
+      const entry = windows.get(key) ?? {
+        last5m: emptyWindowSnapshot(),
+        last1h: emptyWindowSnapshot(),
+        last24h: emptyWindowSnapshot(),
+      }
+      const bucket =
+        row.window_label === '5m' ? entry.last5m
+        : row.window_label === '1h' ? entry.last1h
+        : entry.last24h
+      bucket.totalRequests = Number(row.total)
+      bucket.successRequests = Number(row.success)
+      bucket.successRate = bucket.totalRequests > 0
+        ? bucket.successRequests / bucket.totalRequests
+        : null
+      bucket.p50Ms = row.p50_ms == null ? null : Number(row.p50_ms)
+      bucket.p99Ms = row.p99_ms == null ? null : Number(row.p99_ms)
+      windows.set(key, entry)
+    }
+
+    const history = new Map<string, ChannelUsageHistoryBucket[]>()
+    for (const row of historyResult.rows) {
+      const key = row.routing_group_id
+      const list = history.get(key) ?? []
+      const total = Number(row.total)
+      const success = Number(row.success)
+      list.push({
+        bucketStart: row.bucket_start.toISOString(),
+        totalRequests: total,
+        successRequests: success,
+        successRate: total > 0 ? success / total : null,
+      })
+      history.set(key, list)
+    }
+
+    const lastVerified = new Map<string, ChannelLastVerified>()
+    for (const row of lastVerifiedResult.rows) {
+      lastVerified.set(row.routing_group_id, {
+        durationMs: Number(row.duration_ms),
+        atIso: row.created_at.toISOString(),
+      })
+    }
+
+    return { windows, history, lastVerified }
   }
 
   async getUserBalanceSummary(userId: string): Promise<BillingBalanceSummary | null> {
@@ -844,13 +1599,54 @@ export class BillingStore {
     }
   }
 
+  async findLedgerByExternalRef(externalRef: string): Promise<{
+    entry: BillingLedgerExternalRefEntry | null
+    multipleMatches: boolean
+  }> {
+    const result = await this.pool.query<{
+      id: string
+      user_id: string
+      kind: BillingLedgerKind
+      amount_micros: string | number | bigint
+      currency: string
+      note: string | null
+      external_ref: string
+      created_at: Date
+    }>(
+      `SELECT id, user_id, kind, amount_micros, currency, note, external_ref, created_at
+       FROM billing_balance_ledger
+       WHERE external_ref = $1
+       ORDER BY created_at DESC
+       LIMIT 2`,
+      [externalRef],
+    )
+    if (result.rows.length === 0) {
+      return { entry: null, multipleMatches: false }
+    }
+    const row = result.rows[0]!
+    return {
+      entry: {
+        id: row.id,
+        userId: row.user_id,
+        kind: row.kind,
+        amountMicros: readBigIntString(row.amount_micros),
+        currency: normalizeStoredBillingCurrency(row.currency),
+        note: row.note,
+        externalRef: row.external_ref,
+        createdAt: row.created_at.toISOString(),
+      },
+      multipleMatches: result.rows.length > 1,
+    }
+  }
+
   async assertUserCanConsume(userId: string): Promise<void> {
     const result = await this.pool.query<{
       billing_mode: string
       balance_micros: string | number | bigint
+      credit_limit_micros: string | number | bigint
       name: string | null
     }>(
-      `SELECT billing_mode, balance_micros, name
+      `SELECT billing_mode, balance_micros, credit_limit_micros, name
        FROM relay_users
        WHERE id = $1`,
       [userId],
@@ -860,11 +1656,16 @@ export class BillingStore {
       return
     }
 
-    if (row.billing_mode !== 'prepaid') {
-      return
+    const balanceMicros = BigInt(readBigIntString(row.balance_micros))
+    if (row.billing_mode === 'postpaid') {
+      const creditLimitMicros = BigInt(readBigIntString(row.credit_limit_micros))
+      if (balanceMicros > -creditLimitMicros) {
+        return
+      }
+      const displayName = sanitizeErrorMessage(normalizeNullable(row.name) ?? userId, userId)
+      throw new Error(`Postpaid credit limit exhausted for ${displayName}. Please increase credit limit or top up.`)
     }
 
-    const balanceMicros = BigInt(readBigIntString(row.balance_micros))
     if (balanceMicros > 0n) {
       return
     }
@@ -923,160 +1724,17 @@ export class BillingStore {
     }
   }
 
-  async createRule(input: BillingRuleInput): Promise<BillingRule> {
-    const name = normalizeRequiredText(input.name, {
-      field: 'name',
-      maxLength: MAX_BILLING_RULE_NAME_LENGTH,
-    })
-    const currency = normalizeBillingCurrency(input.currency ?? DEFAULT_BILLING_CURRENCY, {
-      field: 'currency',
-      fallback: DEFAULT_BILLING_CURRENCY,
-    })
-
-    const effectiveFrom = normalizeRuleDate(
-      input.effectiveFrom ?? null,
-      new Date().toISOString(),
-      'effectiveFrom',
-    )
-    const effectiveTo = normalizeOptionalRuleDate(input.effectiveTo ?? null, 'effectiveTo')
-    if (effectiveTo && Date.parse(effectiveTo) <= Date.parse(effectiveFrom)) {
-      throw new InputValidationError('effectiveTo must be after effectiveFrom')
-    }
-
-    const id = crypto.randomUUID()
-    const result = await this.pool.query<BillingRuleRow>(
-      `INSERT INTO billing_price_rules (
-        id, name, is_active, priority, currency, provider, account_id, user_id, model,
-        effective_from, effective_to,
-        input_price_micros_per_million, output_price_micros_per_million,
-        cache_creation_price_micros_per_million, cache_read_price_micros_per_million
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-      RETURNING *`,
-      [
-        id,
-        name,
-        input.isActive ?? true,
-        Number.isFinite(Number(input.priority)) ? Math.floor(Number(input.priority)) : 0,
-        currency,
-        normalizeScopeField(input.provider, 'provider'),
-        normalizeScopeField(input.accountId, 'accountId'),
-        normalizeScopeField(input.userId, 'userId'),
-        normalizeScopeField(input.model, 'model'),
-        effectiveFrom,
-        effectiveTo,
-        normalizeRuleMicros(input.inputPriceMicrosPerMillion, 'inputPriceMicrosPerMillion'),
-        normalizeRuleMicros(input.outputPriceMicrosPerMillion, 'outputPriceMicrosPerMillion'),
-        normalizeRuleMicros(input.cacheCreationPriceMicrosPerMillion, 'cacheCreationPriceMicrosPerMillion'),
-        normalizeRuleMicros(input.cacheReadPriceMicrosPerMillion, 'cacheReadPriceMicrosPerMillion'),
-      ],
-    )
-    return toBillingRule(result.rows[0]!)
-  }
-
-  async updateRule(ruleId: string, input: Partial<BillingRuleInput>): Promise<BillingRule | null> {
-    const { rows } = await this.pool.query<BillingRuleRow>(
-      'SELECT * FROM billing_price_rules WHERE id = $1',
-      [ruleId],
-    )
-    if (!rows.length) {
-      return null
-    }
-
-    const current = toBillingRule(rows[0]!)
-    const currency = input.currency === undefined
-      ? current.currency
-      : normalizeBillingCurrency(input.currency, {
-        field: 'currency',
-        fallback: DEFAULT_BILLING_CURRENCY,
-      })
-    const name = input.name === undefined
-      ? current.name
-      : normalizeRequiredText(input.name, {
-        field: 'name',
-        maxLength: MAX_BILLING_RULE_NAME_LENGTH,
-      })
-
-    const effectiveFrom = input.effectiveFrom === undefined
-      ? current.effectiveFrom
-      : normalizeRuleDate(input.effectiveFrom ?? null, current.effectiveFrom, 'effectiveFrom')
-    const effectiveTo = input.effectiveTo === undefined
-      ? current.effectiveTo
-      : normalizeOptionalRuleDate(input.effectiveTo ?? null, 'effectiveTo')
-    if (effectiveTo && Date.parse(effectiveTo) <= Date.parse(effectiveFrom)) {
-      throw new InputValidationError('effectiveTo must be after effectiveFrom')
-    }
-
-    const result = await this.pool.query<BillingRuleRow>(
-      `UPDATE billing_price_rules
-       SET name = $2,
-           is_active = $3,
-           priority = $4,
-           currency = $5,
-           provider = $6,
-           account_id = $7,
-           user_id = $8,
-           model = $9,
-           effective_from = $10,
-           effective_to = $11,
-           input_price_micros_per_million = $12,
-           output_price_micros_per_million = $13,
-           cache_creation_price_micros_per_million = $14,
-           cache_read_price_micros_per_million = $15,
-           updated_at = NOW()
-       WHERE id = $1
-       RETURNING *`,
-      [
-        ruleId,
-        name,
-        input.isActive ?? current.isActive,
-        input.priority === undefined ? current.priority : (
-          Number.isFinite(Number(input.priority))
-            ? Math.floor(Number(input.priority))
-            : current.priority
-        ),
-        currency,
-        input.provider === undefined ? current.provider : normalizeScopeField(input.provider, 'provider'),
-        input.accountId === undefined ? current.accountId : normalizeScopeField(input.accountId, 'accountId'),
-        input.userId === undefined ? current.userId : normalizeScopeField(input.userId, 'userId'),
-        input.model === undefined ? current.model : normalizeScopeField(input.model, 'model'),
-        effectiveFrom,
-        effectiveTo,
-        input.inputPriceMicrosPerMillion === undefined
-          ? current.inputPriceMicrosPerMillion
-          : normalizeRuleMicros(input.inputPriceMicrosPerMillion, 'inputPriceMicrosPerMillion'),
-        input.outputPriceMicrosPerMillion === undefined
-          ? current.outputPriceMicrosPerMillion
-          : normalizeRuleMicros(input.outputPriceMicrosPerMillion, 'outputPriceMicrosPerMillion'),
-        input.cacheCreationPriceMicrosPerMillion === undefined
-          ? current.cacheCreationPriceMicrosPerMillion
-          : normalizeRuleMicros(input.cacheCreationPriceMicrosPerMillion, 'cacheCreationPriceMicrosPerMillion'),
-        input.cacheReadPriceMicrosPerMillion === undefined
-          ? current.cacheReadPriceMicrosPerMillion
-          : normalizeRuleMicros(input.cacheReadPriceMicrosPerMillion, 'cacheReadPriceMicrosPerMillion'),
-      ],
-    )
-    return toBillingRule(result.rows[0]!)
-  }
-
-  async deleteRule(ruleId: string): Promise<boolean> {
-    if (ruleId.startsWith(`${SYSTEM_FALLBACK_RULE_ID_PREFIX}-`)) {
-      throw new InputValidationError('System fallback billing rules cannot be deleted')
-    }
-    const result = await this.pool.query('DELETE FROM billing_price_rules WHERE id = $1', [ruleId])
-    return Boolean(result.rowCount)
-  }
-
   async preflightBillableRequest(input: BillingPreflightInput): Promise<BillingPreflightResult> {
-    const rules = await this.listRules(input.billingCurrency)
-    const resolved = resolveBillingLineItem({
+    const candidate: BillingUsageCandidate = {
       usageRecordId: 0,
       requestId: 'preflight',
       userId: input.userId,
       userName: null,
       billingCurrency: input.billingCurrency,
       accountId: input.accountId,
-      provider: input.provider,
+      provider: normalizeUsageProvider(input.provider),
       model: input.model,
+      routingGroupId: input.routingGroupId,
       sessionKey: null,
       clientDeviceId: null,
       target: input.target,
@@ -1086,37 +1744,23 @@ export class BillingStore {
       cacheReadInputTokens: 0,
       statusCode: 200,
       createdAt: new Date().toISOString(),
-    }, rules)
+    }
+    const resolvedSku = await this.findResolvedSkuForUsage(candidate, input.protocolOverride ?? null)
+    const resolved = resolveBillingLineItem(candidate, resolvedSku)
     if (resolved.status !== 'billed') {
-      return {
-        ok: false,
-        status: 'missing_rule',
-        matchedRuleId: resolved.matchedRuleId,
-        matchedRuleName: resolved.matchedRuleName,
-      }
+      return { ok: false, status: 'missing_sku' }
     }
     if (BigInt(resolved.amountMicros) <= 0n) {
-      return {
-        ok: false,
-        status: 'zero_price',
-        matchedRuleId: resolved.matchedRuleId,
-        matchedRuleName: resolved.matchedRuleName,
-      }
+      return { ok: false, status: 'zero_price' }
     }
-    return {
-      ok: true,
-      status: 'billed',
-      matchedRuleId: resolved.matchedRuleId,
-      matchedRuleName: resolved.matchedRuleName,
-    }
+    return { ok: true, status: 'billed' }
   }
 
   async syncLineItems(options?: { reconcileMissing?: boolean }): Promise<BillingSyncResult> {
-    const rules = await this.listRules()
     const result: BillingSyncResult = {
       processedRequests: 0,
       billedRequests: 0,
-      missingRuleRequests: 0,
+      missingSkuRequests: 0,
       invalidUsageRequests: 0,
     }
 
@@ -1127,7 +1771,7 @@ export class BillingStore {
         break
       }
 
-      await this.upsertCandidates(batch, rules, result)
+      await this.upsertCandidates(batch, result)
       lastUsageId = batch[batch.length - 1]!.usageRecordId
       await this.setLastUsageRecordId(lastUsageId)
     }
@@ -1135,12 +1779,12 @@ export class BillingStore {
     if (options?.reconcileMissing) {
       let lastMissingUsageId = 0
       while (true) {
-        const pending = await this.loadCandidatesForStatus('missing_rule', lastMissingUsageId, 500)
+        const pending = await this.loadCandidatesForStatus('missing_sku', lastMissingUsageId, 500)
         if (!pending.length) {
           break
         }
 
-        await this.upsertCandidates(pending, rules, result)
+        await this.upsertCandidates(pending, result)
         lastMissingUsageId = pending[pending.length - 1]!.usageRecordId
       }
     }
@@ -1154,7 +1798,6 @@ export class BillingStore {
       return
     }
 
-    const rules = await this.listRules()
     const candidate = await this.loadUsageCandidateById(normalizedUsageRecordId)
     if (!candidate) {
       return
@@ -1163,10 +1806,10 @@ export class BillingStore {
     const result: BillingSyncResult = {
       processedRequests: 0,
       billedRequests: 0,
-      missingRuleRequests: 0,
+      missingSkuRequests: 0,
       invalidUsageRequests: 0,
     }
-    await this.upsertCandidates([candidate], rules, result)
+    await this.upsertCandidates([candidate], result)
   }
 
   async rebuildLineItems(): Promise<BillingSyncResult> {
@@ -1197,12 +1840,12 @@ export class BillingStore {
       { field: 'currency', fallback: DEFAULT_BILLING_CURRENCY },
     )
     await this.syncLineItems()
-    const [aggregateResult, activeRulesResult] = await Promise.all([
+    const [aggregateResult, activeSkusResult] = await Promise.all([
       this.pool.query<AggregateRow>(
         `SELECT
            COUNT(*)::int AS total_requests,
            COUNT(*) FILTER (WHERE status = 'billed')::int AS billed_requests,
-           COUNT(*) FILTER (WHERE status = 'missing_rule')::int AS missing_rule_requests,
+           COUNT(*) FILTER (WHERE status = 'missing_sku')::int AS missing_sku_requests,
            COUNT(*) FILTER (WHERE status = 'invalid_usage')::int AS invalid_usage_requests,
            COALESCE(SUM(input_tokens), 0)::bigint AS total_input_tokens,
            COALESCE(SUM(output_tokens), 0)::bigint AS total_output_tokens,
@@ -1218,7 +1861,7 @@ export class BillingStore {
       ),
       this.pool.query<{ count: string }>(
         `SELECT COUNT(*)::int AS count
-         FROM billing_price_rules
+         FROM billing_base_skus
          WHERE is_active = true
            AND currency = $1`,
         [normalizedCurrency],
@@ -1228,7 +1871,7 @@ export class BillingStore {
     const row = aggregateResult.rows[0] ?? {
       total_requests: 0,
       billed_requests: 0,
-      missing_rule_requests: 0,
+      missing_sku_requests: 0,
       invalid_usage_requests: 0,
       total_input_tokens: 0,
       total_output_tokens: 0,
@@ -1243,7 +1886,7 @@ export class BillingStore {
       currency: normalizedCurrency,
       totalRequests: Number(row.total_requests ?? 0),
       billedRequests: Number(row.billed_requests ?? 0),
-      missingRuleRequests: Number(row.missing_rule_requests ?? 0),
+      missingSkuRequests: Number(row.missing_sku_requests ?? 0),
       invalidUsageRequests: Number(row.invalid_usage_requests ?? 0),
       totalInputTokens: readInt(row.total_input_tokens),
       totalOutputTokens: readInt(row.total_output_tokens),
@@ -1251,7 +1894,7 @@ export class BillingStore {
       totalCacheReadTokens: readInt(row.total_cache_read_tokens),
       totalAmountMicros: readBigIntString(row.total_amount_micros),
       uniqueUsers: Number(row.unique_users ?? 0),
-      activeRules: Number(activeRulesResult.rows[0]?.count ?? 0),
+      activeSkus: Number(activeSkusResult.rows[0]?.count ?? 0),
       period: {
         from: sinceDate.toISOString(),
         to: row.last_active_at ? new Date(row.last_active_at).toISOString() : new Date().toISOString(),
@@ -1272,7 +1915,7 @@ export class BillingStore {
       currency: string
       total_requests: number
       billed_requests: number
-      missing_rule_requests: number
+      missing_sku_requests: number
       invalid_usage_requests: number
       total_input_tokens: string | number | bigint
       total_output_tokens: string | number | bigint
@@ -1287,7 +1930,7 @@ export class BillingStore {
          MAX(currency) AS currency,
          COUNT(*)::int AS total_requests,
          COUNT(*) FILTER (WHERE status = 'billed')::int AS billed_requests,
-         COUNT(*) FILTER (WHERE status = 'missing_rule')::int AS missing_rule_requests,
+         COUNT(*) FILTER (WHERE status = 'missing_sku')::int AS missing_sku_requests,
          COUNT(*) FILTER (WHERE status = 'invalid_usage')::int AS invalid_usage_requests,
          COALESCE(SUM(input_tokens), 0)::bigint AS total_input_tokens,
          COALESCE(SUM(output_tokens), 0)::bigint AS total_output_tokens,
@@ -1309,7 +1952,7 @@ export class BillingStore {
       currency: normalizeStoredBillingCurrency(row.currency),
       totalRequests: Number(row.total_requests ?? 0),
       billedRequests: Number(row.billed_requests ?? 0),
-      missingRuleRequests: Number(row.missing_rule_requests ?? 0),
+      missingSkuRequests: Number(row.missing_sku_requests ?? 0),
       invalidUsageRequests: Number(row.invalid_usage_requests ?? 0),
       totalInputTokens: readInt(row.total_input_tokens),
       totalOutputTokens: readInt(row.total_output_tokens),
@@ -1329,7 +1972,7 @@ export class BillingStore {
         `SELECT
            COUNT(*)::int AS total_requests,
            COUNT(*) FILTER (WHERE status = 'billed')::int AS billed_requests,
-           COUNT(*) FILTER (WHERE status = 'missing_rule')::int AS missing_rule_requests,
+           COUNT(*) FILTER (WHERE status = 'missing_sku')::int AS missing_sku_requests,
            COUNT(*) FILTER (WHERE status = 'invalid_usage')::int AS invalid_usage_requests,
            COALESCE(SUM(input_tokens), 0)::bigint AS total_input_tokens,
            COALESCE(SUM(output_tokens), 0)::bigint AS total_output_tokens,
@@ -1348,7 +1991,7 @@ export class BillingStore {
         period_start: Date
         total_requests: number
         billed_requests: number
-        missing_rule_requests: number
+        missing_sku_requests: number
         invalid_usage_requests: number
         total_input_tokens: string | number | bigint
         total_output_tokens: string | number | bigint
@@ -1358,7 +2001,7 @@ export class BillingStore {
            date_trunc('month', usage_created_at) AS period_start,
            COUNT(*)::int AS total_requests,
            COUNT(*) FILTER (WHERE status = 'billed')::int AS billed_requests,
-           COUNT(*) FILTER (WHERE status = 'missing_rule')::int AS missing_rule_requests,
+           COUNT(*) FILTER (WHERE status = 'missing_sku')::int AS missing_sku_requests,
            COUNT(*) FILTER (WHERE status = 'invalid_usage')::int AS invalid_usage_requests,
            COALESCE(SUM(input_tokens), 0)::bigint AS total_input_tokens,
            COALESCE(SUM(output_tokens), 0)::bigint AS total_output_tokens,
@@ -1374,7 +2017,7 @@ export class BillingStore {
         model: string | null
         total_requests: number
         billed_requests: number
-        missing_rule_requests: number
+        missing_sku_requests: number
         invalid_usage_requests: number
         total_input_tokens: string | number | bigint
         total_output_tokens: string | number | bigint
@@ -1384,7 +2027,7 @@ export class BillingStore {
            model,
            COUNT(*)::int AS total_requests,
            COUNT(*) FILTER (WHERE status = 'billed')::int AS billed_requests,
-           COUNT(*) FILTER (WHERE status = 'missing_rule')::int AS missing_rule_requests,
+           COUNT(*) FILTER (WHERE status = 'missing_sku')::int AS missing_sku_requests,
            COUNT(*) FILTER (WHERE status = 'invalid_usage')::int AS invalid_usage_requests,
            COALESCE(SUM(input_tokens), 0)::bigint AS total_input_tokens,
            COALESCE(SUM(output_tokens), 0)::bigint AS total_output_tokens,
@@ -1409,7 +2052,7 @@ export class BillingStore {
       currency: normalizeStoredBillingCurrency((total as AggregateRow & { currency?: string | null }).currency),
       totalRequests: Number(total.total_requests ?? 0),
       billedRequests: Number(total.billed_requests ?? 0),
-      missingRuleRequests: Number(total.missing_rule_requests ?? 0),
+      missingSkuRequests: Number(total.missing_sku_requests ?? 0),
       invalidUsageRequests: Number(total.invalid_usage_requests ?? 0),
       totalInputTokens: readInt(total.total_input_tokens),
       totalOutputTokens: readInt(total.total_output_tokens),
@@ -1421,7 +2064,7 @@ export class BillingStore {
         periodStart: row.period_start.toISOString().slice(0, 7),
         totalRequests: Number(row.total_requests ?? 0),
         billedRequests: Number(row.billed_requests ?? 0),
-        missingRuleRequests: Number(row.missing_rule_requests ?? 0),
+        missingSkuRequests: Number(row.missing_sku_requests ?? 0),
         invalidUsageRequests: Number(row.invalid_usage_requests ?? 0),
         totalInputTokens: readInt(row.total_input_tokens),
         totalOutputTokens: readInt(row.total_output_tokens),
@@ -1431,7 +2074,7 @@ export class BillingStore {
         model: normalizeNullable(row.model) ?? '(unknown)',
         totalRequests: Number(row.total_requests ?? 0),
         billedRequests: Number(row.billed_requests ?? 0),
-        missingRuleRequests: Number(row.missing_rule_requests ?? 0),
+        missingSkuRequests: Number(row.missing_sku_requests ?? 0),
         invalidUsageRequests: Number(row.invalid_usage_requests ?? 0),
         totalInputTokens: readInt(row.total_input_tokens),
         totalOutputTokens: readInt(row.total_output_tokens),
@@ -1453,12 +2096,11 @@ export class BillingStore {
         usage_record_id: number
         request_id: string
         currency: string
-        status: 'billed' | 'missing_rule' | 'invalid_usage'
-        matched_rule_id: string | null
-        matched_rule_name: string | null
+        status: 'billed' | 'missing_sku' | 'invalid_usage'
         account_id: string | null
         provider: string | null
         model: string | null
+        routing_group_id: string | null
         target: string
         session_key: string | null
         client_device_id: string | null
@@ -1470,8 +2112,8 @@ export class BillingStore {
         usage_created_at: Date
       }>(
         `SELECT
-           usage_record_id, request_id, currency, status, matched_rule_id, matched_rule_name,
-           account_id, provider, model, target, session_key, client_device_id,
+           usage_record_id, request_id, currency, status,
+           account_id, provider, model, routing_group_id, target, session_key, client_device_id,
            input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens,
            amount_micros, usage_created_at
          FROM billing_line_items
@@ -1496,11 +2138,10 @@ export class BillingStore {
         requestId: row.request_id,
         currency: normalizeStoredBillingCurrency(row.currency),
         status: row.status,
-        matchedRuleId: row.matched_rule_id,
-        matchedRuleName: row.matched_rule_name,
         accountId: row.account_id,
-        provider: row.provider,
+        provider: normalizeUsageProvider(row.provider),
         model: row.model,
+        routingGroupId: row.routing_group_id ?? null,
         target: row.target,
         sessionKey: row.session_key,
         clientDeviceId: row.client_device_id,
@@ -1532,7 +2173,7 @@ export class BillingStore {
           `SELECT
              COUNT(*)::int AS total_requests,
              COUNT(*) FILTER (WHERE status = 'billed')::int AS billed_requests,
-             COUNT(*) FILTER (WHERE status = 'missing_rule')::int AS missing_rule_requests,
+             COUNT(*) FILTER (WHERE status = 'missing_sku')::int AS missing_sku_requests,
              COUNT(*) FILTER (WHERE status = 'invalid_usage')::int AS invalid_usage_requests,
              COALESCE(SUM(input_tokens), 0)::bigint AS total_input_tokens,
              COALESCE(SUM(output_tokens), 0)::bigint AS total_output_tokens,
@@ -1578,7 +2219,7 @@ export class BillingStore {
           model: string | null
           total_requests: number
           billed_requests: number
-          missing_rule_requests: number
+          missing_sku_requests: number
           invalid_usage_requests: number
           total_input_tokens: string | number | bigint
           total_output_tokens: string | number | bigint
@@ -1588,7 +2229,7 @@ export class BillingStore {
              model,
              COUNT(*)::int AS total_requests,
              COUNT(*) FILTER (WHERE status = 'billed')::int AS billed_requests,
-             COUNT(*) FILTER (WHERE status = 'missing_rule')::int AS missing_rule_requests,
+             COUNT(*) FILTER (WHERE status = 'missing_sku')::int AS missing_sku_requests,
              COUNT(*) FILTER (WHERE status = 'invalid_usage')::int AS invalid_usage_requests,
              COALESCE(SUM(input_tokens), 0)::bigint AS total_input_tokens,
              COALESCE(SUM(output_tokens), 0)::bigint AS total_output_tokens,
@@ -1604,12 +2245,11 @@ export class BillingStore {
           usage_record_id: number
           request_id: string
           currency: string
-          status: 'billed' | 'missing_rule' | 'invalid_usage'
-          matched_rule_id: string | null
-          matched_rule_name: string | null
+          status: 'billed' | 'missing_sku' | 'invalid_usage'
           account_id: string | null
           provider: string | null
           model: string | null
+          routing_group_id: string | null
           target: string
           session_key: string | null
           client_device_id: string | null
@@ -1621,8 +2261,8 @@ export class BillingStore {
           usage_created_at: Date
         }>(
           `SELECT
-             usage_record_id, request_id, currency, status, matched_rule_id, matched_rule_name,
-             account_id, provider, model, target, session_key, client_device_id,
+             usage_record_id, request_id, currency, status,
+             account_id, provider, model, routing_group_id, target, session_key, client_device_id,
              input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens,
              amount_micros, usage_created_at
            FROM billing_line_items
@@ -1651,7 +2291,7 @@ export class BillingStore {
         : null,
       totalRequests,
       billedRequests: Number(total?.billed_requests ?? 0),
-      missingRuleRequests: Number(total?.missing_rule_requests ?? 0),
+      missingSkuRequests: Number(total?.missing_sku_requests ?? 0),
       invalidUsageRequests: Number(total?.invalid_usage_requests ?? 0),
       totalInputTokens: total ? readInt(total.total_input_tokens) : 0,
       totalOutputTokens: total ? readInt(total.total_output_tokens) : 0,
@@ -1673,7 +2313,7 @@ export class BillingStore {
         model: normalizeNullable(row.model) ?? '(unknown)',
         totalRequests: Number(row.total_requests ?? 0),
         billedRequests: Number(row.billed_requests ?? 0),
-        missingRuleRequests: Number(row.missing_rule_requests ?? 0),
+        missingSkuRequests: Number(row.missing_sku_requests ?? 0),
         invalidUsageRequests: Number(row.invalid_usage_requests ?? 0),
         totalInputTokens: readInt(row.total_input_tokens),
         totalOutputTokens: readInt(row.total_output_tokens),
@@ -1684,11 +2324,10 @@ export class BillingStore {
         requestId: row.request_id,
         currency: normalizeStoredBillingCurrency(row.currency),
         status: row.status,
-        matchedRuleId: row.matched_rule_id,
-        matchedRuleName: row.matched_rule_name,
         accountId: row.account_id,
         provider: row.provider,
         model: row.model,
+        routingGroupId: row.routing_group_id ?? null,
         target: row.target,
         sessionKey: row.session_key,
         clientDeviceId: row.client_device_id,
@@ -1711,7 +2350,6 @@ export class BillingStore {
 
   private async upsertCandidates(
     candidates: BillingUsageCandidate[],
-    rules: BillingRule[],
     result: BillingSyncResult,
   ): Promise<void> {
     if (!candidates.length) {
@@ -1722,21 +2360,22 @@ export class BillingStore {
     try {
       await client.query('BEGIN')
       for (const candidate of candidates) {
-        const resolved = resolveBillingLineItem(candidate, rules)
+        const resolvedSku = await this.findResolvedSkuForUsage(candidate)
+        const resolved = resolveBillingLineItem(candidate, resolvedSku)
         await client.query(
           `INSERT INTO billing_line_items (
-            usage_record_id, request_id, user_id, user_name, account_id, provider, model,
-            session_key, client_device_id, target, currency, status, matched_rule_id, matched_rule_name,
+            usage_record_id, request_id, user_id, user_name, account_id, provider, model, routing_group_id,
+            session_key, client_device_id, target, currency, status, matched_base_sku_id, matched_multiplier_micros,
             input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens,
             input_price_micros_per_million, output_price_micros_per_million,
             cache_creation_price_micros_per_million, cache_read_price_micros_per_million,
             amount_micros, usage_created_at, updated_at
           ) VALUES (
-            $1,$2,$3,$4,$5,$6,$7,
-            $8,$9,$10,$11,$12,$13,$14,
-            $15,$16,$17,$18,
-            $19,$20,$21,$22,
-            $23,$24,NOW()
+            $1,$2,$3,$4,$5,$6,$7,$8,
+            $9,$10,$11,$12,$13,$14,$15,
+            $16,$17,$18,$19,
+            $20,$21,$22,$23,
+            $24,$25,NOW()
           )
           ON CONFLICT (usage_record_id) DO UPDATE SET
             request_id = EXCLUDED.request_id,
@@ -1745,13 +2384,14 @@ export class BillingStore {
             account_id = EXCLUDED.account_id,
             provider = EXCLUDED.provider,
             model = EXCLUDED.model,
+            routing_group_id = EXCLUDED.routing_group_id,
             session_key = EXCLUDED.session_key,
             client_device_id = EXCLUDED.client_device_id,
             target = EXCLUDED.target,
             currency = EXCLUDED.currency,
             status = EXCLUDED.status,
-            matched_rule_id = EXCLUDED.matched_rule_id,
-            matched_rule_name = EXCLUDED.matched_rule_name,
+            matched_base_sku_id = EXCLUDED.matched_base_sku_id,
+            matched_multiplier_micros = EXCLUDED.matched_multiplier_micros,
             input_tokens = EXCLUDED.input_tokens,
             output_tokens = EXCLUDED.output_tokens,
             cache_creation_input_tokens = EXCLUDED.cache_creation_input_tokens,
@@ -1771,13 +2411,14 @@ export class BillingStore {
             candidate.accountId,
             candidate.provider,
             candidate.model,
+            candidate.routingGroupId,
             candidate.sessionKey,
             candidate.clientDeviceId,
             candidate.target,
             resolved.currency,
             resolved.status,
-            resolved.matchedRuleId,
-            resolved.matchedRuleName,
+            resolvedSku?.baseSkuId ?? null,
+            resolvedSku?.multiplierMicros ?? null,
             candidate.inputTokens,
             candidate.outputTokens,
             candidate.cacheCreationInputTokens,
@@ -1790,13 +2431,13 @@ export class BillingStore {
             candidate.createdAt,
           ],
         )
-        await this.syncUsageDebitLedgerEntry(client, candidate, resolved)
+        await this.syncUsageDebitLedgerEntry(client, candidate, resolved, resolvedSku)
 
         result.processedRequests += 1
         if (resolved.status === 'billed') {
           result.billedRequests += 1
-        } else if (resolved.status === 'missing_rule') {
-          result.missingRuleRequests += 1
+        } else if (resolved.status === 'missing_sku') {
+          result.missingSkuRequests += 1
         } else {
           result.invalidUsageRequests += 1
         }
@@ -1841,6 +2482,7 @@ export class BillingStore {
       account_id: string | null
       provider: string | null
       model: string | null
+      routing_group_id: string | null
       session_key: string | null
       client_device_id: string | null
       target: string
@@ -1860,6 +2502,7 @@ export class BillingStore {
          u.account_id,
          a.data->>'provider' AS provider,
          u.model,
+         u.routing_group_id,
          u.session_key,
          u.client_device_id,
          u.target,
@@ -1896,6 +2539,7 @@ export class BillingStore {
         accountId: row.account_id,
         provider: row.provider,
         model: row.model,
+        routingGroupId: row.routing_group_id,
         sessionKey: row.session_key,
         clientDeviceId: row.client_device_id,
         target: row.target,
@@ -1920,6 +2564,7 @@ export class BillingStore {
       account_id: string | null
       provider: string | null
       model: string | null
+      routing_group_id: string | null
       session_key: string | null
       client_device_id: string | null
       target: string
@@ -1939,6 +2584,7 @@ export class BillingStore {
          u.account_id,
          a.data->>'provider' AS provider,
          u.model,
+         u.routing_group_id,
          u.session_key,
          u.client_device_id,
          u.target,
@@ -1973,8 +2619,9 @@ export class BillingStore {
       userName: row.user_name,
       billingCurrency: normalizeStoredBillingCurrency(row.billing_currency),
       accountId: row.account_id,
-      provider: row.provider,
+      provider: normalizeUsageProvider(row.provider),
       model: row.model,
+      routingGroupId: row.routing_group_id,
       sessionKey: row.session_key,
       clientDeviceId: row.client_device_id,
       target: row.target,
@@ -1988,7 +2635,7 @@ export class BillingStore {
   }
 
   private async loadCandidatesForStatus(
-    status: 'missing_rule',
+    status: 'missing_sku',
     afterUsageRecordId: number,
     limit: number,
   ): Promise<BillingUsageCandidate[]> {
@@ -2001,6 +2648,7 @@ export class BillingStore {
       account_id: string | null
       provider: string | null
       model: string | null
+      routing_group_id: string | null
       session_key: string | null
       client_device_id: string | null
       target: string
@@ -2020,6 +2668,7 @@ export class BillingStore {
          u.account_id,
          a.data->>'provider' AS provider,
          u.model,
+         u.routing_group_id,
          u.session_key,
          u.client_device_id,
          u.target,
@@ -2047,8 +2696,9 @@ export class BillingStore {
       userName: row.user_name,
       billingCurrency: normalizeStoredBillingCurrency(row.billing_currency),
       accountId: row.account_id,
-      provider: row.provider,
-      model: row.model,
+        provider: normalizeUsageProvider(row.provider),
+        model: row.model,
+      routingGroupId: row.routing_group_id,
       sessionKey: row.session_key,
       clientDeviceId: row.client_device_id,
       target: row.target,
@@ -2065,11 +2715,16 @@ export class BillingStore {
     client: pg.PoolClient,
     candidate: BillingUsageCandidate,
     resolved: ReturnType<typeof resolveBillingLineItem>,
+    resolvedSku: BillingResolvedSku | null,
   ): Promise<void> {
     const targetAmountMicros =
       resolved.status === 'billed'
         ? (-BigInt(resolved.amountMicros)).toString()
         : '0'
+
+    const note = resolvedSku
+      ? `Usage charge via ${resolvedSku.displayName}`
+      : 'Usage charge'
 
     const existingResult = await client.query<{
       id: string
@@ -2112,9 +2767,7 @@ export class BillingStore {
           candidate.userId,
           targetAmountMicros,
           resolved.currency,
-          resolved.matchedRuleName
-            ? `Usage charge via ${resolved.matchedRuleName}`
-            : 'Usage charge',
+          note,
           candidate.usageRecordId,
           candidate.requestId,
         ],
@@ -2144,9 +2797,7 @@ export class BillingStore {
           existing.id,
           targetAmountMicros,
           resolved.currency,
-          resolved.matchedRuleName
-            ? `Usage charge via ${resolved.matchedRuleName}`
-            : 'Usage charge',
+          note,
           candidate.requestId,
         ],
       )

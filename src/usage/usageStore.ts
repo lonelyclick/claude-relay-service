@@ -6,6 +6,7 @@ export interface UsageRecord {
   requestId: string
   accountId: string | null
   userId: string | null
+  routingGroupId?: string | null
   sessionKey: string | null
   clientDeviceId?: string | null
   relayKeySource?: RelayKeySource | null
@@ -112,6 +113,7 @@ const CREATE_INDEXES_SQL = [
   'CREATE INDEX IF NOT EXISTS idx_usage_records_account_id ON usage_records (account_id)',
   'CREATE INDEX IF NOT EXISTS idx_usage_records_created_at ON usage_records (created_at)',
   'CREATE INDEX IF NOT EXISTS idx_usage_records_model ON usage_records (model)',
+  'CREATE INDEX IF NOT EXISTS idx_usage_records_routing_group_created ON usage_records (routing_group_id, created_at DESC)',
 ]
 
 function resolveUsageAccountIdentity(
@@ -144,6 +146,7 @@ export class UsageStore {
     try {
       await client.query(CREATE_TABLE_SQL)
       await client.query('ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS relay_key_source TEXT')
+      await client.query('ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS routing_group_id TEXT')
       for (const sql of CREATE_INDEXES_SQL) {
         await client.query(sql)
       }
@@ -155,19 +158,24 @@ export class UsageStore {
   async insertRecord(record: UsageRecord): Promise<number> {
     const result = await this.pool.query<{ id: number }>(
       `INSERT INTO usage_records (
-        request_id, account_id, user_id, session_key, client_device_id, attempt_kind, model,
+        request_id, account_id, user_id, routing_group_id, session_key, client_device_id, attempt_kind, model,
         input_tokens, output_tokens,
         cache_creation_input_tokens, cache_read_input_tokens,
         status_code, duration_ms, target,
         rate_limit_status, rate_limit_5h_utilization,
         rate_limit_7d_utilization, rate_limit_reset, relay_key_source,
         request_headers, request_body_preview, response_headers, response_body_preview, upstream_request_headers
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+      ) VALUES (
+        $1,$2,$3,
+        COALESCE($4, (SELECT NULLIF(COALESCE(a.data->>'routingGroupId', a.data->>'group'), '') FROM accounts a WHERE a.id = $2)),
+        $5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
+      )
       RETURNING id`,
       [
         record.requestId,
         record.accountId,
         record.userId,
+        record.routingGroupId ?? null,
         record.sessionKey,
         record.clientDeviceId ?? null,
         record.attemptKind ?? 'final',

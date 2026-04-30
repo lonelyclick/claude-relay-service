@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { generateAuthUrl, exchangeCode, loginWithSessionKey, importTokens, createOpenAICompatibleAccount, createClaudeCompatibleAccount, startGeminiLogin, getGeminiLoginStatus, manualExchangeGemini } from '~/api/accounts'
 import { listRoutingGroups } from '~/api/routing'
 import { listProxies } from '~/api/proxies'
-import type { Proxy } from '~/api/types'
+import type { Proxy, RoutingGroup } from '~/api/types'
 import { useToast } from '~/components/Toast'
 import { cn } from '~/lib/cn'
 
@@ -43,8 +43,8 @@ export function OnboardPage() {
             className={cn(
               'px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
               provider === p.id
-                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/40'
-                : 'bg-ccdash-card border border-ccdash-border text-slate-400 hover:text-slate-200',
+                ? 'bg-accent-muted text-indigo-400 border border-accent'
+                : 'bg-bg-card border border-border-default text-slate-400 hover:text-slate-200',
             )}
           >
             {p.label}
@@ -61,8 +61,8 @@ export function OnboardPage() {
               className={cn(
                 'px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
                 authMethod === m.id
-                  ? 'bg-slate-500/20 text-slate-200 border border-slate-500/40'
-                  : 'bg-ccdash-card border border-ccdash-border text-slate-500 hover:text-slate-300',
+                  ? 'bg-slate-500/15 text-slate-200 border border-slate-500/40'
+                  : 'bg-bg-card border border-border-default text-slate-500 hover:text-slate-300',
               )}
             >
               {m.label}
@@ -82,17 +82,25 @@ export function OnboardPage() {
   )
 }
 
-function GroupSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function routingGroupTypeLabel(type: RoutingGroup['type']): string {
+  if (type === 'anthropic') return 'Anthropic'
+  if (type === 'openai') return 'Openai'
+  return 'Google'
+}
+
+function GroupSelect({ value, onChange, type }: { value: string; onChange: (v: string) => void; type: RoutingGroup['type'] }) {
   const { data } = useQuery({ queryKey: ['routing-groups'], queryFn: listRoutingGroups })
+  const groups = (data?.routingGroups ?? []).filter((group) => group.type === type)
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200 w-full"
+      required
+      className="bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200 w-full"
     >
-      <option value="">Default (no group)</option>
-      {(data?.routingGroups ?? []).map((g) => (
-        <option key={g.id} value={g.id}>{g.name || g.id}</option>
+      <option value="">Select {routingGroupTypeLabel(type)} group</option>
+      {groups.map((g) => (
+        <option key={g.id} value={g.id}>{g.name || g.id}{g.descriptionZh ? ` — ${g.descriptionZh}` : ''}</option>
       ))}
     </select>
   )
@@ -126,7 +134,7 @@ export function ProxySelect({ value, onChange }: { value: string; onChange: (v: 
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200 w-full"
+        className="bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200 w-full"
       >
         <option value="">None (direct)</option>
         {usableProxies.map((proxy) => (
@@ -165,7 +173,7 @@ function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
     <input
       {...props}
       className={cn(
-        'bg-ccdash-input border border-ccdash-border rounded-lg px-3 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-full focus:outline-none focus:border-blue-500/50',
+        'bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 w-full focus:outline-none focus:border-accent',
         props.className,
       )}
     />
@@ -177,7 +185,7 @@ function SubmitButton({ loading, children }: { loading: boolean; children: React
     <button
       type="submit"
       disabled={loading}
-      className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 transition-colors"
+      className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors duration-150 disabled:opacity-50 transition-colors"
     >
       {loading ? 'Processing...' : children}
     </button>
@@ -225,7 +233,7 @@ function OAuthForm() {
   })
 
   return (
-    <div className="bg-ccdash-card border border-ccdash-border rounded-xl p-5 space-y-4 max-w-lg">
+    <div className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs space-y-4 max-w-lg">
       <div className="text-sm font-medium text-slate-200">OAuth Flow (Claude.ai)</div>
       {step === 'generate' ? (
         <form onSubmit={(e) => { e.preventDefault(); genMut.mutate() }} className="space-y-3">
@@ -240,7 +248,7 @@ function OAuthForm() {
             Auth URL generated. Open it, authorize, then paste the callback URL or code below.
           </div>
           <div className="flex gap-2">
-            <a href={authUrl} target="_blank" rel="noopener" className="text-xs text-blue-400 hover:underline truncate">{authUrl}</a>
+            <a href={authUrl} target="_blank" rel="noopener" className="text-xs text-indigo-400 hover:underline truncate">{authUrl}</a>
             <button onClick={() => navigator.clipboard.writeText(authUrl)} className="text-xs text-slate-400 hover:text-slate-200 shrink-0">Copy</button>
           </div>
           <form onSubmit={(e) => { e.preventDefault(); exMut.mutate() }} className="space-y-3">
@@ -254,7 +262,7 @@ function OAuthForm() {
               <ProxySelect value={proxyUrl} onChange={setProxyUrl} />
             </Field>
             <Field label="Routing Group">
-              <GroupSelect value={group} onChange={setGroup} />
+              <GroupSelect value={group} onChange={setGroup} type="anthropic" />
             </Field>
             <div className="flex gap-2">
               <SubmitButton loading={exMut.isPending}>Exchange Code</SubmitButton>
@@ -309,7 +317,7 @@ function CodexForm() {
   })
 
   return (
-    <div className="bg-ccdash-card border border-ccdash-border rounded-xl p-5 space-y-4 max-w-lg">
+    <div className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs space-y-4 max-w-lg">
       <div className="text-sm font-medium text-slate-200">OpenAI Codex</div>
       {step === 'generate' ? (
         <form onSubmit={(e) => { e.preventDefault(); genMut.mutate() }} className="space-y-3">
@@ -318,7 +326,7 @@ function CodexForm() {
       ) : (
         <div className="space-y-3">
           <div className="flex gap-2">
-            <a href={authUrl} target="_blank" rel="noopener" className="text-xs text-blue-400 hover:underline truncate">{authUrl}</a>
+            <a href={authUrl} target="_blank" rel="noopener" className="text-xs text-indigo-400 hover:underline truncate">{authUrl}</a>
             <button onClick={() => navigator.clipboard.writeText(authUrl)} className="text-xs text-slate-400 hover:text-slate-200 shrink-0">Copy</button>
           </div>
           <form onSubmit={(e) => { e.preventDefault(); exMut.mutate() }} className="space-y-3">
@@ -338,7 +346,7 @@ function CodexForm() {
               <Input value={label} onChange={(e) => setLabel(e.target.value)} />
             </Field>
             <Field label="Routing Group">
-              <GroupSelect value={group} onChange={setGroup} />
+              <GroupSelect value={group} onChange={setGroup} type="anthropic" />
             </Field>
             <div className="flex gap-2">
               <SubmitButton loading={exMut.isPending}>Exchange Code</SubmitButton>
@@ -370,7 +378,7 @@ function SessionKeyForm() {
   })
 
   return (
-    <div className="bg-ccdash-card border border-ccdash-border rounded-xl p-5 max-w-lg">
+    <div className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs max-w-lg">
       <div className="text-sm font-medium text-slate-200 mb-4">Session Key (sk-ant-...)</div>
       <form onSubmit={(e) => { e.preventDefault(); mut.mutate() }} className="space-y-3">
         <Field label="Session Key">
@@ -380,7 +388,7 @@ function SessionKeyForm() {
           <Input value={label} onChange={(e) => setLabel(e.target.value)} />
         </Field>
         <Field label="Routing Group">
-          <GroupSelect value={group} onChange={setGroup} />
+          <GroupSelect value={group} onChange={setGroup} type="anthropic" />
         </Field>
         <SubmitButton loading={mut.isPending}>Create Account</SubmitButton>
       </form>
@@ -409,7 +417,7 @@ function ImportTokensForm() {
   })
 
   return (
-    <div className="bg-ccdash-card border border-ccdash-border rounded-xl p-5 max-w-lg">
+    <div className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs max-w-lg">
       <div className="text-sm font-medium text-slate-200 mb-4">Import Tokens</div>
       <form onSubmit={(e) => { e.preventDefault(); mut.mutate() }} className="space-y-3">
         <Field label="Access Token">
@@ -422,7 +430,7 @@ function ImportTokensForm() {
           <Input value={label} onChange={(e) => setLabel(e.target.value)} />
         </Field>
         <Field label="Routing Group">
-          <GroupSelect value={group} onChange={setGroup} />
+          <GroupSelect value={group} onChange={setGroup} type="anthropic" />
         </Field>
         <SubmitButton loading={mut.isPending}>Import</SubmitButton>
       </form>
@@ -430,28 +438,54 @@ function ImportTokensForm() {
   )
 }
 
+type OnboardModelMapEntry = { id: string; key: string; value: string }
+
+function newOnboardEntryId() {
+  return Math.random().toString(36).slice(2, 10)
+}
+
 function OpenAICompatibleForm() {
   const toast = useToast()
   const qc = useQueryClient()
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
+  const [modelName, setModelName] = useState('')
+  const [modelMapEntries, setModelMapEntries] = useState<OnboardModelMapEntry[]>([])
   const [proxyUrl, setProxyUrl] = useState('')
   const [label, setLabel] = useState('')
   const [group, setGroup] = useState('')
 
+  const buildModelMap = (): Record<string, string> | null => {
+    const map: Record<string, string> = {}
+    for (const e of modelMapEntries) {
+      const k = e.key.trim()
+      const v = e.value.trim()
+      if (!k || !v) continue
+      map[k] = v
+    }
+    return Object.keys(map).length > 0 ? map : null
+  }
+
   const mut = useMutation({
-    mutationFn: () => createOpenAICompatibleAccount({
-      apiBaseUrl: baseUrl,
-      apiKey,
-      ...(proxyUrl ? { proxyUrl } : {}),
-      ...(label ? { label } : {}),
-      ...(group ? { routingGroupId: group } : {}),
-    }),
+    mutationFn: () => {
+      const modelMap = buildModelMap()
+      return createOpenAICompatibleAccount({
+        apiBaseUrl: baseUrl,
+        apiKey,
+        ...(modelName.trim() ? { modelName: modelName.trim() } : {}),
+        ...(modelMap ? { modelMap } : {}),
+        ...(proxyUrl ? { proxyUrl } : {}),
+        ...(label ? { label } : {}),
+        ...(group ? { routingGroupId: group } : {}),
+      })
+    },
     onSuccess: () => {
       toast.success('OpenAI-compatible account created')
       qc.invalidateQueries({ queryKey: ['accounts'] })
       setBaseUrl('')
       setApiKey('')
+      setModelName('')
+      setModelMapEntries([])
       setProxyUrl('')
       setLabel('')
     },
@@ -459,14 +493,54 @@ function OpenAICompatibleForm() {
   })
 
   return (
-    <div className="bg-ccdash-card border border-ccdash-border rounded-xl p-5 max-w-lg">
+    <div className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs max-w-lg">
       <div className="text-sm font-medium text-slate-200 mb-4">OpenAI Compatible</div>
       <form onSubmit={(e) => { e.preventDefault(); mut.mutate() }} className="space-y-3">
         <Field label="API Base URL">
-          <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} required placeholder="https://api.example.com/v1" />
+          <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} required placeholder="https://token-plan-cn.xiaomimimo.com/v1" />
         </Field>
         <Field label="API Key">
           <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} required />
+        </Field>
+        <Field label="默认上游模型 fallback (optional)">
+          <Input value={modelName} onChange={(e) => setModelName(e.target.value)} placeholder="mimo-v2.5-pro" />
+        </Field>
+        <Field label="Model Map (客户端别名 → 上游模型，optional)">
+          <div className="space-y-2">
+            {modelMapEntries.length === 0 && (
+              <div className="text-[11px] text-slate-500 italic">尚无映射，点击下方添加（如 gpt-5 → mimo-v2.5-pro）。</div>
+            )}
+            {modelMapEntries.map((entry, idx) => (
+              <div key={entry.id} className="flex items-center gap-2">
+                <Input
+                  value={entry.key}
+                  onChange={(e) => setModelMapEntries((prev) => prev.map((p, i) => i === idx ? { ...p, key: e.target.value } : p))}
+                  placeholder="客户端 model"
+                />
+                <span className="text-slate-500">→</span>
+                <Input
+                  value={entry.value}
+                  onChange={(e) => setModelMapEntries((prev) => prev.map((p, i) => i === idx ? { ...p, value: e.target.value } : p))}
+                  placeholder="上游 model"
+                />
+                <button
+                  type="button"
+                  onClick={() => setModelMapEntries((prev) => prev.filter((_, i) => i !== idx))}
+                  className="px-2 py-1.5 text-xs text-red-400 hover:text-red-300 border border-border-default rounded-lg"
+                >
+                  删
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => setModelMapEntries((prev) => [...prev, { id: newOnboardEntryId(), key: '', value: '' }])}
+              disabled={modelMapEntries.length >= 64}
+              className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50"
+            >
+              + 添加映射
+            </button>
+          </div>
         </Field>
         <Field label="Proxy">
           <ProxySelect value={proxyUrl} onChange={setProxyUrl} />
@@ -475,7 +549,7 @@ function OpenAICompatibleForm() {
           <Input value={label} onChange={(e) => setLabel(e.target.value)} />
         </Field>
         <Field label="Routing Group">
-          <GroupSelect value={group} onChange={setGroup} />
+          <GroupSelect value={group} onChange={setGroup} type="openai" />
         </Field>
         <SubmitButton loading={mut.isPending}>Create Account</SubmitButton>
       </form>
@@ -537,7 +611,7 @@ function ClaudeCompatibleForm() {
   })
 
   return (
-    <div className="bg-ccdash-card border border-ccdash-border rounded-xl p-5 max-w-lg">
+    <div className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs max-w-lg">
       <div className="text-sm font-medium text-slate-200 mb-1">Claude Compatible</div>
       <div className="text-[11px] text-slate-500 mb-4">
         接入兼容 Anthropic /v1/messages 协议的服务，例如 DeepSeek (https://api.deepseek.com/anthropic)、GLM (https://open.bigmodel.cn/api/anthropic)。
@@ -552,7 +626,7 @@ function ClaudeCompatibleForm() {
         <Field label="Default Model Name">
           <Input value={modelName} onChange={(e) => setModelName(e.target.value)} required placeholder="deepseek-chat / glm-4.6" />
         </Field>
-        <div className="rounded-lg border border-ccdash-border bg-ccdash-bg/40 p-3 space-y-2">
+        <div className="rounded-lg border border-border-default bg-bg-primary/40 p-3 space-y-2">
           <div className="text-[11px] text-slate-400">
             按 Claude 家族分别映射到上游模型（可选，留空则走默认）。客户端发 claude-opus-* 命中 Opus，claude-sonnet-* 命中 Sonnet，claude-haiku-* 命中 Haiku。
           </div>
@@ -573,7 +647,7 @@ function ClaudeCompatibleForm() {
           <Input value={label} onChange={(e) => setLabel(e.target.value)} />
         </Field>
         <Field label="Routing Group">
-          <GroupSelect value={group} onChange={setGroup} />
+          <GroupSelect value={group} onChange={setGroup} type="anthropic" />
         </Field>
         <SubmitButton loading={mut.isPending}>Create Account</SubmitButton>
       </form>
@@ -592,7 +666,7 @@ function GeminiForm() {
   const [label, setLabel] = useState('')
   const [group, setGroup] = useState('')
   const [proxyUrl, setProxyUrl] = useState('')
-  const [modelName, setModelName] = useState('gemini-2.5-pro')
+  const [modelName, setModelName] = useState('gemini-3.1-pro')
 
   const startMut = useMutation({
     mutationFn: () =>
@@ -622,7 +696,7 @@ function GeminiForm() {
   }
 
   return (
-    <div className="bg-ccdash-card border border-ccdash-border rounded-xl p-5 space-y-4 max-w-lg">
+    <div className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs space-y-4 max-w-lg">
       <div>
         <div className="text-sm font-medium text-slate-200">Google Gemini (OAuth)</div>
         <div className="text-xs text-slate-500 mt-1">
@@ -643,13 +717,19 @@ function GeminiForm() {
             <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. gemini-pro-main" />
           </Field>
           <Field label="Model Name">
-            <Input value={modelName} onChange={(e) => setModelName(e.target.value)} />
+            <Input value={modelName} onChange={(e) => setModelName(e.target.value)} list="gemini-models" />
+            <datalist id="gemini-models">
+              <option value="gemini-3.1-pro" />
+              <option value="gemini-3-flash" />
+              <option value="gemini-2.5-pro" />
+              <option value="gemini-2.5-flash" />
+            </datalist>
           </Field>
           <Field label="Proxy">
             <ProxySelect value={proxyUrl} onChange={setProxyUrl} />
           </Field>
           <Field label="Routing Group">
-            <GroupSelect value={group} onChange={setGroup} />
+            <GroupSelect value={group} onChange={setGroup} type="google" />
           </Field>
           <SubmitButton loading={startMut.isPending}>Start Google OAuth Login</SubmitButton>
         </form>
@@ -672,7 +752,7 @@ function GeminiForm() {
       {step === 'completed' && (
         <div className="space-y-3">
           <div className="text-sm text-emerald-400">{statusMessage}</div>
-          <button type="button" onClick={reset} className="px-4 py-2 rounded-lg text-sm text-slate-200 bg-slate-700/40 hover:bg-slate-700/60">
+          <button type="button" onClick={reset} className="px-4 py-2 rounded-lg text-sm text-slate-200 bg-bg-card-raised/40 hover:bg-bg-card-raised/60">
             Add another account
           </button>
         </div>
@@ -681,7 +761,7 @@ function GeminiForm() {
       {step === 'failed' && (
         <div className="space-y-3">
           <div className="text-sm text-rose-400">{statusMessage}</div>
-          <button type="button" onClick={reset} className="px-4 py-2 rounded-lg text-sm text-slate-200 bg-slate-700/40 hover:bg-slate-700/60">
+          <button type="button" onClick={reset} className="px-4 py-2 rounded-lg text-sm text-slate-200 bg-bg-card-raised/40 hover:bg-bg-card-raised/60">
             Try again
           </button>
         </div>
@@ -752,14 +832,14 @@ function GeminiPendingPanel(props: {
     <div className="space-y-4">
       <div className="text-sm text-slate-300">{props.statusMessage}</div>
 
-      <div className="rounded-lg border border-ccdash-border bg-ccdash-bg/40 p-3 space-y-2">
+      <div className="rounded-lg border border-border-default bg-bg-primary/40 p-3 space-y-2">
         <div className="text-xs text-slate-400 font-medium">1. 在浏览器打开授权 URL（如未自动打开请复制）</div>
         <div className="flex gap-2 items-start">
           <a
             href={props.authUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-xs text-blue-400 hover:underline break-all flex-1"
+            className="text-xs text-indigo-400 hover:underline break-all flex-1"
           >
             {props.authUrl}
           </a>
@@ -779,7 +859,7 @@ function GeminiPendingPanel(props: {
       </div>
 
       <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 space-y-2">
-        <div className="text-xs text-blue-300 font-medium">2A. 同机模式（推荐）</div>
+        <div className="text-xs text-indigo-300 font-medium">2A. 同机模式（推荐）</div>
         <div className="text-xs text-slate-400">
           如果你在 cor 主机本身的浏览器登录，Google 跳到 <code className="text-slate-300">{props.redirectUri}</code> 后 cor 进程内部的
           loopback server 会自动接住并完成登录，无需任何额外操作。

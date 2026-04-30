@@ -2,16 +2,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
 import express from 'express';
+import pg from 'pg';
 import { ProxyAgent, request } from 'undici';
 import { AdminSessionAuthError, buildAdminSessionLogoutCookie, exchangeAdminSession, extractBearerToken, getAdminSession, } from './adminSession.js';
 import { appConfig } from './config.js';
+import { applyMultiplier as applyMultiplierString } from './billing/engine.js';
 import { RELAY_ERROR_CODES, classifyClientFacingRelayError } from './proxy/clientFacingErrors.js';
 import { InputValidationError, normalizeBillingCurrency, sanitizeErrorMessage } from './security/inputValidation.js';
 import { probeRateLimits } from './usage/rateLimitProbe.js';
 import { probeOpenAICodexRateLimits } from './usage/openaiRateLimitProbe.js';
 import { probeClaudeCompatibleConnectivity } from './usage/claudeCompatibleProbe.js';
 import { providerRequiresProxy } from './providers/catalog.js';
+import { isGeminiOauthAccount, retrieveGeminiUserQuota } from './providers/googleGeminiOauth.js';
+import { notifyCcwebappAgentReply } from './support/ccwebappNotify.js';
 const PROXY_CONNECTIVITY_CHECK_URL = 'https://cp.cloudflare.com/generate_204';
 const PROXY_EGRESS_IP_URL = 'http://api64.ipify.org?format=json';
 const PROXY_PROBE_TIMEOUT_MS = 12_000;
@@ -63,6 +68,610 @@ function requireAdminToken(req, res, next) {
     }
     next();
 }
+
+let corPgPool: pg.Pool | null = null;
+function getCorPgPool(): pg.Pool {
+    if (!corPgPool) {
+        corPgPool = new pg.Pool({
+            connectionString: 'postgresql://guang@/cor?host=/var/run/postgresql',
+            max: 2,
+            idleTimeoutMillis: 60000,
+        });
+    }
+    return corPgPool;
+}
+
+function betterAuthResult(status, data) {
+    return { ok: status >= 200 && status < 300, status, data };
+}
+
+function normalizeCorUser(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        name: row.name,
+        email: row.email,
+        emailVerified: Boolean(row.emailVerified),
+        image: row.image ?? null,
+        role: row.role ?? 'user',
+        banned: Boolean(row.banned),
+        banReason: row.banReason ?? null,
+        banExpires: row.banExpires ?? null,
+        createdAt: row.createdAt ?? null,
+        updatedAt: row.updatedAt ?? null,
+    };
+}
+
+function normalizeCorOrganization(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        name: row.name,
+        slug: row.slug,
+        logo: row.logo ?? null,
+        metadata: row.metadata ?? null,
+        createdAt: row.createdAt ?? null,
+        updatedAt: row.updatedAt ?? null,
+    };
+}
+
+function normalizeCorMember(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        organizationId: row.organizationId,
+        userId: row.userId,
+        role: row.role,
+        createdAt: row.createdAt ?? null,
+        user: row.user_id ? {
+            id: row.user_id,
+            name: row.user_name,
+            email: row.user_email,
+            image: row.user_image ?? null,
+        } : undefined,
+    };
+}
+
+async function hashBetterAuthPassword(password) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const key = await new Promise((resolve, reject) => {
+        crypto.scrypt(password.normalize('NFKC'), salt, 64, {
+            N: 16384,
+            r: 16,
+            p: 1,
+            maxmem: 128 * 16384 * 16 * 2,
+        }, (err, derivedKey) => {
+            if (err) reject(err);
+            else resolve(derivedKey);
+        });
+    });
+    return `${salt}:${key.toString('hex')}`;
+}
+
+async function listCorBetterAuthUsers(query = {}) {
+    const pool = getCorPgPool();
+    const limit = Math.min(Math.max(Number(query.limit) || 100, 1), 1000);
+    const offset = Math.max(Number(query.offset) || 0, 0);
+    const sortBy = ['createdAt', 'updatedAt', 'email', 'name', 'role'].includes(String(query.sortBy)) ? String(query.sortBy) : 'createdAt';
+    const sortDirection = String(query.sortDirection).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+    const where = [];
+    const values = [];
+    if (query.searchValue) {
+        const field = query.searchField === 'name' ? 'name' : 'email';
+        values.push(`%${String(query.searchValue)}%`);
+        where.push(`"${field}" ILIKE $${values.length}`);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const usersResult = await pool.query(
+        `SELECT id, name, email, "emailVerified", image, role, banned, "banReason", "banExpires", "createdAt", "updatedAt"
+         FROM "user" ${whereSql}
+         ORDER BY "${sortBy}" ${sortDirection}
+         LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+        [...values, limit, offset],
+    );
+    const totalResult = await pool.query(`SELECT COUNT(*)::int AS total FROM "user" ${whereSql}`, values);
+    return betterAuthResult(200, {
+        users: usersResult.rows.map(normalizeCorUser),
+        total: totalResult.rows[0]?.total ?? 0,
+        limit,
+        offset,
+    });
+}
+
+async function createCorBetterAuthUser(body = {}) {
+    const email = getOptionalString(body.email)?.toLowerCase();
+    const name = getOptionalString(body.name);
+    if (!email || !name) return betterAuthResult(400, { error: 'bad_request', message: 'email and name are required' });
+    const pool = getCorPgPool();
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const existing = await client.query('SELECT id FROM "user" WHERE LOWER(email) = LOWER($1) LIMIT 1', [email]);
+        if (existing.rows.length > 0) {
+            await client.query('ROLLBACK');
+            return betterAuthResult(400, { error: 'user_already_exists', message: 'User already exists' });
+        }
+        const userId = crypto.randomUUID();
+        const userResult = await client.query(
+            `INSERT INTO "user" (id, name, email, "emailVerified", image, role, banned, "createdAt", "updatedAt")
+             VALUES ($1, $2, $3, false, $4, $5, false, NOW(), NOW())
+             RETURNING id, name, email, "emailVerified", image, role, banned, "banReason", "banExpires", "createdAt", "updatedAt"`,
+            [userId, name, email, body.image ?? null, getOptionalString(body.role) ?? 'user'],
+        );
+        if (getOptionalString(body.password)) {
+            await client.query(
+                `INSERT INTO account (id, "accountId", "providerId", "userId", password, "createdAt", "updatedAt")
+                 VALUES ($1, $2, 'credential', $3, $4, NOW(), NOW())`,
+                [crypto.randomUUID(), userId, userId, await hashBetterAuthPassword(String(body.password))],
+            );
+        }
+        await client.query('COMMIT');
+        return betterAuthResult(200, { user: normalizeCorUser(userResult.rows[0]) });
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw err;
+    } finally {
+        client.release();
+    }
+}
+
+async function updateCorBetterAuthUser(body = {}) {
+    const userId = getOptionalString(body.userId);
+    const data = body.data && typeof body.data === 'object' ? body.data : {};
+    if (!userId || Object.keys(data).length === 0) return betterAuthResult(400, { error: 'bad_request', message: 'userId and data are required' });
+    const allowed = new Map([
+        ['name', 'name'],
+        ['email', 'email'],
+        ['role', 'role'],
+        ['banned', 'banned'],
+        ['banReason', 'banReason'],
+        ['banExpires', 'banExpires'],
+        ['image', 'image'],
+        ['emailVerified', 'emailVerified'],
+    ]);
+    const sets = ['"updatedAt" = NOW()'];
+    const values = [];
+    for (const [key, column] of allowed.entries()) {
+        if (Object.prototype.hasOwnProperty.call(data, key)) {
+            values.push(data[key]);
+            sets.push(`"${column}" = $${values.length}`);
+        }
+    }
+    values.push(userId);
+    const result = await getCorPgPool().query(
+        `UPDATE "user" SET ${sets.join(', ')} WHERE id = $${values.length}
+         RETURNING id, name, email, "emailVerified", image, role, banned, "banReason", "banExpires", "createdAt", "updatedAt"`,
+        values,
+    );
+    if (!result.rows[0]) return betterAuthResult(404, { error: 'user_not_found', message: 'User not found' });
+    return betterAuthResult(200, normalizeCorUser(result.rows[0]));
+}
+
+async function removeCorBetterAuthUser(body = {}) {
+    const userId = getOptionalString(body.userId);
+    if (!userId) return betterAuthResult(400, { error: 'bad_request', message: 'userId is required' });
+    await getCorPgPool().query('DELETE FROM "user" WHERE id = $1', [userId]);
+    return betterAuthResult(200, { success: true });
+}
+
+async function banCorBetterAuthUser(body = {}) {
+    const userId = getOptionalString(body.userId);
+    if (!userId) return betterAuthResult(400, { error: 'bad_request', message: 'userId is required' });
+    const result = await getCorPgPool().query(
+        `UPDATE "user" SET banned = true, "banReason" = $2, "banExpires" = $3, "updatedAt" = NOW()
+         WHERE id = $1
+         RETURNING id, name, email, "emailVerified", image, role, banned, "banReason", "banExpires", "createdAt", "updatedAt"`,
+        [userId, getOptionalString(body.banReason) ?? 'No reason', body.banExpiresIn ? new Date(Date.now() + Number(body.banExpiresIn) * 1000) : null],
+    );
+    await getCorPgPool().query('DELETE FROM session WHERE "userId" = $1', [userId]);
+    if (!result.rows[0]) return betterAuthResult(404, { error: 'user_not_found', message: 'User not found' });
+    return betterAuthResult(200, { user: normalizeCorUser(result.rows[0]) });
+}
+
+async function unbanCorBetterAuthUser(body = {}) {
+    const userId = getOptionalString(body.userId);
+    if (!userId) return betterAuthResult(400, { error: 'bad_request', message: 'userId is required' });
+    const result = await getCorPgPool().query(
+        `UPDATE "user" SET banned = false, "banReason" = NULL, "banExpires" = NULL, "updatedAt" = NOW()
+         WHERE id = $1
+         RETURNING id, name, email, "emailVerified", image, role, banned, "banReason", "banExpires", "createdAt", "updatedAt"`,
+        [userId],
+    );
+    if (!result.rows[0]) return betterAuthResult(404, { error: 'user_not_found', message: 'User not found' });
+    return betterAuthResult(200, { user: normalizeCorUser(result.rows[0]) });
+}
+
+async function listCorBetterAuthOrganizations() {
+    const result = await getCorPgPool().query(
+        'SELECT id, name, slug, logo, metadata, "createdAt", "updatedAt" FROM organization ORDER BY "createdAt" DESC NULLS LAST',
+    );
+    return betterAuthResult(200, result.rows.map(normalizeCorOrganization));
+}
+
+async function createCorBetterAuthOrganization(body = {}) {
+    const name = getOptionalString(body.name);
+    const slug = getOptionalString(body.slug) ?? makeOrgSlug(name);
+    if (!name || !slug) return betterAuthResult(400, { error: 'bad_request', message: 'name and slug are required' });
+    const result = await getCorPgPool().query(
+        `INSERT INTO organization (id, name, slug, logo, metadata, "createdAt", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+         RETURNING id, name, slug, logo, metadata, "createdAt", "updatedAt"`,
+        [crypto.randomUUID(), name, slug, body.logo ?? null, body.metadata ?? null],
+    );
+    return betterAuthResult(200, normalizeCorOrganization(result.rows[0]));
+}
+
+async function updateCorBetterAuthOrganization(body = {}) {
+    const organizationId = getOptionalString(body.organizationId);
+    const data = body.data && typeof body.data === 'object' ? body.data : {};
+    if (!organizationId || Object.keys(data).length === 0) return betterAuthResult(400, { error: 'bad_request', message: 'organizationId and data are required' });
+    const allowed = new Map([['name', 'name'], ['slug', 'slug'], ['logo', 'logo'], ['metadata', 'metadata']]);
+    const sets = ['"updatedAt" = NOW()'];
+    const values = [];
+    for (const [key, column] of allowed.entries()) {
+        if (Object.prototype.hasOwnProperty.call(data, key)) {
+            values.push(data[key]);
+            sets.push(`"${column}" = $${values.length}`);
+        }
+    }
+    values.push(organizationId);
+    const result = await getCorPgPool().query(
+        `UPDATE organization SET ${sets.join(', ')} WHERE id = $${values.length}
+         RETURNING id, name, slug, logo, metadata, "createdAt", "updatedAt"`,
+        values,
+    );
+    if (!result.rows[0]) return betterAuthResult(404, { error: 'organization_not_found', message: 'Organization not found' });
+    return betterAuthResult(200, normalizeCorOrganization(result.rows[0]));
+}
+
+async function deleteCorBetterAuthOrganization(body = {}) {
+    const organizationId = getOptionalString(body.organizationId);
+    if (!organizationId) return betterAuthResult(400, { error: 'bad_request', message: 'organizationId is required' });
+    await getCorPgPool().query('DELETE FROM organization WHERE id = $1', [organizationId]);
+    return betterAuthResult(200, { success: true, id: organizationId });
+}
+
+async function listCorBetterAuthMembers(query = {}) {
+    const organizationId = getOptionalString(query.organizationId);
+    if (!organizationId) return betterAuthResult(400, { error: 'bad_request', message: 'organizationId is required' });
+    const limit = Math.min(Math.max(Number(query.limit) || 100, 1), 1000);
+    const result = await getCorPgPool().query(
+        `SELECT m.id, m."organizationId", m."userId", m.role, m."createdAt",
+                u.id AS user_id, u.name AS user_name, u.email AS user_email, u.image AS user_image
+         FROM member m
+         LEFT JOIN "user" u ON u.id = m."userId"
+         WHERE m."organizationId" = $1
+         ORDER BY m."createdAt" ASC
+         LIMIT $2`,
+        [organizationId, limit],
+    );
+    const totalResult = await getCorPgPool().query('SELECT COUNT(*)::int AS total FROM member WHERE "organizationId" = $1', [organizationId]);
+    return betterAuthResult(200, { members: result.rows.map(normalizeCorMember), total: totalResult.rows[0]?.total ?? 0 });
+}
+
+async function addCorBetterAuthMember(body = {}) {
+    const organizationId = getOptionalString(body.organizationId);
+    const userId = getOptionalString(body.userId);
+    if (!organizationId || !userId) return betterAuthResult(400, { error: 'bad_request', message: 'organizationId and userId are required' });
+    const result = await getCorPgPool().query(
+        `INSERT INTO member (id, "organizationId", "userId", role, "createdAt")
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT ("organizationId", "userId") DO UPDATE SET role = EXCLUDED.role
+         RETURNING id, "organizationId", "userId", role, "createdAt"`,
+        [crypto.randomUUID(), organizationId, userId, getOptionalString(body.role) ?? 'member'],
+    );
+    return betterAuthResult(200, normalizeCorMember(result.rows[0]));
+}
+
+async function updateCorBetterAuthMemberRole(body = {}) {
+    const memberId = getOptionalString(body.memberId);
+    if (!memberId) return betterAuthResult(400, { error: 'bad_request', message: 'memberId is required' });
+    const result = await getCorPgPool().query(
+        'UPDATE member SET role = $2 WHERE id = $1 RETURNING id, "organizationId", "userId", role, "createdAt"',
+        [memberId, getOptionalString(body.role) ?? 'member'],
+    );
+    if (!result.rows[0]) return betterAuthResult(404, { error: 'member_not_found', message: 'Member not found' });
+    return betterAuthResult(200, normalizeCorMember(result.rows[0]));
+}
+
+async function removeCorBetterAuthMember(body = {}) {
+    const memberId = getOptionalString(body.memberIdOrEmail);
+    if (!memberId) return betterAuthResult(400, { error: 'bad_request', message: 'memberIdOrEmail is required' });
+    const result = await getCorPgPool().query(
+        'DELETE FROM member WHERE id = $1 RETURNING id, "organizationId", "userId", role, "createdAt"',
+        [memberId],
+    );
+    if (!result.rows[0]) return betterAuthResult(404, { error: 'member_not_found', message: 'Member not found' });
+    return betterAuthResult(200, { member: normalizeCorMember(result.rows[0]) });
+}
+
+async function requestBetterAuthInternal(pathname, query, options = {}) {
+    if (pathname === '/admin/list-users' && (options.method ?? 'GET') === 'GET') return listCorBetterAuthUsers(query);
+    if (pathname === '/admin/create-user') return createCorBetterAuthUser(options.body);
+    if (pathname === '/admin/update-user') return updateCorBetterAuthUser(options.body);
+    if (pathname === '/admin/remove-user') return removeCorBetterAuthUser(options.body);
+    if (pathname === '/admin/ban-user') return banCorBetterAuthUser(options.body);
+    if (pathname === '/admin/unban-user') return unbanCorBetterAuthUser(options.body);
+    if (pathname === '/organization/list' && (options.method ?? 'GET') === 'GET') return listCorBetterAuthOrganizations();
+    if (pathname === '/organization/list-members' && (options.method ?? 'GET') === 'GET') return listCorBetterAuthMembers(query);
+    if (pathname === '/organization/create') return createCorBetterAuthOrganization(options.body);
+    if (pathname === '/organization/update') return updateCorBetterAuthOrganization(options.body);
+    if (pathname === '/organization/delete') return deleteCorBetterAuthOrganization(options.body);
+    if (pathname === '/organization/add-member') return addCorBetterAuthMember(options.body);
+    if (pathname === '/organization/update-member-role') return updateCorBetterAuthMemberRole(options.body);
+    if (pathname === '/organization/remove-member') return removeCorBetterAuthMember(options.body);
+
+    const baseUrl = appConfig.betterAuthApiUrl;
+    const url = new URL(`${baseUrl}${pathname}`);
+    for (const [key, value] of Object.entries(query ?? {})) {
+        if (value !== undefined && value !== null) {
+            url.searchParams.set(key, String(value));
+        }
+    }
+    const method = options.method ?? 'GET';
+    const headers = {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        origin: new URL(baseUrl).origin,
+    };
+    const res = await fetch(url, {
+        method,
+        headers,
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
+    const text = await res.text();
+    let data = null;
+    if (text) {
+        try {
+            data = JSON.parse(text);
+        }
+        catch {
+            data = { message: text };
+        }
+    }
+    return { ok: res.ok, status: res.status, data };
+}
+
+function getBetterAuthUserPayload(data) {
+    if (!data || typeof data !== 'object') return null;
+    return data.user ?? data;
+}
+
+function getBetterAuthOrganizationsPayload(data) {
+    return Array.isArray(data) ? data : data?.organizations ?? [];
+}
+
+function getBetterAuthMembersPayload(data) {
+    return data?.members ?? [];
+}
+
+function makeRelayUserEmail(user) {
+    const source = String(user.id || user.name || 'relay-user')
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'relay-user';
+    return `${source}@relay-user.ccdash.internal`;
+}
+
+function resolveRelayUserForBetterAuthUser(user, relayByEmail, relayByExternalId) {
+    const id = String(user.id ?? '');
+    if (id) {
+        const byExternalId = relayByExternalId.get(id);
+        if (byExternalId)
+            return byExternalId;
+    }
+    const email = String(user.email ?? '').toLowerCase();
+    const direct = relayByEmail.get(email);
+    if (direct)
+        return direct;
+    return null;
+}
+
+async function ensureRelayUserForBetterAuthUser(services, user, organizations = []) {
+    if (!services.userStore || !user?.id) {
+        return null;
+    }
+    const orgId = resolveRelayOrgIdFromBetterAuthOrganization(organizations[0]);
+    const result = await services.userStore.findOrCreateByExternalId({
+        externalUserId: String(user.id),
+        name: user.name || user.email || String(user.id),
+        orgId,
+    });
+    return result.user;
+}
+
+function isSyntheticRelayBetterAuthUser(user) {
+    return String(user.email ?? '').toLowerCase().endsWith('@relay-user.ccdash.internal');
+}
+
+function makeOrgSlug(orgId) {
+    return String(orgId || 'default')
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'default';
+}
+
+async function listBetterAuthOrganizationsInternal() {
+    const result = await requestBetterAuthInternal('/organization/list', {});
+    if (!result.ok) {
+        throw new Error(`Better Auth list organizations failed: HTTP ${result.status}`);
+    }
+    return getBetterAuthOrganizationsPayload(result.data);
+}
+
+function resolveRelayOrgIdFromBetterAuthOrganization(organization) {
+    return organization?.metadata?.relayOrgId ?? organization?.slug ?? organization?.name ?? null;
+}
+
+async function findBetterAuthUserForRelayUser(relayUser) {
+    if (!relayUser) {
+        return null;
+    }
+    const existingUsersResult = await requestBetterAuthInternal('/admin/list-users', { limit: 1000 });
+    if (!existingUsersResult.ok) {
+        throw new Error(`Better Auth list users failed: HTTP ${existingUsersResult.status}`);
+    }
+    const existingUsers = existingUsersResult.data?.users ?? [];
+    const externalUserId = relayUser.externalUserId ? String(relayUser.externalUserId) : null;
+    if (externalUserId) {
+        const byExternalId = existingUsers.find((user) => String(user.id ?? '') === externalUserId);
+        if (byExternalId) {
+            return byExternalId;
+        }
+    }
+    const email = makeRelayUserEmail(relayUser).toLowerCase();
+    return existingUsers.find((user) => String(user.email ?? '').toLowerCase() === email) ?? null;
+}
+
+async function syncBetterAuthUserToRelayUser(services, betterUser, organizations = []) {
+    const relayUser = await ensureRelayUserForBetterAuthUser(services, betterUser, organizations);
+    if (!relayUser || !services.userStore) {
+        return null;
+    }
+    const updates = {};
+    if (betterUser?.name && betterUser.name !== relayUser.name) {
+        updates.name = betterUser.name;
+    }
+    if (betterUser?.banned !== undefined && Boolean(betterUser.banned) === relayUser.isActive) {
+        updates.isActive = !Boolean(betterUser.banned);
+    }
+    if (organizations.length > 0) {
+        const nextOrgId = resolveRelayOrgIdFromBetterAuthOrganization(organizations[0]);
+        if (nextOrgId !== relayUser.orgId) {
+            updates.orgId = nextOrgId;
+        }
+    }
+    if (Object.keys(updates).length === 0) {
+        return relayUser;
+    }
+    return services.userStore.updateUser(relayUser.id, updates);
+}
+
+async function deleteRelayUserForBetterAuthUser(services, betterAuthUserId) {
+    if (!services.userStore || !betterAuthUserId) {
+        return false;
+    }
+    const relayUser = await services.userStore.getUserByExternalId(String(betterAuthUserId));
+    if (!relayUser) {
+        return false;
+    }
+    return services.userStore.deleteUser(relayUser.id);
+}
+
+async function syncBetterAuthOrganizationToRelayUsers(services, organization, previousRelayOrgId = null) {
+    if (!services.userStore || !organization) {
+        return 0;
+    }
+    const nextRelayOrgId = resolveRelayOrgIdFromBetterAuthOrganization(organization);
+    const oldRelayOrgId = previousRelayOrgId ?? organization.metadata?.relayOrgId ?? organization.slug ?? organization.name;
+    if (!oldRelayOrgId || oldRelayOrgId === nextRelayOrgId) {
+        return 0;
+    }
+    return services.userStore.updateUsersOrg(oldRelayOrgId, nextRelayOrgId);
+}
+
+async function clearRelayOrganizationFromUsers(services, organization) {
+    if (!services.userStore || !organization) {
+        return 0;
+    }
+    const relayOrgId = resolveRelayOrgIdFromBetterAuthOrganization(organization);
+    if (!relayOrgId) {
+        return 0;
+    }
+    return services.userStore.updateUsersOrg(relayOrgId, null);
+}
+
+function normalizeBetterAuthUser(user, relayUser, organizations) {
+    return {
+        id: user.id,
+        email: user.email ?? '',
+        name: user.name ?? relayUser?.name ?? '',
+        emailVerified: Boolean(user.emailVerified),
+        image: user.image ?? null,
+        role: user.role ?? 'user',
+        banned: Boolean(user.banned),
+        banReason: user.banReason ?? null,
+        createdAt: user.createdAt ?? null,
+        updatedAt: user.updatedAt ?? null,
+        relay: relayUser ? sanitizeUser(relayUser) : null,
+        organizations,
+    };
+}
+
+async function buildBetterAuthUsersOverview(services) {
+    const listUsersResult = await requestBetterAuthInternal('/admin/list-users', { limit: 1000 });
+    if (!listUsersResult.ok) {
+        throw new Error(`Better Auth list users failed: HTTP ${listUsersResult.status}`);
+    }
+    const listOrganizationsResult = await requestBetterAuthInternal('/organization/list', {});
+    if (!listOrganizationsResult.ok) {
+        throw new Error(`Better Auth list organizations failed: HTTP ${listOrganizationsResult.status}`);
+    }
+    const betterUsers = listUsersResult.data?.users ?? [];
+    const relayUsers = services.userStore ? await services.userStore.listUsersWithUsage() : [];
+    const relayByEmail = new Map(relayUsers.map((user) => [makeRelayUserEmail(user).toLowerCase(), user]));
+    const relayByExternalId = new Map(relayUsers
+        .filter((user) => user.externalUserId)
+        .map((user) => [String(user.externalUserId), user]));
+    const organizations = getBetterAuthOrganizationsPayload(listOrganizationsResult.data);
+    const orgRows = [];
+    const membershipsByUserId = new Map();
+    for (const organization of organizations) {
+        const membersResult = await requestBetterAuthInternal('/organization/list-members', { organizationId: organization.id, limit: 1000 });
+        const members = membersResult.ok ? getBetterAuthMembersPayload(membersResult.data) : [];
+        const relayOrgId = resolveRelayOrgIdFromBetterAuthOrganization(organization);
+        for (const member of members) {
+            const list = membershipsByUserId.get(member.userId) ?? [];
+            list.push({
+                id: organization.id,
+                name: organization.name,
+                slug: organization.slug,
+                relayOrgId,
+                role: member.role,
+                memberId: member.id,
+            });
+            membershipsByUserId.set(member.userId, list);
+        }
+        orgRows.push({
+            id: organization.id,
+            name: organization.name,
+            slug: organization.slug,
+            logo: organization.logo ?? null,
+            metadata: organization.metadata ?? null,
+            createdAt: organization.createdAt ?? null,
+            updatedAt: organization.updatedAt ?? null,
+            memberCount: members.length,
+            relayOrgId,
+        });
+    }
+    const filteredBetterUsers = betterUsers
+        .filter((user) => {
+            if (!isSyntheticRelayBetterAuthUser(user))
+                return true;
+            const userId = String(user.id ?? '');
+            if (userId && relayByExternalId.has(userId))
+                return true;
+            const relayUser = relayByEmail.get(String(user.email ?? '').toLowerCase()) ?? null;
+            if (!relayUser)
+                return false;
+            if (!relayUser?.externalUserId)
+                return true;
+            return String(relayUser.externalUserId) === userId;
+        });
+    const users = [];
+    for (const user of filteredBetterUsers) {
+        const memberships = membershipsByUserId.get(user.id) ?? [];
+        const relayUser = resolveRelayUserForBetterAuthUser(user, relayByEmail, relayByExternalId)
+            ?? await ensureRelayUserForBetterAuthUser(services, user, memberships);
+        users.push(normalizeBetterAuthUser(user, relayUser, memberships));
+    }
+    return {
+        ok: true,
+        users,
+        organizations: orgRows,
+    };
+}
+
 function asyncRoute(handler) {
     return (req, res, next) => {
         void handler(req, res).catch(next);
@@ -119,6 +728,37 @@ function getFirstDefinedNullableString(body, keys) {
 function getRouteParam(value) {
     return Array.isArray(value) ? value[0] ?? '' : value;
 }
+
+const CHANNEL_STATUS_CACHE_TTL_MS = 5 * 60_000;
+let channelStatusCache: { payload: any; expiresAt: number } | null = null;
+function readChannelStatusCache() {
+    if (channelStatusCache && channelStatusCache.expiresAt > Date.now()) {
+        return channelStatusCache.payload;
+    }
+    return null;
+}
+function writeChannelStatusCache(payload) {
+    channelStatusCache = { payload, expiresAt: Date.now() + CHANNEL_STATUS_CACHE_TTL_MS };
+}
+function clearChannelStatusCache() {
+    channelStatusCache = null;
+}
+function deriveOverallStatus(window1h, accountSummary) {
+    if (accountSummary.total === 0) {
+        return 'no_data';
+    }
+    const liveAccounts = accountSummary.enabled;
+    if (liveAccounts === 0) {
+        return 'down';
+    }
+    if (window1h.totalRequests < 5) {
+        return liveAccounts > 0 ? 'operational' : 'no_data';
+    }
+    const rate = window1h.successRate ?? 1;
+    if (rate >= 0.95) return 'operational';
+    if (rate >= 0.8) return 'degraded';
+    return 'down';
+}
 function parseIncomingTierMap(value) {
     if (value === undefined) {
         return undefined;
@@ -146,6 +786,42 @@ function parseIncomingTierMap(value) {
         result[tier] = trimmed || null;
     }
     return result;
+}
+const MODEL_MAP_MAX_ENTRIES = 64;
+function parseIncomingModelMap(value) {
+    if (value === undefined) {
+        return undefined;
+    }
+    if (value === null) {
+        return null;
+    }
+    if (typeof value !== 'object' || Array.isArray(value)) {
+        throw new InputValidationError('modelMap must be an object');
+    }
+    const keys = Object.keys(value);
+    if (keys.length > MODEL_MAP_MAX_ENTRIES) {
+        throw new InputValidationError(`modelMap must have at most ${MODEL_MAP_MAX_ENTRIES} entries`);
+    }
+    const result = {};
+    for (const rawKey of keys) {
+        const key = typeof rawKey === 'string' ? rawKey.trim() : '';
+        if (!key) {
+            continue;
+        }
+        const raw = value[rawKey];
+        if (raw == null || raw === '') {
+            continue;
+        }
+        if (typeof raw !== 'string') {
+            throw new InputValidationError(`modelMap.${rawKey} must be a string`);
+        }
+        const trimmed = raw.trim();
+        if (!trimmed) {
+            continue;
+        }
+        result[key] = trimmed;
+    }
+    return Object.keys(result).length > 0 ? result : null;
 }
 function getRequestOrigin(req) {
     const forwardedProto = req.header('x-forwarded-proto')?.split(',')[0]?.trim();
@@ -253,6 +929,36 @@ function sanitizeUser(user) {
         ...rest,
         apiKeyPreview: maskApiKey(apiKey),
     };
+}
+function normalizeApiKeyGroupAssignments(raw) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const assignments = {
+        anthropic: getNullableStringField(source, 'anthropic'),
+        openai: getNullableStringField(source, 'openai'),
+        google: getNullableStringField(source, 'google'),
+    };
+    if (!assignments.anthropic && !assignments.openai && !assignments.google) {
+        throw new InputValidationError('At least one API key routing group is required');
+    }
+    return assignments;
+}
+async function validateApiKeyGroupAssignments(services, assignments) {
+    const groups = await services.oauthService.listRoutingGroups();
+    const byId = new Map(groups.map((group) => [group.id, group]));
+    for (const type of ['anthropic', 'openai', 'google']) {
+        const groupId = assignments[type];
+        if (!groupId) continue;
+        const group = byId.get(groupId);
+        if (!group) {
+            throw new InputValidationError(`Routing group not found: ${groupId}`);
+        }
+        if (group.type !== type) {
+            throw new InputValidationError(`Routing group ${groupId} type must be ${type}`);
+        }
+        if (!group.isActive) {
+            throw new InputValidationError(`Routing group is disabled: ${groupId}`);
+        }
+    }
 }
 async function buildUserApiKeyReadResponse(services, user) {
     const activeApiKeys = services.apiKeyStore
@@ -501,10 +1207,62 @@ async function probeAccountRateLimitsWithRecovery(input) {
         };
     }
 }
+async function probeGeminiRateLimitsWithRecovery(input) {
+    const initialProxyUrl = await input.oauthService.resolveProxyUrl(input.account.proxyUrl);
+    const runProbe = (account) => retrieveGeminiUserQuota({
+        accessToken: account.accessToken,
+        account,
+        proxyDispatcher: initialProxyUrl && input.proxyPool
+            ? input.proxyPool.getHttpDispatcher(initialProxyUrl)
+            : undefined,
+    });
+    const initial = await runProbe(input.account);
+    if (initial.httpStatus !== 401 && initial.httpStatus !== 403) {
+        return {
+            ...initial,
+            tokenStatus: 'ok',
+        };
+    }
+    if (!input.account.refreshToken) {
+        return {
+            ...initial,
+            error: 'refresh_token_missing',
+            tokenStatus: 'refresh_token_missing',
+            refreshAttempted: false,
+            refreshSucceeded: false,
+            refreshError: 'Account has no refresh token',
+        };
+    }
+    try {
+        const refreshed = await input.oauthService.refreshAccount(input.account.id);
+        const recovered = await runProbe(refreshed);
+        return {
+            ...recovered,
+            tokenStatus: recovered.httpStatus === 401 || recovered.httpStatus === 403 ? 'refreshed_but_still_unauthorized' : 'refreshed',
+            refreshAttempted: true,
+            refreshSucceeded: recovered.httpStatus !== 401 && recovered.httpStatus !== 403,
+            refreshError: recovered.httpStatus === 401 || recovered.httpStatus === 403
+                ? 'Probe is still unauthorized after refresh'
+                : null,
+        };
+    }
+    catch (error) {
+        const classified = classifyRefreshFailure(error);
+        return {
+            ...initial,
+            error: classified.error,
+            tokenStatus: classified.tokenStatus,
+            refreshAttempted: true,
+            refreshSucceeded: false,
+            refreshError: classified.refreshError,
+        };
+    }
+}
 export function createServer(services) {
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', true);
+    const serviceMode = services.serviceMode ?? 'all';
     app.options('/healthz', (req, res) => {
         if (!applyCorsHeaders(req, res, 'GET, OPTIONS')) {
             res.status(403).end();
@@ -530,6 +1288,7 @@ export function createServer(services) {
             nextAccountEmail: nextAccount?.emailAddress ?? null,
         });
     }));
+    if (serviceMode !== 'relay') {
     app.use('/admin', (req, res, next) => {
         if (!applyCorsHeaders(req, res, 'GET, POST, PUT, DELETE, OPTIONS')) {
             if (req.method === 'OPTIONS') {
@@ -632,8 +1391,10 @@ export function createServer(services) {
             return;
         }
         const rawName = typeof req.body?.name === 'string' ? req.body.name : '';
+        const groupAssignments = normalizeApiKeyGroupAssignments(req.body?.groupAssignments);
+        await validateApiKeyGroupAssignments(services, groupAssignments);
         try {
-            const created = await services.apiKeyStore.create(relayUserId, { name: rawName });
+            const created = await services.apiKeyStore.create(relayUserId, { name: rawName, groupAssignments });
             res.json({ created: true, ...created });
         } catch (err) {
             const code = err && typeof err === 'object' && 'code' in err
@@ -646,6 +1407,43 @@ export function createServer(services) {
             }
             res.status(500).json({ error: 'create_failed', message });
         }
+    }));
+
+    app.post('/internal/ccwebapp/users/:relayUserId/api-keys/:keyId/groups', asyncRoute(async (req, res) => {
+        if (!services.userStore || !services.apiKeyStore) {
+            res.status(503).json({ error: 'api_key_management_disabled' });
+            return;
+        }
+        const relayUserId = getRouteParam(req.params.relayUserId);
+        const keyId = getRouteParam(req.params.keyId);
+        const user = await services.userStore.getUserById(relayUserId);
+        if (!user) {
+            res.status(404).json({ error: 'user_not_found' });
+            return;
+        }
+        const groupAssignments = normalizeApiKeyGroupAssignments(req.body?.groupAssignments);
+        await validateApiKeyGroupAssignments(services, groupAssignments);
+        const apiKey = await services.apiKeyStore.updateGroups(relayUserId, keyId, groupAssignments);
+        if (!apiKey) {
+            res.status(404).json({ error: 'api_key_not_found' });
+            return;
+        }
+        res.json({ ok: true, apiKey });
+    }));
+
+    app.get('/internal/ccwebapp/routing-groups', asyncRoute(async (_req, res) => {
+        const groups = await services.oauthService.listRoutingGroups();
+        res.json({
+            routingGroups: groups
+                .filter((group) => group.isActive)
+                .map((group) => ({
+                    id: group.id,
+                    name: group.name,
+                    description: group.description,
+                    descriptionZh: group.descriptionZh,
+                    type: group.type,
+                })),
+        });
     }));
 
     app.delete('/internal/ccwebapp/users/:relayUserId/api-keys/:keyId', asyncRoute(async (req, res) => {
@@ -732,29 +1530,270 @@ export function createServer(services) {
             return;
         }
         const currencyParam = typeof req.query?.currency === 'string' ? req.query.currency : null;
-        const rules = await services.billingStore.listRules(currencyParam as 'USD' | 'CNY' | null);
-        const sanitized = rules
-            .filter((rule) =>
-                rule.isActive
-                && rule.userId === null
-                && rule.accountId === null
-                && rule.provider === null,
-            )
-            .map((rule) => ({
-                id: rule.id,
-                name: rule.name,
-                priority: rule.priority,
-                currency: rule.currency,
-                model: rule.model,
-                isFallback: rule.model === null,
-                effectiveFrom: rule.effectiveFrom,
-                effectiveTo: rule.effectiveTo,
-                inputPriceMicrosPerMillion: rule.inputPriceMicrosPerMillion,
-                outputPriceMicrosPerMillion: rule.outputPriceMicrosPerMillion,
-                cacheCreationPriceMicrosPerMillion: rule.cacheCreationPriceMicrosPerMillion,
-                cacheReadPriceMicrosPerMillion: rule.cacheReadPriceMicrosPerMillion,
+        const skus = await services.billingStore.listBaseSkus();
+        const sanitized = skus
+            .filter((sku) => sku.isActive && (!currencyParam || sku.currency === currencyParam))
+            .map((sku) => ({
+                id: sku.id,
+                name: sku.displayName,
+                priority: 0,
+                currency: sku.currency,
+                model: sku.model,
+                isFallback: false,
+                effectiveFrom: sku.createdAt,
+                effectiveTo: null,
+                inputPriceMicrosPerMillion: sku.inputPriceMicrosPerMillion,
+                outputPriceMicrosPerMillion: sku.outputPriceMicrosPerMillion,
+                cacheCreationPriceMicrosPerMillion: sku.cacheCreationPriceMicrosPerMillion,
+                cacheReadPriceMicrosPerMillion: sku.cacheReadPriceMicrosPerMillion,
             }));
         res.json({ rules: sanitized });
+    }));
+
+    app.get('/internal/ccwebapp/models', asyncRoute(async (_req, res) => {
+        if (!services.billingStore) {
+            res.status(503).json({ error: 'billing_disabled' });
+            return;
+        }
+        const [baseSkus, channelMultipliers, allRoutingGroups] = await Promise.all([
+            services.billingStore.listBaseSkus(),
+            services.billingStore.listChannelMultipliers(),
+            services.oauthService.listRoutingGroups(),
+        ]);
+        const activeRoutingGroupIds = new Set(allRoutingGroups.filter((group) => group.isActive).map((group) => group.id));
+        const baseByKey = new Map(
+            baseSkus.filter((s) => s.isActive).map((s) => [`${s.protocol}|${s.modelVendor}|${s.model}|${s.currency}`, s]),
+        );
+        const models = channelMultipliers
+            .filter((m) => m.isActive && m.showInFrontend && activeRoutingGroupIds.has(m.routingGroupId))
+            .flatMap((m) => {
+                const matched = ['USD', 'CNY']
+                    .map((cur) => baseByKey.get(`${m.protocol}|${m.modelVendor}|${m.model}|${cur}`))
+                    .filter((b) => b != null);
+                return matched.map((base) => ({
+                    id: `${m.id}|${base!.currency}`,
+                    provider: m.provider,
+                    modelVendor: m.modelVendor,
+                    protocol: m.protocol,
+                    model: m.model,
+                    displayName: base!.displayName,
+                    routingGroupId: m.routingGroupId,
+                    isActive: true,
+                    showInFrontend: true,
+                    allowCalls: m.allowCalls,
+                    supportsPromptCaching: base!.supportsPromptCaching,
+                    currency: base!.currency,
+                    inputPriceMicrosPerMillion: applyMultiplierString(base!.inputPriceMicrosPerMillion, m.multiplierMicros),
+                    outputPriceMicrosPerMillion: applyMultiplierString(base!.outputPriceMicrosPerMillion, m.multiplierMicros),
+                    cacheCreationPriceMicrosPerMillion: applyMultiplierString(base!.cacheCreationPriceMicrosPerMillion, m.multiplierMicros),
+                    cacheReadPriceMicrosPerMillion: applyMultiplierString(base!.cacheReadPriceMicrosPerMillion, m.multiplierMicros),
+                }));
+            });
+        const routingGroups = allRoutingGroups
+            .filter((group) => group.isActive)
+            .map((group) => ({
+                id: group.id,
+                name: group.name,
+                description: group.description,
+                descriptionZh: group.descriptionZh,
+                type: group.type,
+            }));
+        res.json({ models, routingGroups });
+    }));
+
+    app.get('/internal/ccwebapp/status', asyncRoute(async (_req, res) => {
+        if (!services.billingStore) {
+            res.status(503).json({ error: 'billing_disabled' });
+            return;
+        }
+        const cached = readChannelStatusCache();
+        if (cached) {
+            res.json(cached);
+            return;
+        }
+        const [stats, allRoutingGroups, allAccounts, allMultipliers, allBaseSkus] = await Promise.all([
+            services.billingStore.getChannelUsageStats(),
+            services.oauthService.listRoutingGroups(),
+            services.oauthService.listAccounts(),
+            services.billingStore.listChannelMultipliers(),
+            services.billingStore.listBaseSkus(),
+        ]);
+
+        const generatedAt = new Date().toISOString();
+        const groupsById = new Map(allRoutingGroups.filter((g) => g.isActive).map((g) => [g.id, g]));
+        const accountsByGroup = new Map<string, typeof allAccounts>();
+        for (const account of allAccounts) {
+            const groupId = account.routingGroupId ?? account.group ?? '';
+            if (!groupId) continue;
+            const list = accountsByGroup.get(groupId) ?? [];
+            list.push(account);
+            accountsByGroup.set(groupId, list);
+        }
+        const baseByKey = new Map(
+            allBaseSkus.filter((b) => b.isActive).map((b) => [`${b.protocol}|${b.modelVendor}|${b.model}`, b]),
+        );
+        const skuByGroup = new Map<string, Array<{ provider: string; modelVendor: string; protocol: string; model: string; displayName: string }>>();
+        for (const m of allMultipliers) {
+            if (!m.isActive) continue;
+            const base = baseByKey.get(`${m.protocol}|${m.modelVendor}|${m.model}`);
+            if (!base) continue;
+            const list = skuByGroup.get(m.routingGroupId) ?? [];
+            list.push({ provider: m.provider, modelVendor: m.modelVendor, protocol: m.protocol, model: m.model, displayName: base.displayName });
+            skuByGroup.set(m.routingGroupId, list);
+        }
+
+        const nowMs = Date.now();
+        const channels = Array.from(groupsById.values()).map((group) => {
+            const accounts = accountsByGroup.get(group.id) ?? [];
+            const accountSummary = {
+                enabled: 0,
+                paused: 0,
+                autoBlocked: 0,
+                cooldown: 0,
+                total: accounts.length,
+            };
+            for (const account of accounts) {
+                if (account.cooldownUntil && account.cooldownUntil > nowMs) {
+                    accountSummary.cooldown += 1;
+                    continue;
+                }
+                if (account.schedulerState === 'paused') accountSummary.paused += 1;
+                else if (account.schedulerState === 'auto_blocked') accountSummary.autoBlocked += 1;
+                else if (account.schedulerState === 'enabled' && account.schedulerEnabled) {
+                    accountSummary.enabled += 1;
+                }
+            }
+            const windows = stats.windows.get(group.id) ?? {
+                last5m: { totalRequests: 0, successRequests: 0, successRate: null, p50Ms: null, p99Ms: null },
+                last1h: { totalRequests: 0, successRequests: 0, successRate: null, p50Ms: null, p99Ms: null },
+                last24h: { totalRequests: 0, successRequests: 0, successRate: null, p50Ms: null, p99Ms: null },
+            };
+            const history = stats.history.get(group.id) ?? [];
+            const lastVerified = stats.lastVerified.get(group.id) ?? null;
+            const overallStatus = deriveOverallStatus(windows.last1h, accountSummary);
+            return {
+                routingGroupId: group.id,
+                name: group.name,
+                description: group.description,
+                descriptionZh: group.descriptionZh,
+                type: group.type,
+                models: skuByGroup.get(group.id) ?? [],
+                accountSummary,
+                windows,
+                history,
+                lastVerified,
+                overallStatus,
+            };
+        });
+        const payload = { channels, generatedAt };
+        writeChannelStatusCache(payload);
+        res.json(payload);
+    }));
+
+    app.get('/internal/ccwebapp/users/:relayUserId/support/tickets', asyncRoute(async (req, res) => {
+        if (!services.userStore || !services.supportStore) {
+            res.status(503).json({ error: 'support_disabled' });
+            return;
+        }
+        const relayUserId = getRouteParam(req.params.relayUserId);
+        const user = await services.userStore.getUserById(relayUserId);
+        if (!user) {
+            res.status(404).json({ error: 'user_not_found' });
+            return;
+        }
+        const tickets = await services.supportStore.listTicketsForUser(relayUserId);
+        res.json({ tickets });
+    }));
+
+    app.post('/internal/ccwebapp/users/:relayUserId/support/tickets', asyncRoute(async (req, res) => {
+        if (!services.userStore || !services.supportStore) {
+            res.status(503).json({ error: 'support_disabled' });
+            return;
+        }
+        const relayUserId = getRouteParam(req.params.relayUserId);
+        const user = await services.userStore.getUserById(relayUserId);
+        if (!user) {
+            res.status(404).json({ error: 'user_not_found' });
+            return;
+        }
+        const body = req.body ?? {};
+        try {
+            const result = await services.supportStore.createTicket({
+                userId: relayUserId,
+                userName: typeof body.userName === 'string' ? body.userName : (user.name ?? null),
+                userEmail: typeof body.userEmail === 'string' ? body.userEmail : null,
+                category: body.category,
+                title: typeof body.title === 'string' ? body.title : '',
+                description: typeof body.description === 'string' ? body.description : '',
+                relatedApiKeyId: typeof body.relatedApiKeyId === 'string' ? body.relatedApiKeyId : null,
+            });
+            res.json({ ok: true, ticket: result.ticket, firstMessage: result.firstMessage });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'create_ticket_failed';
+            res.status(400).json({ error: 'create_ticket_failed', message });
+        }
+    }));
+
+    app.get('/internal/ccwebapp/users/:relayUserId/support/tickets/:ticketId', asyncRoute(async (req, res) => {
+        if (!services.userStore || !services.supportStore) {
+            res.status(503).json({ error: 'support_disabled' });
+            return;
+        }
+        const relayUserId = getRouteParam(req.params.relayUserId);
+        const ticketId = getRouteParam(req.params.ticketId);
+        const ticket = await services.supportStore.getTicket(ticketId);
+        if (!ticket || ticket.userId !== relayUserId) {
+            res.status(404).json({ error: 'ticket_not_found' });
+            return;
+        }
+        const messages = await services.supportStore.listMessagesForTicket(ticketId);
+        res.json({ ticket, messages });
+    }));
+
+    app.post('/internal/ccwebapp/users/:relayUserId/support/tickets/:ticketId/messages', asyncRoute(async (req, res) => {
+        if (!services.userStore || !services.supportStore) {
+            res.status(503).json({ error: 'support_disabled' });
+            return;
+        }
+        const relayUserId = getRouteParam(req.params.relayUserId);
+        const ticketId = getRouteParam(req.params.ticketId);
+        const ticket = await services.supportStore.getTicket(ticketId);
+        if (!ticket || ticket.userId !== relayUserId) {
+            res.status(404).json({ error: 'ticket_not_found' });
+            return;
+        }
+        const body = req.body ?? {};
+        try {
+            const message = await services.supportStore.appendMessage({
+                ticketId,
+                authorKind: 'user',
+                authorId: relayUserId,
+                authorName: ticket.userName ?? null,
+                body: typeof body.body === 'string' ? body.body : '',
+            });
+            const refreshed = await services.supportStore.getTicket(ticketId);
+            res.json({ ok: true, message, ticket: refreshed });
+        } catch (error) {
+            const m = error instanceof Error ? error.message : 'append_failed';
+            const status = m === 'ticket_closed' ? 409 : 400;
+            res.status(status).json({ error: m });
+        }
+    }));
+
+    app.post('/internal/ccwebapp/users/:relayUserId/support/tickets/:ticketId/close', asyncRoute(async (req, res) => {
+        if (!services.userStore || !services.supportStore) {
+            res.status(503).json({ error: 'support_disabled' });
+            return;
+        }
+        const relayUserId = getRouteParam(req.params.relayUserId);
+        const ticketId = getRouteParam(req.params.ticketId);
+        const ticket = await services.supportStore.getTicket(ticketId);
+        if (!ticket || ticket.userId !== relayUserId) {
+            res.status(404).json({ error: 'ticket_not_found' });
+            return;
+        }
+        const updated = await services.supportStore.setTicketStatus(ticketId, 'closed');
+        res.json({ ok: true, ticket: updated });
     }));
 
     app.post('/internal/ccwebapp/users/:relayUserId/topup', asyncRoute(async (req, res) => {
@@ -817,6 +1856,16 @@ export function createServer(services) {
         }
     }));
 
+    app.get('/internal/ccwebapp/ledger/by-external-ref/:externalRef', asyncRoute(async (req, res) => {
+        if (!services.billingStore) {
+            res.status(503).json({ error: 'billing_disabled' });
+            return;
+        }
+        const externalRef = decodeURIComponent(getRouteParam(req.params.externalRef));
+        const { entry, multipleMatches } = await services.billingStore.findLedgerByExternalRef(externalRef);
+        res.json({ found: entry !== null, entry, multipleMatches });
+    }));
+
     app.post('/admin/session/exchange', asyncRoute(async (req, res) => {
         const keycloakAccessToken = extractBearerToken(req);
         if (!keycloakAccessToken) {
@@ -854,6 +1903,239 @@ export function createServer(services) {
         res.json({ ok: true });
     }));
     app.use('/admin', requireAdminToken, express.json({ limit: '1mb' }));
+
+    app.get('/admin/better-auth/get-session', asyncRoute(async (_req, res) => {
+        res.json({
+            session: { userId: 'ccdash-internal-admin' },
+            user: {
+                id: 'ccdash-internal-admin',
+                email: appConfig.betterAuthAdminEmail,
+                name: 'ccdash internal admin',
+                role: 'admin',
+                emailVerified: true,
+            },
+        });
+    }));
+    app.get('/admin/better-auth/admin/list-users', asyncRoute(async (req, res) => {
+        const result = await requestBetterAuthInternal('/admin/list-users', req.query);
+        res.status(result.status).json(result.data);
+    }));
+    app.get('/admin/better-auth/organization/list', asyncRoute(async (req, res) => {
+        const result = await requestBetterAuthInternal('/organization/list', req.query);
+        res.status(result.status).json(result.data);
+    }));
+    app.get('/admin/better-auth/organization/list-members', asyncRoute(async (req, res) => {
+        const result = await requestBetterAuthInternal('/organization/list-members', req.query);
+        res.status(result.status).json(result.data);
+    }));
+    app.get('/admin/better-auth/users', asyncRoute(async (_req, res) => {
+        res.json(await buildBetterAuthUsersOverview(services));
+    }));
+    app.post('/admin/better-auth/users', asyncRoute(async (req, res) => {
+        const email = getOptionalString(req.body?.email);
+        const name = getOptionalString(req.body?.name);
+        if (!email || !name) {
+            res.status(400).json({ error: 'missing_user_fields', message: 'email and name are required' });
+            return;
+        }
+        const createResult = await requestBetterAuthInternal('/admin/create-user', {}, {
+            method: 'POST',
+            body: {
+                email,
+                name,
+                password: getOptionalString(req.body?.password),
+                role: getOptionalString(req.body?.role) ?? 'user',
+                data: req.body?.data && typeof req.body.data === 'object' ? req.body.data : {},
+            },
+        });
+        if (!createResult.ok) {
+            res.status(createResult.status).json(createResult.data);
+            return;
+        }
+        const user = getBetterAuthUserPayload(createResult.data);
+        const organizationId = getOptionalString(req.body?.organizationId);
+        const relayOrganizations = [];
+        if (organizationId && user?.id) {
+            const addMember = await requestBetterAuthInternal('/organization/add-member', {}, {
+                method: 'POST',
+                body: { userId: user.id, organizationId, role: getOptionalString(req.body?.memberRole) ?? 'member' },
+            });
+            if (!addMember.ok && addMember.status !== 400) {
+                res.status(addMember.status).json(addMember.data);
+                return;
+            }
+            const organizationsResult = await requestBetterAuthInternal('/organization/list', {});
+            if (organizationsResult.ok) {
+                const organization = getBetterAuthOrganizationsPayload(organizationsResult.data)
+                    .find((item) => String(item.id ?? '') === organizationId);
+                if (organization) {
+                    relayOrganizations.push(organization);
+                }
+            }
+        }
+        await ensureRelayUserForBetterAuthUser(services, user, relayOrganizations);
+        res.json({ ok: true, user });
+    }));
+    app.post('/admin/better-auth/users/:userId/update', asyncRoute(async (req, res) => {
+        const userId = getRouteParam(req.params.userId);
+        const data = {};
+        if (req.body?.name !== undefined) data.name = req.body.name;
+        if (req.body?.email !== undefined) data.email = req.body.email;
+        if (req.body?.role !== undefined) data.role = req.body.role;
+        if (req.body?.banned !== undefined) data.banned = Boolean(req.body.banned);
+        if (req.body?.banReason !== undefined) data.banReason = req.body.banReason;
+        const result = await requestBetterAuthInternal('/admin/update-user', {}, {
+            method: 'POST',
+            body: { userId, data },
+        });
+        if (result.ok) {
+            await syncBetterAuthUserToRelayUser(services, getBetterAuthUserPayload(result.data));
+        }
+        res.status(result.status).json(result.data);
+    }));
+    app.post('/admin/better-auth/users/:userId/delete', asyncRoute(async (req, res) => {
+        const userId = getRouteParam(req.params.userId);
+        const result = await requestBetterAuthInternal('/admin/remove-user', {}, {
+            method: 'POST',
+            body: { userId },
+        });
+        if (result.ok) {
+            await deleteRelayUserForBetterAuthUser(services, userId);
+        }
+        res.status(result.status).json(result.data);
+    }));
+    app.post('/admin/better-auth/users/:userId/ban', asyncRoute(async (req, res) => {
+        const userId = getRouteParam(req.params.userId);
+        const result = await requestBetterAuthInternal('/admin/ban-user', {}, {
+            method: 'POST',
+            body: { userId, banReason: getOptionalString(req.body?.banReason) ?? 'Disabled from ccdash' },
+        });
+        if (result.ok) {
+            await syncBetterAuthUserToRelayUser(services, { id: userId, banned: true });
+        }
+        res.status(result.status).json(result.data);
+    }));
+    app.post('/admin/better-auth/users/:userId/unban', asyncRoute(async (req, res) => {
+        const userId = getRouteParam(req.params.userId);
+        const result = await requestBetterAuthInternal('/admin/unban-user', {}, {
+            method: 'POST',
+            body: { userId },
+        });
+        if (result.ok) {
+            await syncBetterAuthUserToRelayUser(services, { id: userId, banned: false });
+        }
+        res.status(result.status).json(result.data);
+    }));
+    app.post('/admin/better-auth/organizations', asyncRoute(async (req, res) => {
+        const name = getOptionalString(req.body?.name);
+        const slug = getOptionalString(req.body?.slug) ?? makeOrgSlug(name);
+        if (!name || !slug) {
+            res.status(400).json({ error: 'missing_organization_fields', message: 'name is required' });
+            return;
+        }
+        const result = await requestBetterAuthInternal('/organization/create', {}, {
+            method: 'POST',
+            body: {
+                name,
+                slug,
+                metadata: {
+                    ...(req.body?.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {}),
+                    relayOrgId: getOptionalString(req.body?.metadata?.relayOrgId) ?? slug,
+                },
+            },
+        });
+        res.status(result.status).json(result.data);
+    }));
+    app.post('/admin/better-auth/organizations/:organizationId/update', asyncRoute(async (req, res) => {
+        const organizationId = getRouteParam(req.params.organizationId);
+        const previousOrganization = (await listBetterAuthOrganizationsInternal())
+            .find((organization) => String(organization.id ?? '') === organizationId) ?? null;
+        const data = {};
+        if (req.body?.name !== undefined) data.name = req.body.name;
+        if (req.body?.slug !== undefined) data.slug = req.body.slug;
+        if (req.body?.logo !== undefined) data.logo = req.body.logo;
+        if (req.body?.metadata !== undefined) data.metadata = req.body.metadata;
+        if (data.metadata === undefined && (data.slug !== undefined || data.name !== undefined)) {
+            data.metadata = {
+                ...(previousOrganization?.metadata && typeof previousOrganization.metadata === 'object' ? previousOrganization.metadata : {}),
+                relayOrgId: getOptionalString(data.slug) ?? resolveRelayOrgIdFromBetterAuthOrganization(previousOrganization),
+            };
+        }
+        const result = await requestBetterAuthInternal('/organization/update', {}, {
+            method: 'POST',
+            body: { organizationId, data },
+        });
+        if (result.ok) {
+            await syncBetterAuthOrganizationToRelayUsers(
+                services,
+                result.data,
+                resolveRelayOrgIdFromBetterAuthOrganization(previousOrganization),
+            );
+        }
+        res.status(result.status).json(result.data);
+    }));
+    app.post('/admin/better-auth/organizations/:organizationId/delete', asyncRoute(async (req, res) => {
+        const organizationId = getRouteParam(req.params.organizationId);
+        const previousOrganization = (await listBetterAuthOrganizationsInternal())
+            .find((organization) => String(organization.id ?? '') === organizationId) ?? null;
+        const result = await requestBetterAuthInternal('/organization/delete', {}, {
+            method: 'POST',
+            body: { organizationId },
+        });
+        if (result.ok) {
+            await clearRelayOrganizationFromUsers(services, previousOrganization);
+        }
+        res.status(result.status).json(result.data);
+    }));
+    app.post('/admin/better-auth/organizations/:organizationId/members', asyncRoute(async (req, res) => {
+        const organizationId = getRouteParam(req.params.organizationId);
+        const userId = getOptionalString(req.body?.userId);
+        if (!userId) {
+            res.status(400).json({ error: 'missing_user_id', message: 'userId is required' });
+            return;
+        }
+        const result = await requestBetterAuthInternal('/organization/add-member', {}, {
+            method: 'POST',
+            body: { organizationId, userId, role: getOptionalString(req.body?.role) ?? 'member' },
+        });
+        if (result.ok) {
+            const organization = (await listBetterAuthOrganizationsInternal())
+                .find((item) => String(item.id ?? '') === organizationId);
+            await syncBetterAuthUserToRelayUser(services, { id: userId }, organization ? [organization] : []);
+        }
+        res.status(result.status).json(result.data);
+    }));
+    app.post('/admin/better-auth/organizations/:organizationId/members/:memberId/update', asyncRoute(async (req, res) => {
+        const organizationId = getRouteParam(req.params.organizationId);
+        const memberId = getRouteParam(req.params.memberId);
+        const result = await requestBetterAuthInternal('/organization/update-member-role', {}, {
+            method: 'POST',
+            body: { organizationId, memberId, role: getOptionalString(req.body?.role) ?? 'member' },
+        });
+        res.status(result.status).json(result.data);
+    }));
+    app.post('/admin/better-auth/organizations/:organizationId/members/:memberId/delete', asyncRoute(async (req, res) => {
+        const organizationId = getRouteParam(req.params.organizationId);
+        const memberId = getRouteParam(req.params.memberId);
+        const membersResult = await requestBetterAuthInternal('/organization/list-members', { organizationId, limit: 1000 });
+        const member = membersResult.ok
+            ? getBetterAuthMembersPayload(membersResult.data).find((item) => String(item.id ?? '') === memberId)
+            : null;
+        const result = await requestBetterAuthInternal('/organization/remove-member', {}, {
+            method: 'POST',
+            body: { organizationId, memberIdOrEmail: memberId },
+        });
+        if (result.ok && services.userStore) {
+            const organization = (await listBetterAuthOrganizationsInternal())
+                .find((item) => String(item.id ?? '') === organizationId);
+            const relayOrgId = resolveRelayOrgIdFromBetterAuthOrganization(organization);
+            const relayUser = member?.userId ? await services.userStore.getUserByExternalId(String(member.userId)) : null;
+            if (relayUser && relayUser.orgId === relayOrgId) {
+                await services.userStore.updateUser(relayUser.id, { orgId: null });
+            }
+        }
+        res.status(result.status).json(result.data);
+    }));
     app.get('/admin/account', asyncRoute(async (_req, res) => {
         const accounts = await services.oauthService.listAccounts();
         res.json({
@@ -931,6 +2213,7 @@ export function createServer(services) {
                 apiKey,
                 apiBaseUrl,
                 modelName: modelName || null,
+                modelMap: parseIncomingModelMap(req.body?.modelMap) ?? null,
                 label: getOptionalString(req.body?.label),
                 proxyUrl: getOptionalString(req.body?.proxyUrl) ?? null,
                 routingGroupId,
@@ -999,22 +2282,40 @@ export function createServer(services) {
         const routingGroup = await services.oauthService.createRoutingGroup({
             id,
             name: getNullableStringField(req.body, 'name'),
+            type: getNullableStringField(req.body, 'type'),
             description: getNullableStringField(req.body, 'description'),
+            descriptionZh: getNullableStringField(req.body, 'descriptionZh'),
             isActive: typeof req.body?.isActive === 'boolean' ? req.body.isActive : undefined,
         });
+        clearChannelStatusCache();
         res.json({ ok: true, routingGroup });
     }));
     app.post('/admin/routing-groups/:groupId/update', asyncRoute(async (req, res) => {
         const groupId = getRouteParam(req.params.groupId);
-        const routingGroup = await services.oauthService.updateRoutingGroup(groupId, {
+        const newId = getOptionalString(req.body?.id);
+        let routingGroup = null;
+        if (newId && newId !== groupId) {
+            routingGroup = await services.oauthService.renameRoutingGroup(groupId, newId);
+            if (!routingGroup) {
+                res.status(404).json({ error: 'routing_group_not_found', message: `路由组不存在: ${groupId}` });
+                return;
+            }
+            await services.userStore?.renameRoutingGroup?.(groupId, newId);
+            await services.apiKeyStore?.renameGroup?.(groupId, newId);
+        }
+        const targetGroupId = routingGroup?.id ?? groupId;
+        routingGroup = await services.oauthService.updateRoutingGroup(targetGroupId, {
             name: getNullableStringField(req.body, 'name'),
+            type: getNullableStringField(req.body, 'type'),
             description: getNullableStringField(req.body, 'description'),
+            descriptionZh: getNullableStringField(req.body, 'descriptionZh'),
             isActive: typeof req.body?.isActive === 'boolean' ? req.body.isActive : undefined,
         });
         if (!routingGroup) {
             res.status(404).json({ error: 'routing_group_not_found', message: `路由组不存在: ${groupId}` });
             return;
         }
+        clearChannelStatusCache();
         res.json({ ok: true, routingGroup });
     }));
     app.post('/admin/routing-groups/:groupId/delete', asyncRoute(async (req, res) => {
@@ -1043,6 +2344,7 @@ export function createServer(services) {
             return;
         }
         const deleted = await services.oauthService.deleteRoutingGroup(groupId);
+        clearChannelStatusCache();
         res.json({ ok: true, routingGroup: deleted });
     }));
     app.post('/admin/oauth/generate-auth-url', asyncRoute(async (req, res) => {
@@ -1236,6 +2538,8 @@ export function createServer(services) {
             settings.modelName = req.body.modelName;
         if (req.body?.modelTierMap !== undefined)
             settings.modelTierMap = parseIncomingTierMap(req.body.modelTierMap);
+        if (req.body?.modelMap !== undefined)
+            settings.modelMap = parseIncomingModelMap(req.body.modelMap);
         const account = await services.oauthService.updateAccountSettings(accountId, settings);
         res.json({ ok: true, account: sanitizeAccount(account) });
     }));
@@ -1301,6 +2605,22 @@ export function createServer(services) {
             res.json(result);
             return;
         }
+        if (isGeminiOauthAccount(account)) {
+            const result = await probeGeminiRateLimitsWithRecovery({
+                oauthService: services.oauthService,
+                proxyPool: services.proxyPool,
+                account,
+            });
+            await services.oauthService.recordRateLimitSnapshot({
+                accountId,
+                status: result.status ?? result.error ?? null,
+                fiveHourUtilization: result.fiveHourUtilization ?? null,
+                sevenDayUtilization: result.sevenDayUtilization ?? null,
+                resetTimestamp: result.reset ?? null,
+            });
+            res.json(result);
+            return;
+        }
         if (providerRequiresProxy(account.provider) && !account.proxyUrl) {
             res.status(400).json({ error: 'no_proxy', message: `账号未绑定代理: ${accountId}` });
             return;
@@ -1327,38 +2647,6 @@ export function createServer(services) {
         }
         const users = await services.userStore.listUsersWithUsage();
         res.json({ users: users.map((user) => sanitizeUser(user)) });
-    }));
-    app.post('/admin/users', asyncRoute(async (req, res) => {
-        if (!services.userStore) {
-            res.status(404).json({ error: 'user_management_disabled' });
-            return;
-        }
-        const name = getNullableStringField(req.body, 'name');
-        if (!name) {
-            res.status(400).json({ error: 'missing_name', message: 'name is required' });
-            return;
-        }
-        const user = await services.userStore.createUser(name, req.body?.billingCurrency);
-        let issuedApiKey = user.apiKey;
-        let apiKeySource = 'relay_users_legacy';
-        let primaryApiKey = null;
-        if (services.apiKeyStore) {
-            try {
-                primaryApiKey = await services.apiKeyStore.create(user.id, { name: 'Default Key' });
-                issuedApiKey = primaryApiKey.apiKey;
-                apiKeySource = 'relay_api_keys';
-            }
-            catch (_error) {
-                apiKeySource = 'relay_users_legacy';
-            }
-        }
-        res.json({
-            ok: true,
-            user: sanitizeUser(user),
-            apiKey: issuedApiKey,
-            apiKeySource,
-            primaryApiKey,
-        });
     }));
     app.get('/admin/users/:userId', asyncRoute(async (req, res) => {
         if (!services.userStore) {
@@ -1403,6 +2691,28 @@ export function createServer(services) {
         const apiKeys = await services.apiKeyStore.listForUser(userId);
         res.json({ apiKeys, max: 100 });
     }));
+    app.get('/admin/users/:userId/api-keys/:keyId/plaintext', asyncRoute(async (req, res) => {
+        if (!services.userStore || !services.apiKeyStore) {
+            res.status(404).json({ error: 'api_key_management_disabled' });
+            return;
+        }
+        const userId = getRouteParam(req.params.userId);
+        const keyId = getRouteParam(req.params.keyId);
+        const user = await services.userStore.getUserById(userId);
+        if (!user) {
+            res.status(404).json({ error: 'user_not_found' });
+            return;
+        }
+        const apiKey = await services.apiKeyStore.getPlaintextForUserKey(userId, keyId);
+        if (!apiKey) {
+            res.status(404).json({
+                error: 'api_key_plaintext_unavailable',
+                message: 'This API key was created before persistent copy support and cannot be recovered.',
+            });
+            return;
+        }
+        res.json({ apiKey });
+    }));
     app.post('/admin/users/:userId/api-keys', asyncRoute(async (req, res) => {
         if (!services.userStore || !services.apiKeyStore) {
             res.status(404).json({ error: 'api_key_management_disabled' });
@@ -1415,8 +2725,10 @@ export function createServer(services) {
             return;
         }
         const rawName = typeof req.body?.name === 'string' ? req.body.name : '';
+        const groupAssignments = normalizeApiKeyGroupAssignments(req.body?.groupAssignments);
+        await validateApiKeyGroupAssignments(services, groupAssignments);
         try {
-            const created = await services.apiKeyStore.create(userId, { name: rawName });
+            const created = await services.apiKeyStore.create(userId, { name: rawName, groupAssignments });
             res.json({ created: true, ...created });
         }
         catch (err) {
@@ -1430,6 +2742,27 @@ export function createServer(services) {
             }
             res.status(500).json({ error: 'create_failed', message });
         }
+    }));
+    app.post('/admin/users/:userId/api-keys/:keyId/groups', asyncRoute(async (req, res) => {
+        if (!services.userStore || !services.apiKeyStore) {
+            res.status(404).json({ error: 'api_key_management_disabled' });
+            return;
+        }
+        const userId = getRouteParam(req.params.userId);
+        const keyId = getRouteParam(req.params.keyId);
+        const user = await services.userStore.getUserById(userId);
+        if (!user) {
+            res.status(404).json({ error: 'user_not_found' });
+            return;
+        }
+        const groupAssignments = normalizeApiKeyGroupAssignments(req.body?.groupAssignments);
+        await validateApiKeyGroupAssignments(services, groupAssignments);
+        const apiKey = await services.apiKeyStore.updateGroups(userId, keyId, groupAssignments);
+        if (!apiKey) {
+            res.status(404).json({ error: 'api_key_not_found' });
+            return;
+        }
+        res.json({ ok: true, apiKey });
     }));
     app.delete('/admin/users/:userId/api-keys/:keyId', asyncRoute(async (req, res) => {
         if (!services.userStore || !services.apiKeyStore) {
@@ -1459,6 +2792,8 @@ export function createServer(services) {
         const updates = {};
         if (req.body?.name !== undefined)
             updates.name = req.body.name;
+        if (req.body?.orgId !== undefined)
+            updates.orgId = req.body.orgId;
         if (req.body?.accountId !== undefined)
             updates.accountId = req.body.accountId;
         if (req.body?.routingMode !== undefined)
@@ -1477,6 +2812,14 @@ export function createServer(services) {
             }
             updates.billingCurrency = billingCurrency;
         }
+        if (req.body?.customerTier !== undefined)
+            updates.customerTier = String(req.body.customerTier);
+        if (req.body?.creditLimitMicros !== undefined)
+            updates.creditLimitMicros = req.body.creditLimitMicros;
+        if (req.body?.salesOwner !== undefined)
+            updates.salesOwner = req.body.salesOwner;
+        if (req.body?.riskStatus !== undefined)
+            updates.riskStatus = String(req.body.riskStatus);
         if (req.body?.isActive !== undefined)
             updates.isActive = Boolean(req.body.isActive);
         const user = await services.userStore.updateUser(userId, updates);
@@ -1492,10 +2835,20 @@ export function createServer(services) {
             return;
         }
         const userId = getRouteParam(req.params.userId);
+        const existing = await services.userStore.getUserById(userId);
         const deleted = await services.userStore.deleteUser(userId);
         if (!deleted) {
             res.status(404).json({ error: 'user_not_found' });
             return;
+        }
+        if (existing) {
+            const betterUser = await findBetterAuthUserForRelayUser(existing);
+            if (betterUser?.id) {
+                await requestBetterAuthInternal('/admin/remove-user', {}, {
+                    method: 'POST',
+                    body: { userId: betterUser.id },
+                });
+            }
         }
         res.json({ ok: true });
     }));
@@ -1850,79 +3203,209 @@ export function createServer(services) {
         }
         res.json({ ok: true, entry: result.entry, balance: result.balance });
     }));
-    app.get('/admin/billing/rules', asyncRoute(async (req, res) => {
-        if (!services.billingStore) {
-            res.status(404).json({ error: 'billing_disabled' });
+    app.get('/admin/support/tickets', asyncRoute(async (req, res) => {
+        if (!services.supportStore) {
+            res.status(503).json({ error: 'support_disabled' });
             return;
         }
-        const currency = getOptionalBillingCurrency(req.query.currency, 'currency');
-        const rules = await services.billingStore.listRules(currency);
-        res.json({ rules, currency: currency ?? normalizeBillingCurrency(appConfig.billingCurrency, { field: 'BILLING_CURRENCY' }) });
+        const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+        const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+        const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 100;
+        const tickets = await services.supportStore.listAllTickets({
+            status: status,
+            search,
+            limit: Number.isFinite(limit) ? limit : 100,
+        });
+        res.json({ tickets });
     }));
-    app.post('/admin/billing/rules', asyncRoute(async (req, res) => {
+
+    app.get('/admin/support/tickets/:ticketId', asyncRoute(async (req, res) => {
+        if (!services.supportStore) {
+            res.status(503).json({ error: 'support_disabled' });
+            return;
+        }
+        const ticketId = getRouteParam(req.params.ticketId);
+        const ticket = await services.supportStore.getTicket(ticketId);
+        if (!ticket) {
+            res.status(404).json({ error: 'ticket_not_found' });
+            return;
+        }
+        const messages = await services.supportStore.listMessagesForTicket(ticketId);
+        res.json({ ticket, messages });
+    }));
+
+    app.post('/admin/support/tickets/:ticketId/messages', asyncRoute(async (req, res) => {
+        if (!services.supportStore) {
+            res.status(503).json({ error: 'support_disabled' });
+            return;
+        }
+        const ticketId = getRouteParam(req.params.ticketId);
+        const ticket = await services.supportStore.getTicket(ticketId);
+        if (!ticket) {
+            res.status(404).json({ error: 'ticket_not_found' });
+            return;
+        }
+        const body = req.body ?? {};
+        const replyBody = typeof body.body === 'string' ? body.body : '';
+        const authorName = typeof body.authorName === 'string' && body.authorName.trim()
+            ? body.authorName.trim()
+            : '客服';
+        try {
+            const message = await services.supportStore.appendMessage({
+                ticketId,
+                authorKind: 'agent',
+                authorId: typeof body.authorId === 'string' ? body.authorId : 'admin',
+                authorName,
+                body: replyBody,
+            });
+            const refreshed = await services.supportStore.getTicket(ticketId);
+            if (refreshed) {
+                void notifyCcwebappAgentReply({
+                    ticket: refreshed,
+                    agentReplyBody: replyBody,
+                    agentName: authorName,
+                });
+            }
+            res.json({ ok: true, message, ticket: refreshed });
+        } catch (error) {
+            const m = error instanceof Error ? error.message : 'append_failed';
+            const status = m === 'ticket_closed' ? 409 : 400;
+            res.status(status).json({ error: m });
+        }
+    }));
+
+    app.post('/admin/support/tickets/:ticketId/status', asyncRoute(async (req, res) => {
+        if (!services.supportStore) {
+            res.status(503).json({ error: 'support_disabled' });
+            return;
+        }
+        const ticketId = getRouteParam(req.params.ticketId);
+        const status = typeof req.body?.status === 'string' ? req.body.status : '';
+        try {
+            const ticket = await services.supportStore.setTicketStatus(ticketId, status);
+            if (!ticket) {
+                res.status(404).json({ error: 'ticket_not_found' });
+                return;
+            }
+            res.json({ ok: true, ticket });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'invalid_status';
+            res.status(400).json({ error: 'invalid_status', message });
+        }
+    }));
+
+    app.get('/admin/billing/base-skus', asyncRoute(async (_req, res) => {
         if (!services.billingStore) {
             res.status(404).json({ error: 'billing_disabled' });
             return;
         }
-        const rule = await services.billingStore.createRule({
-            name: getNullableStringField(req.body, 'name'),
-            currency: getOptionalBillingCurrency(req.body?.currency, 'currency'),
-            isActive: req.body?.isActive,
-            priority: req.body?.priority,
+        const skus = await services.billingStore.listBaseSkus();
+        res.json({ skus });
+    }));
+    app.post('/admin/billing/base-skus', asyncRoute(async (req, res) => {
+        if (!services.billingStore) {
+            res.status(404).json({ error: 'billing_disabled' });
+            return;
+        }
+        const sku = await services.billingStore.upsertBaseSku({
             provider: req.body?.provider,
-            accountId: req.body?.accountId,
-            userId: req.body?.userId,
+            modelVendor: req.body?.modelVendor,
+            protocol: req.body?.protocol,
             model: req.body?.model,
-            effectiveFrom: req.body?.effectiveFrom,
-            effectiveTo: req.body?.effectiveTo,
+            currency: getOptionalBillingCurrency(req.body?.currency, 'currency') ?? 'USD',
+            displayName: req.body?.displayName,
+            isActive: req.body?.isActive,
+            supportsPromptCaching: req.body?.supportsPromptCaching,
             inputPriceMicrosPerMillion: req.body?.inputPriceMicrosPerMillion,
             outputPriceMicrosPerMillion: req.body?.outputPriceMicrosPerMillion,
             cacheCreationPriceMicrosPerMillion: req.body?.cacheCreationPriceMicrosPerMillion,
             cacheReadPriceMicrosPerMillion: req.body?.cacheReadPriceMicrosPerMillion,
+            topupCurrency: getOptionalBillingCurrency(req.body?.topupCurrency, 'topupCurrency'),
+            topupAmountMicros: req.body?.topupAmountMicros,
+            creditAmountMicros: req.body?.creditAmountMicros,
         });
         const result = await services.billingStore.syncLineItems({ reconcileMissing: true });
-        res.json({ ok: true, rule, result, currency: rule.currency });
+        res.json({ ok: true, sku, result });
     }));
-    app.post('/admin/billing/rules/:ruleId/update', asyncRoute(async (req, res) => {
+    app.post('/admin/billing/base-skus/:skuId/delete', asyncRoute(async (req, res) => {
         if (!services.billingStore) {
             res.status(404).json({ error: 'billing_disabled' });
             return;
         }
-        const ruleId = getRouteParam(req.params.ruleId);
-        const rule = await services.billingStore.updateRule(ruleId, {
-            name: hasOwnProperty(req.body, 'name') ? getNullableStringField(req.body, 'name') : undefined,
-            currency: hasOwnProperty(req.body, 'currency') ? getOptionalBillingCurrency(req.body?.currency, 'currency') : undefined,
-            isActive: req.body?.isActive,
-            priority: req.body?.priority,
-            provider: req.body?.provider,
-            accountId: req.body?.accountId,
-            userId: req.body?.userId,
-            model: req.body?.model,
-            effectiveFrom: req.body?.effectiveFrom,
-            effectiveTo: req.body?.effectiveTo,
-            inputPriceMicrosPerMillion: req.body?.inputPriceMicrosPerMillion,
-            outputPriceMicrosPerMillion: req.body?.outputPriceMicrosPerMillion,
-            cacheCreationPriceMicrosPerMillion: req.body?.cacheCreationPriceMicrosPerMillion,
-            cacheReadPriceMicrosPerMillion: req.body?.cacheReadPriceMicrosPerMillion,
-        });
-        if (!rule) {
-            res.status(404).json({ error: 'billing_rule_not_found' });
-            return;
-        }
-        res.json({ ok: true, rule, currency: rule.currency });
-    }));
-    app.post('/admin/billing/rules/:ruleId/delete', asyncRoute(async (req, res) => {
-        if (!services.billingStore) {
-            res.status(404).json({ error: 'billing_disabled' });
-            return;
-        }
-        const ruleId = getRouteParam(req.params.ruleId);
-        const deleted = await services.billingStore.deleteRule(ruleId);
+        const skuId = getRouteParam(req.params.skuId);
+        const deleted = await services.billingStore.deleteBaseSku(skuId);
         if (!deleted) {
-            res.status(404).json({ error: 'billing_rule_not_found' });
+            res.status(404).json({ error: 'billing_base_sku_not_found' });
             return;
         }
         res.json({ ok: true });
+    }));
+
+    app.get('/admin/billing/channel-multipliers', asyncRoute(async (req, res) => {
+        if (!services.billingStore) {
+            res.status(404).json({ error: 'billing_disabled' });
+            return;
+        }
+        const groupId = typeof req.query.routingGroupId === 'string' ? req.query.routingGroupId : null;
+        const multipliers = await services.billingStore.listChannelMultipliers(groupId);
+        res.json({ multipliers });
+    }));
+    app.post('/admin/billing/channel-multipliers', asyncRoute(async (req, res) => {
+        if (!services.billingStore) {
+            res.status(404).json({ error: 'billing_disabled' });
+            return;
+        }
+        const multiplier = await services.billingStore.upsertChannelMultiplier({
+            routingGroupId: req.body?.routingGroupId,
+            provider: req.body?.provider,
+            modelVendor: req.body?.modelVendor,
+            protocol: req.body?.protocol,
+            model: req.body?.model,
+            multiplierMicros: req.body?.multiplierMicros,
+            isActive: req.body?.isActive,
+            showInFrontend: req.body?.showInFrontend,
+            allowCalls: req.body?.allowCalls,
+        });
+        const result = await services.billingStore.syncLineItems({ reconcileMissing: true });
+        res.json({ ok: true, multiplier, result });
+    }));
+    app.post('/admin/billing/channel-multipliers/:multiplierId/delete', asyncRoute(async (req, res) => {
+        if (!services.billingStore) {
+            res.status(404).json({ error: 'billing_disabled' });
+            return;
+        }
+        const multiplierId = getRouteParam(req.params.multiplierId);
+        const deleted = await services.billingStore.deleteChannelMultiplier(multiplierId);
+        if (!deleted) {
+            res.status(404).json({ error: 'billing_multiplier_not_found' });
+            return;
+        }
+        res.json({ ok: true });
+    }));
+    app.post('/admin/billing/channel-multipliers/copy', asyncRoute(async (req, res) => {
+        if (!services.billingStore) {
+            res.status(404).json({ error: 'billing_disabled' });
+            return;
+        }
+        const result = await services.billingStore.copyMultipliersBetweenGroups({
+            fromRoutingGroupId: req.body?.fromRoutingGroupId,
+            toRoutingGroupId: req.body?.toRoutingGroupId,
+            overwrite: Boolean(req.body?.overwrite),
+        });
+        res.json({ ok: true, ...result });
+    }));
+    app.post('/admin/billing/channel-multipliers/bulk-adjust', asyncRoute(async (req, res) => {
+        if (!services.billingStore) {
+            res.status(404).json({ error: 'billing_disabled' });
+            return;
+        }
+        const result = await services.billingStore.bulkAdjustChannelMultipliers({
+            routingGroupId: req.body?.routingGroupId,
+            multiplierIds: Array.isArray(req.body?.multiplierIds) ? req.body.multiplierIds : undefined,
+            scale: typeof req.body?.scale === 'number' ? req.body.scale : undefined,
+            setMultiplierMicros: req.body?.setMultiplierMicros,
+        });
+        res.json({ ok: true, ...result });
     }));
     app.post('/admin/billing/sync', asyncRoute(async (req, res) => {
         if (!services.billingStore) {
@@ -1954,6 +3437,22 @@ export function createServer(services) {
             res.type('html').send(renderAdminUiIndex(req));
         });
     }
+    }
+    if (serviceMode !== 'server') {
+    if (serviceMode === 'relay') {
+        app.use(['/admin', '/internal'], (_req, res) => {
+            res.status(404).json({ error: 'not_found' });
+        });
+    }
+    // Normalize bare /responses and /chat/completions paths
+    // (OpenAI SDK / codex CLI may omit /v1 when baseURL has no path prefix)
+    app.use((req, _res, next) => {
+        if (req.path.startsWith('/responses') || req.path === '/chat/completions') {
+            req.url = '/v1' + req.url
+            req.originalUrl = '/v1' + req.originalUrl
+        }
+        next()
+    })
     // ── Relay catch-all (must be after all admin routes) ──
     app.all('*', async (req, res) => {
         try {
@@ -1976,6 +3475,7 @@ export function createServer(services) {
             }
         }
     });
+    }
     app.use((error, _req, res, _next) => {
         if (res.headersSent) {
             res.end();

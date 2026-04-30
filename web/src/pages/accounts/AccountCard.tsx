@@ -65,7 +65,7 @@ export function AccountCard({ account, proxies = [] }: { account: Account; proxi
   return (
     <Link
       to={`/accounts/${encodeURIComponent(account.id)}`}
-      className="block bg-ccdash-card border border-ccdash-border rounded-xl p-4 hover:border-ccdash-border-hover transition-colors"
+      className="block bg-bg-card border border-border-default rounded-xl p-4 shadow-xs hover:border-border-hover hover:shadow-card transition-all duration-150"
     >
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="min-w-0">
@@ -91,7 +91,7 @@ export function AccountCard({ account, proxies = [] }: { account: Account; proxi
       {signals.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-2">
           {signals.map((s, i) => (
-            <span key={i} className="text-[10px] text-slate-400 bg-slate-700/30 rounded px-1.5 py-0.5">{s.label}</span>
+            <span key={i} className="text-[10px] text-slate-400 bg-bg-card-raised/30 rounded px-1.5 py-0.5">{s.label}</span>
           ))}
         </div>
       )}

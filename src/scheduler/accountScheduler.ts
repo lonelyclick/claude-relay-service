@@ -281,8 +281,6 @@ export class AccountScheduler {
 
     if (options.group) {
       candidates = candidates.filter((account) => account.group === options.group)
-    } else {
-      candidates = candidates.filter((account) => !account.group)
     }
 
     const scopedCandidates = candidates

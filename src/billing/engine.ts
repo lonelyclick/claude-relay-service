@@ -6,30 +6,69 @@ export const BILLABLE_USAGE_TARGETS = [
 
 export const BILLING_LINE_ITEM_STATUSES = [
   'billed',
-  'missing_rule',
+  'missing_sku',
   'invalid_usage',
 ] as const
 
 export type BillingLineItemStatus = (typeof BILLING_LINE_ITEM_STATUSES)[number]
 
-export interface BillingRule {
+export type BillingModelProvider = 'anthropic' | 'openai' | 'google'
+export type BillingModelVendor = 'anthropic' | 'openai' | 'google' | 'deepseek' | 'zhipu' | 'mimo' | 'custom'
+export type BillingModelProtocol = 'anthropic_messages' | 'openai_chat' | 'openai_responses' | 'gemini'
+
+export type BillingCurrency = 'USD' | 'CNY'
+
+export interface BillingBaseSku {
   id: string
-  name: string
+  provider: BillingModelProvider
+  modelVendor: BillingModelVendor
+  protocol: BillingModelProtocol
+  model: string
+  currency: BillingCurrency
+  displayName: string
   isActive: boolean
-  priority: number
-  currency: 'USD' | 'CNY'
-  provider: string | null
-  accountId: string | null
-  userId: string | null
-  model: string | null
-  effectiveFrom: string
-  effectiveTo: string | null
+  supportsPromptCaching: boolean
   inputPriceMicrosPerMillion: string
   outputPriceMicrosPerMillion: string
   cacheCreationPriceMicrosPerMillion: string
   cacheReadPriceMicrosPerMillion: string
+  topupCurrency: BillingCurrency
+  topupAmountMicros: string
+  creditAmountMicros: string
   createdAt: string
   updatedAt: string
+}
+
+export interface BillingChannelMultiplier {
+  id: string
+  routingGroupId: string
+  provider: BillingModelProvider
+  modelVendor: BillingModelVendor
+  protocol: BillingModelProtocol
+  model: string
+  multiplierMicros: string
+  isActive: boolean
+  showInFrontend: boolean
+  allowCalls: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface BillingResolvedSku {
+  baseSkuId: string
+  multiplierId: string
+  multiplierMicros: string
+  routingGroupId: string
+  provider: BillingModelProvider
+  modelVendor: BillingModelVendor
+  protocol: BillingModelProtocol
+  model: string
+  currency: BillingCurrency
+  displayName: string
+  finalInputPriceMicrosPerMillion: string
+  finalOutputPriceMicrosPerMillion: string
+  finalCacheCreationPriceMicrosPerMillion: string
+  finalCacheReadPriceMicrosPerMillion: string
 }
 
 export interface BillingUsageCandidate {
@@ -37,10 +76,11 @@ export interface BillingUsageCandidate {
   requestId: string
   userId: string
   userName: string | null
-  billingCurrency: 'USD' | 'CNY'
+  billingCurrency: BillingCurrency
   accountId: string | null
   provider: string | null
   model: string | null
+  routingGroupId: string | null
   sessionKey: string | null
   clientDeviceId: string | null
   target: string
@@ -54,9 +94,8 @@ export interface BillingUsageCandidate {
 
 export interface BillingLineItemResolution {
   status: BillingLineItemStatus
-  matchedRuleId: string | null
-  matchedRuleName: string | null
-  currency: 'USD' | 'CNY'
+  currency: BillingCurrency
+  routingGroupId: string | null
   inputPriceMicrosPerMillion: string
   outputPriceMicrosPerMillion: string
   cacheCreationPriceMicrosPerMillion: string
@@ -65,21 +104,6 @@ export interface BillingLineItemResolution {
 }
 
 const ONE_MILLION = 1_000_000n
-
-function normalizeNullable(value: string | null | undefined): string | null {
-  if (typeof value !== 'string') {
-    return null
-  }
-  const trimmed = value.trim()
-  return trimmed || null
-}
-
-function parseTimestamp(value: string | null | undefined): number {
-  if (!value) {
-    return Number.NaN
-  }
-  return Date.parse(value)
-}
 
 function parseMicros(value: string): bigint {
   const trimmed = value.trim()
@@ -92,57 +116,6 @@ function parseMicros(value: string): bigint {
   return BigInt(trimmed)
 }
 
-function countSpecificity(rule: BillingRule): number {
-  return [
-    rule.provider,
-    rule.accountId,
-    rule.userId,
-    rule.model,
-  ].filter(Boolean).length
-}
-
-function matchesRule(rule: BillingRule, usage: BillingUsageCandidate): boolean {
-  if (!rule.isActive) {
-    return false
-  }
-
-  if (rule.currency !== usage.billingCurrency) {
-    return false
-  }
-
-  const usageCreatedAt = parseTimestamp(usage.createdAt)
-  const effectiveFrom = parseTimestamp(rule.effectiveFrom)
-  const effectiveTo = parseTimestamp(rule.effectiveTo)
-  if (Number.isFinite(effectiveFrom) && usageCreatedAt < effectiveFrom) {
-    return false
-  }
-  if (Number.isFinite(effectiveTo) && usageCreatedAt >= effectiveTo) {
-    return false
-  }
-
-  const provider = normalizeNullable(rule.provider)
-  if (provider && provider !== normalizeNullable(usage.provider)) {
-    return false
-  }
-
-  const accountId = normalizeNullable(rule.accountId)
-  if (accountId && accountId !== normalizeNullable(usage.accountId)) {
-    return false
-  }
-
-  const userId = normalizeNullable(rule.userId)
-  if (userId && userId !== normalizeNullable(usage.userId)) {
-    return false
-  }
-
-  const model = normalizeNullable(rule.model)
-  if (model && model !== normalizeNullable(usage.model)) {
-    return false
-  }
-
-  return true
-}
-
 export function isBillableUsageTarget(target: string): boolean {
   const normalizedTarget = target.split('?', 1)[0] ?? target
   return (
@@ -151,42 +124,6 @@ export function isBillableUsageTarget(target: string): boolean {
     normalizedTarget === '/v1/responses' ||
     normalizedTarget.startsWith('/v1/responses/')
   )
-}
-
-export function matchBillingRule(
-  usage: BillingUsageCandidate,
-  rules: BillingRule[],
-): BillingRule | null {
-  const matches = rules.filter((rule) => matchesRule(rule, usage))
-  if (!matches.length) {
-    return null
-  }
-
-  matches.sort((left, right) => {
-    const specificityDelta = countSpecificity(right) - countSpecificity(left)
-    if (specificityDelta !== 0) {
-      return specificityDelta
-    }
-
-    const priorityDelta = right.priority - left.priority
-    if (priorityDelta !== 0) {
-      return priorityDelta
-    }
-
-    const effectiveDelta = parseTimestamp(right.effectiveFrom) - parseTimestamp(left.effectiveFrom)
-    if (effectiveDelta !== 0) {
-      return effectiveDelta
-    }
-
-    const updatedDelta = parseTimestamp(right.updatedAt) - parseTimestamp(left.updatedAt)
-    if (updatedDelta !== 0) {
-      return updatedDelta
-    }
-
-    return left.id.localeCompare(right.id)
-  })
-
-  return matches[0] ?? null
 }
 
 function roundMicros(numerator: bigint): bigint {
@@ -200,15 +137,23 @@ function roundMicros(numerator: bigint): bigint {
   return (numerator - half) / ONE_MILLION
 }
 
+export function applyMultiplier(basePriceMicros: string, multiplierMicros: string): string {
+  const base = parseMicros(basePriceMicros)
+  const mul = parseMicros(multiplierMicros)
+  // (base * mul + half) / 1_000_000 to round to nearest
+  const product = base * mul
+  return roundMicros(product).toString()
+}
+
 export function calculateBillingAmountMicros(
   usage: BillingUsageCandidate,
-  rule: BillingRule,
+  resolved: BillingResolvedSku,
 ): bigint {
   const total =
-    BigInt(usage.inputTokens) * parseMicros(rule.inputPriceMicrosPerMillion) +
-    BigInt(usage.outputTokens) * parseMicros(rule.outputPriceMicrosPerMillion) +
-    BigInt(usage.cacheCreationInputTokens) * parseMicros(rule.cacheCreationPriceMicrosPerMillion) +
-    BigInt(usage.cacheReadInputTokens) * parseMicros(rule.cacheReadPriceMicrosPerMillion)
+    BigInt(usage.inputTokens) * parseMicros(resolved.finalInputPriceMicrosPerMillion) +
+    BigInt(usage.outputTokens) * parseMicros(resolved.finalOutputPriceMicrosPerMillion) +
+    BigInt(usage.cacheCreationInputTokens) * parseMicros(resolved.finalCacheCreationPriceMicrosPerMillion) +
+    BigInt(usage.cacheReadInputTokens) * parseMicros(resolved.finalCacheReadPriceMicrosPerMillion)
 
   return roundMicros(total)
 }
@@ -224,14 +169,13 @@ function hasValidUsage(usage: BillingUsageCandidate): boolean {
 
 export function resolveBillingLineItem(
   usage: BillingUsageCandidate,
-  rules: BillingRule[],
+  resolved: BillingResolvedSku | null,
 ): BillingLineItemResolution {
   if (!hasValidUsage(usage)) {
     return {
       status: 'invalid_usage',
-      matchedRuleId: null,
-      matchedRuleName: null,
       currency: usage.billingCurrency,
+      routingGroupId: usage.routingGroupId,
       inputPriceMicrosPerMillion: '0',
       outputPriceMicrosPerMillion: '0',
       cacheCreationPriceMicrosPerMillion: '0',
@@ -240,13 +184,11 @@ export function resolveBillingLineItem(
     }
   }
 
-  const matchedRule = matchBillingRule(usage, rules)
-  if (!matchedRule) {
+  if (!resolved) {
     return {
-      status: 'missing_rule',
-      matchedRuleId: null,
-      matchedRuleName: null,
+      status: 'missing_sku',
       currency: usage.billingCurrency,
+      routingGroupId: usage.routingGroupId,
       inputPriceMicrosPerMillion: '0',
       outputPriceMicrosPerMillion: '0',
       cacheCreationPriceMicrosPerMillion: '0',
@@ -257,13 +199,12 @@ export function resolveBillingLineItem(
 
   return {
     status: 'billed',
-    matchedRuleId: matchedRule.id,
-    matchedRuleName: matchedRule.name,
-    currency: matchedRule.currency,
-    inputPriceMicrosPerMillion: matchedRule.inputPriceMicrosPerMillion,
-    outputPriceMicrosPerMillion: matchedRule.outputPriceMicrosPerMillion,
-    cacheCreationPriceMicrosPerMillion: matchedRule.cacheCreationPriceMicrosPerMillion,
-    cacheReadPriceMicrosPerMillion: matchedRule.cacheReadPriceMicrosPerMillion,
-    amountMicros: calculateBillingAmountMicros(usage, matchedRule).toString(),
+    currency: resolved.currency,
+    routingGroupId: usage.routingGroupId,
+    inputPriceMicrosPerMillion: resolved.finalInputPriceMicrosPerMillion,
+    outputPriceMicrosPerMillion: resolved.finalOutputPriceMicrosPerMillion,
+    cacheCreationPriceMicrosPerMillion: resolved.finalCacheCreationPriceMicrosPerMillion,
+    cacheReadPriceMicrosPerMillion: resolved.finalCacheReadPriceMicrosPerMillion,
+    amountMicros: calculateBillingAmountMicros(usage, resolved).toString(),
   }
 }

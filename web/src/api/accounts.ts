@@ -19,6 +19,14 @@ function toPercent(value: unknown): number | undefined {
 function normalizeRateLimitProbe(probe: RateLimitProbe): RateLimitProbe {
   return {
     ...probe,
+    modelUsage: Array.isArray(probe.modelUsage)
+      ? probe.modelUsage.map((item) => ({
+        ...item,
+        utilization: toPercent(item.utilization) ?? item.utilization,
+        remainingFraction: toPercent(item.remainingFraction) ?? item.remainingFraction,
+        reset: toIsoTimestamp(item.reset) ?? item.reset,
+      }))
+      : probe.modelUsage,
     requestUtilization: toPercent(probe.requestUtilization) ?? probe.requestUtilization,
     tokenUtilization: toPercent(probe.tokenUtilization) ?? probe.tokenUtilization,
     fallbackPercentage: toPercent(probe.fallbackPercentage) ?? probe.fallbackPercentage,
