@@ -26,28 +26,22 @@
 
 ## 快速部署
 
-从开发机远程触发腾讯机器部署：
+从开发机触发腾讯机器部署：
 
 ```bash
-./deploy.sh --remote
-```
-
-在腾讯机器上直接部署：
-
-```bash
-cd /home/ubuntu/projects/claude-oauth-relay
 ./deploy.sh
 ```
 
 部署脚本会执行：
 
-1. 检查 git 工作区是否干净。
+1. SSH 到腾讯新加坡机器的 `/home/ubuntu/projects/claude-oauth-relay`。
 2. `git fetch origin && git pull --ff-only origin main`。
-3. 检查必要 env key 是否存在，但不会打印密钥值。
-4. `pnpm install --frozen-lockfile`。
-5. `pnpm build`。
-6. 分别 `pm2 restart cor-relay --update-env`、`pm2 restart cor-server --update-env`，然后 `pm2 save`。
-7. 校验本地和公网 HTTP 端点。
+3. 检查 git 工作区是否干净。
+4. 检查必要 env key 是否存在，但不会打印密钥值。
+5. `pnpm install --frozen-lockfile`。
+6. `pnpm build`。
+7. 分别 `pm2 restart cor-relay --update-env`、`pm2 restart cor-server --update-env`，然后 `pm2 save`。
+8. 校验本地和公网 HTTP 端点。
 
 ## 可覆盖参数
 
@@ -110,20 +104,7 @@ curl -sS -o /dev/null -w "dash HTTP %{http_code}\n" https://dash.tokenqiao.com/l
 ```bash
 git log --oneline -20
 git revert <bad-commit-sha>
-./deploy.sh --remote
-```
-
-紧急情况下可在腾讯机器短期切到已知可用 commit 并重启，确认服务恢复后再补 revert commit：
-
-```bash
-cd /home/ubuntu/projects/claude-oauth-relay
-git fetch origin
-git switch --detach <known-good-sha>
-pnpm install --frozen-lockfile
-pnpm build
-pm2 restart cor-relay --update-env
-pm2 restart cor-server --update-env
-pm2 save
+./deploy.sh
 ```
 
 ## 常见问题

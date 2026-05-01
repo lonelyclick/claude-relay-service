@@ -7,19 +7,15 @@ REMOTE_HOST="${REMOTE_HOST:-ubuntu@43.160.224.233}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519_tencent_43_160_224_233}"
 REMOTE_NAME="${REMOTE_NAME:-origin}"
 BRANCH="${BRANCH:-main}"
-
-MODE="local"
 SKIP_PULL=0
 
 usage() {
   cat <<'USAGE'
-Usage: ./deploy.sh [--remote] [--skip-pull]
+Usage: ./deploy.sh [--skip-pull]
 
-Default:
-  Deploy the current/production checkout.
+Deploys the Tencent Singapore production checkout over SSH.
 
 Options:
-  --remote    SSH to the Tencent Singapore host, pull latest code, then deploy there.
   --skip-pull Skip git fetch/pull before deploying.
 
 Environment overrides:
@@ -119,6 +115,7 @@ build_remote_command() {
   cmd+=" SKIP_BUILD=$(quote "${SKIP_BUILD:-0}")"
   cmd+=" SKIP_VERIFY=$(quote "${SKIP_VERIFY:-0}")"
   cmd+=" ALLOW_DIRTY=$(quote "${ALLOW_DIRTY:-0}")"
+  cmd+=" DEPLOY_RUN_ON_SERVER=1"
   cmd+=" bash ./deploy.sh --skip-pull"
 
   printf '%s' "$cmd"
@@ -126,9 +123,6 @@ build_remote_command() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --remote)
-      MODE="remote"
-      ;;
     --skip-pull)
       SKIP_PULL=1
       ;;
@@ -146,8 +140,8 @@ done
 
 SSH_KEY="${SSH_KEY/#\~/$HOME}"
 
-if [[ "$MODE" == "remote" ]]; then
-  [[ -n "$SSH_KEY" ]] || die "SSH_KEY cannot be empty in --remote mode"
+if [[ "${DEPLOY_RUN_ON_SERVER:-0}" != "1" ]]; then
+  [[ -n "$SSH_KEY" ]] || die "SSH_KEY cannot be empty for remote deploy"
   [[ -f "$SSH_KEY" ]] || die "SSH key not found: $SSH_KEY"
 
   log "deploying on $REMOTE_HOST:$APP_DIR"
