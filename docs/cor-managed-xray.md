@@ -29,7 +29,7 @@ Admin API：
 
 - `POST /admin/proxies/import`，body `{ "text": "...", "portBase": 10880 }`：批量导入上游 VLESS
 - `POST /admin/xray/sync`，body `{ "dryRun": true }`：预览生成结果，不写文件
-- `POST /admin/xray/sync`，body `{ "validate": true, "restart": false }`：写入配置、执行 `xray test -config`、回填 `local_url`
+- `POST /admin/xray/sync`，body `{ "validate": true, "restart": true }`：写入配置、执行配置校验、回填 `local_url` 并重启 Xray 服务
 
 Internal Control API：
 
@@ -64,7 +64,7 @@ curl -X POST https://dash.tokenqiao.com/admin/xray/sync \
 3. 填写或保留 `Inbound Port`，未填写时从 `COR_XRAY_PORT_BASE` 递增分配。
 4. 勾选 `Include in COR managed Xray config`。
 5. 点击 `Preview Xray` 验证会生成哪些本地出口；页面会展示每条资源的 `localUrl` 和 `outboundTag`。
-6. 点击 `Generate Xray Config` 写入配置，并把本地出口回填到 `localUrl`。
+6. 点击 `Generate Xray Config` 写入配置，把本地出口回填到 `localUrl`，并重启 `xray-cor`。
 7. 确认 Xray 服务加载 `/etc/xray/cor-managed.json` 后重启 Xray。
 8. 在 Network 页面跑 `Probe All`，确认出口 IP 和健康状态。
 9. 保持 account 绑定不变；多个 account 可以继续复用同一个 `localUrl`。

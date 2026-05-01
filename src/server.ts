@@ -2593,15 +2593,55 @@ function parseVlessUpstream(url) {
   return { settings, streamSettings };
 }
 
-function buildManagedXrayConfig(proxies) {
+function isCorManagedTag(tag) {
+  return typeof tag === "string" && (tag.startsWith("cor-in-") || tag.startsWith("cor-out-"));
+}
+
+function isCorManagedRule(rule) {
+  if (!rule || typeof rule !== "object") return false;
+  if (isCorManagedTag(rule.outboundTag)) return true;
+  return Array.isArray(rule.inboundTag) && rule.inboundTag.some((tag) => isCorManagedTag(tag));
+}
+
+async function readExistingXrayConfig() {
+  try {
+    const raw = await fs.promises.readFile(XRAY_MANAGED_CONFIG_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") return parsed;
+  } catch {
+    // Missing or invalid existing config: fall through to a minimal baseline.
+  }
+  return {
+    log: { loglevel: "warning" },
+    inbounds: [],
+    outbounds: [{ protocol: "freedom", tag: "direct" }, { protocol: "blackhole", tag: "blocked" }],
+    routing: { domainStrategy: "AsIs", rules: [] },
+  };
+}
+
+function buildManagedXrayConfig(proxies, baseConfig) {
   const managed = proxies.filter((proxy) => proxy.enabled !== false && proxy.kind === "vless-upstream");
-  const usedPorts = new Set();
+  const config = JSON.parse(JSON.stringify(baseConfig || {}));
+  const existingInbounds = Array.isArray(config.inbounds) ? config.inbounds : [];
+  const existingOutbounds = Array.isArray(config.outbounds) ? config.outbounds : [];
+  const existingRules = Array.isArray(config.routing?.rules) ? config.routing.rules : [];
+  const usedPorts = new Set(
+    existingInbounds
+      .filter((inbound) => !isCorManagedTag(inbound?.tag))
+      .map((inbound) => Number(inbound?.port))
+      .filter((port) => Number.isInteger(port) && port > 0),
+  );
   const inbounds = [];
-  const outbounds = [{ protocol: "freedom", tag: "direct" }, { protocol: "blackhole", tag: "blocked" }];
+  const outbounds = [];
   const rules = [];
   const assignments = [];
+  let nextPort = XRAY_MANAGED_PORT_BASE;
   managed.forEach((proxy, index) => {
-    const port = proxy.inboundPort || parseLocalProxyPort(proxy.localUrl) || XRAY_MANAGED_PORT_BASE + index;
+    let port = proxy.inboundPort || parseLocalProxyPort(proxy.localUrl) || null;
+    if (!port) {
+      while (usedPorts.has(nextPort)) nextPort += 1;
+      port = nextPort;
+    }
     if (usedPorts.has(port)) throw new Error(`Duplicate managed Xray inbound port: ${port}`);
     usedPorts.add(port);
     const inboundProtocol = inferManagedInboundProtocol(proxy);
@@ -2629,17 +2669,22 @@ function buildManagedXrayConfig(proxies) {
   return {
     assignments,
     config: {
-      log: { loglevel: "warning" },
-      inbounds,
-      outbounds,
-      routing: { domainStrategy: "AsIs", rules },
+      ...config,
+      inbounds: [...existingInbounds.filter((inbound) => !isCorManagedTag(inbound?.tag)), ...inbounds],
+      outbounds: [...existingOutbounds.filter((outbound) => !isCorManagedTag(outbound?.tag)), ...outbounds],
+      routing: {
+        ...(config.routing || {}),
+        domainStrategy: config.routing?.domainStrategy || "AsIs",
+        rules: [...rules, ...existingRules.filter((rule) => !isCorManagedRule(rule))],
+      },
     },
   };
 }
 
 async function syncManagedXrayConfig(services, options = {}) {
   const proxies = await services.oauthService.listProxies();
-  const { config, assignments } = buildManagedXrayConfig(proxies);
+  const baseConfig = await readExistingXrayConfig();
+  const { config, assignments } = buildManagedXrayConfig(proxies, baseConfig);
   if (options.dryRun) {
     return { dryRun: true, path: XRAY_MANAGED_CONFIG_PATH, assignments, config };
   }

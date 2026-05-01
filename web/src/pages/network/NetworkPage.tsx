@@ -86,12 +86,12 @@ export function NetworkPage() {
     if (!confirm('Generate COR managed Xray config and update local proxy URLs?')) return
     setSyncing(true)
     try {
-      const result = await syncXrayConfig({ validate: true, restart: false })
+      const result = await syncXrayConfig({ validate: true, restart: true })
       setPreview(result)
       if (result.validation && !result.validation.ok) {
         toast.error(`Xray validation failed${result.rolledBack ? ', rolled back' : ''}`)
       } else {
-        toast.success(`Generated ${result.assignments.length} Xray exits`)
+        toast.success(`Generated ${result.assignments.length} Xray exits${result.restart?.ok ? ', restarted' : ''}`)
       }
       qc.invalidateQueries({ queryKey: ['proxies'] })
     } catch (e) {
