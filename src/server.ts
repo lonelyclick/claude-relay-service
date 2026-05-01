@@ -2647,6 +2647,9 @@ function buildManagedXrayConfig(proxies, baseConfig) {
   let nextPort = XRAY_MANAGED_PORT_BASE;
   managed.forEach((proxy, index) => {
     let port = proxy.inboundPort || parseLocalProxyPort(proxy.localUrl) || null;
+    if (port && usedPorts.has(port) && !proxy.localUrl) {
+      port = null;
+    }
     if (!port) {
       while (usedPorts.has(nextPort)) nextPort += 1;
       port = nextPort;
