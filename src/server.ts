@@ -50,6 +50,13 @@ const XRAY_MANAGED_BIN = process.env.COR_XRAY_BIN || "xray";
 const XRAY_SYSTEMCTL_BIN = process.env.COR_SYSTEMCTL_BIN || "systemctl";
 const execFileAsync = promisify(execFile);
 const XRAY_TEST_UNSUPPORTED_PATTERN = /unknown command|Run 'xray help' for usage/i;
+
+function splitShellWords(value) {
+  return String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
 const ADMIN_UI_DIST_DIR = path.join(projectRoot, "web/dist");
 const ADMIN_UI_INDEX_PATH = path.join(ADMIN_UI_DIST_DIR, "index.html");
 let ADMIN_UI_INDEX_CACHE = null;
@@ -2736,7 +2743,8 @@ async function syncManagedXrayConfig(services, options = {}) {
   let restart = null;
   if (options.restart && XRAY_MANAGED_SERVICE) {
     try {
-      await execFileAsync(XRAY_SYSTEMCTL_BIN, ["restart", XRAY_MANAGED_SERVICE], { timeout: 15_000 });
+      const [command, ...prefixArgs] = splitShellWords(XRAY_SYSTEMCTL_BIN);
+      await execFileAsync(command || "systemctl", [...prefixArgs, "restart", XRAY_MANAGED_SERVICE], { timeout: 15_000 });
       restart = { ok: true, service: XRAY_MANAGED_SERVICE };
     } catch (error) {
       restart = { ok: false, service: XRAY_MANAGED_SERVICE, error: sanitizeErrorMessage(error) };
