@@ -1,8 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { Link } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { listAccounts } from '~/api/accounts'
-import { addProxy, deleteProxy, importProxies, linkAccountsToProxy, listProxies, probeProxy, syncXrayConfig, unlinkAccountFromProxy } from '~/api/proxies'
+import { addProxy, importProxies, listProxies, probeProxy, syncXrayConfig } from '~/api/proxies'
 import { PageSkeleton } from '~/components/LoadingSkeleton'
 import { StatCard } from '~/components/StatCard'
 import { Badge, type BadgeTone } from '~/components/Badge'
@@ -14,7 +13,6 @@ export function NetworkPage() {
   const toast = useToast()
   const qc = useQueryClient()
   const proxies = useQuery({ queryKey: ['proxies'], queryFn: listProxies })
-  const accounts = useQuery({ queryKey: ['accounts'], queryFn: listAccounts })
   const [search, setSearch] = useState('')
   const [diagnostics, setDiagnostics] = useState<Record<string, ProxyDiagnostics>>({})
   const [probing, setProbing] = useState<Set<string>>(new Set())
@@ -254,7 +252,7 @@ export function NetworkPage() {
       ) : (
         <div className="grid grid-cols-2 gap-3 max-lg:grid-cols-1">
           {filtered.map((p) => (
-            <ProxyCard key={p.id} proxy={p} accounts={accounts.data?.accounts ?? []} diag={diagnostics[p.id]} isProbing={probing.has(p.id)} onProbe={() => probe(p.id)} />
+            <ProxyCard key={p.id} proxy={p} diag={diagnostics[p.id]} isProbing={probing.has(p.id)} onProbe={() => probe(p.id)} />
           ))}
         </div>
       )}
@@ -262,75 +260,19 @@ export function NetworkPage() {
   )
 }
 
-function ProxyCard({ proxy: p, accounts, diag, isProbing, onProbe }: {
+function ProxyCard({ proxy: p, diag, isProbing, onProbe }: {
   proxy: Proxy
-  accounts: Awaited<ReturnType<typeof listAccounts>>['accounts']
   diag?: ProxyDiagnostics
   isProbing: boolean
   onProbe: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
-  const [selectedAccountId, setSelectedAccountId] = useState('')
-  const [savingLink, setSavingLink] = useState(false)
-  const [deleting, setDeleting] = useState(false)
   const toast = useToast()
-  const qc = useQueryClient()
 
   const persistedStatus = p.lastProbeStatus ?? undefined
   const status = diag?.status ?? persistedStatus
   const statusTone: BadgeTone = status === 'healthy' ? 'green' : status === 'degraded' ? 'yellow' : status === 'error' ? 'red' : 'gray'
   const statusLabel = isProbing ? 'Probing...' : status ?? 'Idle'
-  const linkedIds = new Set((p.accounts ?? []).map((account) => account.id))
-  const availableAccounts = accounts.filter((account) => !linkedIds.has(account.id))
-
-  const linkSelectedAccount = async () => {
-    if (!selectedAccountId) return
-    setSavingLink(true)
-    try {
-      await linkAccountsToProxy(p.id, [selectedAccountId])
-      setSelectedAccountId('')
-      toast.success('Account linked')
-      qc.invalidateQueries({ queryKey: ['proxies'] })
-      qc.invalidateQueries({ queryKey: ['accounts'] })
-    } catch (e) {
-      toast.error(`Link failed: ${(e as Error).message}`)
-    } finally {
-      setSavingLink(false)
-    }
-  }
-
-  const unlinkAccount = async (accountId: string) => {
-    setSavingLink(true)
-    try {
-      await unlinkAccountFromProxy(p.id, accountId)
-      toast.success('Account unlinked')
-      qc.invalidateQueries({ queryKey: ['proxies'] })
-      qc.invalidateQueries({ queryKey: ['accounts'] })
-    } catch (e) {
-      toast.error(`Unlink failed: ${(e as Error).message}`)
-    } finally {
-      setSavingLink(false)
-    }
-  }
-
-  const handleDelete = async () => {
-    const linkedCount = p.accounts?.length ?? 0
-    const message = linkedCount > 0
-      ? `Delete "${p.label}" and unlink ${linkedCount} account(s)?`
-      : `Delete "${p.label}"?`
-    if (!confirm(message)) return
-    setDeleting(true)
-    try {
-      await deleteProxy(p.id)
-      toast.success('Network deleted')
-      qc.invalidateQueries({ queryKey: ['proxies'] })
-      qc.invalidateQueries({ queryKey: ['accounts'] })
-    } catch (e) {
-      toast.error(`Delete failed: ${(e as Error).message}`)
-    } finally {
-      setDeleting(false)
-    }
-  }
 
   return (
     <div className="bg-bg-card border border-border-default rounded-xl p-4 shadow-xs">
@@ -346,7 +288,7 @@ function ProxyCard({ proxy: p, accounts, diag, isProbing, onProbe }: {
 
       <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400 mb-3">
         <div>Local: <span className="text-slate-300">{p.localUrl ? 'Ready' : 'Missing'}</span></div>
-        <div>Port: <span className="text-slate-300">{p.inboundPort ?? '—'}</span></div>
+        <div>Port: <span className="text-slate-300">{p.inboundPort ?? 'Auto'}</span></div>
         <div>Latency: <span className="text-slate-300">{diag?.latencyMs ? `${diag.latencyMs}ms` : '—'}</span></div>
         <div>IP: <span className="text-slate-300">{diag?.egressIp ?? p.egressIp ?? '—'}{diag?.egressFamily ? ` (${diag.egressFamily})` : ''}</span></div>
         <div>Checked: <span className="text-slate-300">{diag?.checkedAt ?? p.lastProbeAt ? new Date(diag?.checkedAt ?? p.lastProbeAt!).toLocaleString() : '—'}</span></div>
@@ -365,9 +307,7 @@ function ProxyCard({ proxy: p, accounts, diag, isProbing, onProbe }: {
         <button onClick={onProbe} disabled={isProbing} className="text-[10px] text-indigo-400 hover:text-indigo-300 disabled:opacity-50">
           {isProbing ? 'Probing...' : 'Probe'}
         </button>
-        <button onClick={handleDelete} disabled={deleting} className="text-[10px] text-red-400 hover:text-red-300 disabled:opacity-50">
-          {deleting ? 'Deleting...' : 'Delete'}
-        </button>
+        <Link to={`/network/${encodeURIComponent(p.id)}`} className="text-[10px] text-emerald-300 hover:text-emerald-200">Open Details</Link>
         <button onClick={() => setExpanded(!expanded)} className="text-[10px] text-slate-500 hover:text-slate-300 ml-auto">
           {expanded ? 'Hide details' : 'Show details'}
         </button>
@@ -386,25 +326,13 @@ function ProxyCard({ proxy: p, accounts, diag, isProbing, onProbe }: {
               <div className="text-[10px] text-slate-500 mb-1">Linked Accounts:</div>
               <div className="flex flex-wrap gap-1">
                 {p.accounts.map((a) => (
-                  <span key={a.id} className="inline-flex items-center gap-1">
-                    <Link to={`/accounts/${encodeURIComponent(a.id)}`} className="text-[10px] text-indigo-400 hover:underline">
-                      {a.label || a.emailAddress}
-                    </Link>
-                    <button onClick={() => unlinkAccount(a.id)} disabled={savingLink} className="text-[10px] text-red-400 hover:text-red-300 disabled:opacity-50">×</button>
-                  </span>
+                  <Link key={a.id} to={`/accounts/${encodeURIComponent(a.id)}`} className="text-[10px] text-indigo-400 hover:underline">
+                    {a.label || a.emailAddress}
+                  </Link>
                 ))}
               </div>
             </div>
           )}
-          <div className="flex gap-2 items-center">
-            <select value={selectedAccountId} onChange={(e) => setSelectedAccountId(e.target.value)} className="min-w-0 flex-1 bg-bg-input border border-border-default rounded px-2 py-1 text-[11px] text-slate-200">
-              <option value="">Link account...</option>
-              {availableAccounts.map((account) => (
-                <option key={account.id} value={account.id}>{account.label || account.emailAddress || account.id}</option>
-              ))}
-            </select>
-            <button onClick={linkSelectedAccount} disabled={!selectedAccountId || savingLink} className="text-[10px] text-emerald-300 hover:text-emerald-200 disabled:opacity-50">Link</button>
-          </div>
           {diag && (
             <div className="text-[10px] text-slate-400">
               <div>Status: {diag.status} | Via: {diag.via ?? 'N/A'} | HTTP: {diag.httpStatus ?? '—'}{diag.error ? ` | Error: ${diag.error}` : ''}</div>
