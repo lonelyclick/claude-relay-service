@@ -11,13 +11,14 @@ TARGET=""
 
 usage() {
   cat <<'USAGE'
-Usage: ./deploy.sh relay|server
+Usage: ./deploy.sh relay|server|frontend
 
-Deploys one claude-oauth-relay production process on the Tencent Singapore host.
+Deploys one claude-oauth-relay production target.
 
 Targets:
   relay     Build and restart cor-relay only.
-  server    Build and restart cor-server plus the admin web assets.
+  server    Build and restart cor-server only.
+  frontend  Build the admin web and deploy Cloudflare Pages project ccdash.
 
 Hard requirements before deploy:
   - The local checkout must be on main.
@@ -31,6 +32,9 @@ Environment overrides:
   APP_DIR=/home/ubuntu/projects/claude-oauth-relay
   BRANCH=main
   REMOTE_NAME=origin
+  CLOUDFLARE_EMAIL=...
+  CLOUDFLARE_API_KEY=...
+  CLOUDFLARE_ACCOUNT_ID=...
 USAGE
 }
 
@@ -57,6 +61,11 @@ require_env_key() {
 
   [[ -f "$file" ]] || die "missing environment file: $file"
   grep -Eq "^${key}=.+" "$file" || die "$file is missing required key: $key"
+}
+
+require_present_env() {
+  local key="$1"
+  [[ -n "${!key:-}" ]] || die "missing required environment variable: $key"
 }
 
 ensure_main_branch() {
@@ -134,9 +143,34 @@ build_remote_command() {
   printf '%s' "$cmd"
 }
 
+deploy_frontend() {
+  require_command pnpm
+  require_command wrangler
+  require_command curl
+  require_present_env "CLOUDFLARE_EMAIL"
+  require_present_env "CLOUDFLARE_API_KEY"
+  require_present_env "CLOUDFLARE_ACCOUNT_ID"
+  require_env_key "web/.env.production" "VITE_API_BASE_URL"
+
+  log "installing dependencies"
+  pnpm install --frozen-lockfile
+
+  log "building admin web"
+  pnpm run build:web
+
+  log "deploying Cloudflare Pages project ccdash"
+  wrangler pages deploy web/dist \
+    --project-name=ccdash \
+    --branch="$BRANCH"
+
+  log "verifying Cloudflare Pages frontend"
+  wait_for_http "dash.tokenqiao.com" "https://dash.tokenqiao.com/"
+  wait_for_http "ccdash.pages.dev" "https://ccdash.pages.dev/"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    relay|server)
+    relay|server|frontend)
       [[ -z "$TARGET" ]] || die "deploy target was provided more than once"
       TARGET="$1"
       ;;
@@ -169,6 +203,12 @@ if [[ "${DEPLOY_RUN_ON_SERVER:-0}" != "1" ]]; then
   ensure_clean_worktree "local checkout"
   ensure_local_head_pushed
 
+  if [[ "$TARGET" == "frontend" ]]; then
+    deploy_frontend
+    log "$TARGET deploy complete"
+    exit
+  fi
+
   [[ -n "$SSH_KEY" ]] || die "SSH_KEY cannot be empty for remote deploy"
   [[ -f "$SSH_KEY" ]] || die "SSH key not found: $SSH_KEY"
 
@@ -191,6 +231,7 @@ require_command pnpm
 require_command pm2
 require_command curl
 
+[[ "$TARGET" != "frontend" ]] || die "frontend target must be deployed from the local checkout, not on the production server"
 ensure_main_branch "production checkout"
 ensure_clean_worktree "production checkout"
 
@@ -228,14 +269,12 @@ case "$TARGET" in
     require_env_key ".env" "RELAY_CONTROL_URL"
     require_env_key ".env" "BETTER_AUTH_DATABASE_URL"
     require_env_key ".env" "BETTER_AUTH_API_URL"
-    require_env_key "web/.env.production" "VITE_API_BASE_URL"
 
     log "installing dependencies"
     pnpm install --frozen-lockfile
 
-    log "building server and admin web"
+    log "building server"
     pnpm run build:server
-    pnpm run build:web
 
     log "restarting cor-server"
     pm2 restart cor-server --update-env
@@ -243,7 +282,6 @@ case "$TARGET" in
 
     log "verifying server endpoints"
     wait_for_http "local server health" "http://127.0.0.1:3561/healthz"
-    wait_for_http "dash.tokenqiao.com login" "https://dash.tokenqiao.com/login"
     ;;
 esac
 
