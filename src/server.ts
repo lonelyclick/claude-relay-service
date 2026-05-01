@@ -2802,7 +2802,7 @@ async function ensureProxyProbeReady(services, proxy) {
   return proxies.find((item) => item.id === proxy.id) || proxy;
 }
 
-async function probeProxyExit(proxy) {
+async function probeProxyExitOnce(proxy) {
   const checkedAt = new Date().toISOString();
   const target = resolveProbeProxyTarget(proxy);
   if (!target) {
@@ -2902,6 +2902,35 @@ async function probeProxyExit(proxy) {
   } finally {
     await dispatcher.close().catch(() => {});
   }
+}
+async function probeProxyExit(proxy) {
+  let diagnostics = await probeProxyExitOnce(proxy);
+  const port = parseLocalProxyPort(proxy.localUrl);
+  if (diagnostics.status !== "error" || !port) {
+    return diagnostics;
+  }
+  const error = String(diagnostics.error || "").toLowerCase();
+  const maybeWarmup =
+    error.includes("econnrefused") ||
+    error.includes("socket hang up") ||
+    error.includes("other side closed") ||
+    error.includes("connection closed") ||
+    error.includes("connection terminated");
+  if (!maybeWarmup) {
+    return diagnostics;
+  }
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await sleep(500);
+    const ready = await waitForTcpPort(XRAY_MANAGED_LISTEN, port, 1_500);
+    if (!ready) {
+      continue;
+    }
+    diagnostics = await probeProxyExitOnce(proxy);
+    if (diagnostics.status !== "error") {
+      return diagnostics;
+    }
+  }
+  return diagnostics;
 }
 function classifyRefreshFailure(error) {
   const message = sanitizeErrorMessage(error);

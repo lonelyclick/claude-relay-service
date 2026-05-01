@@ -1,23 +1,19 @@
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo } from 'react'
 import { Link } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { addProxy, importProxies, listProxies, probeProxy, syncXrayConfig } from '~/api/proxies'
+import { addProxy, importProxies, listProxies } from '~/api/proxies'
 import { PageSkeleton } from '~/components/LoadingSkeleton'
 import { StatCard } from '~/components/StatCard'
 import { Badge, type BadgeTone } from '~/components/Badge'
 import { useToast } from '~/components/Toast'
 import { fmtNum, truncateMiddle } from '~/lib/format'
-import type { Proxy, ProxyDiagnostics, XraySyncResult } from '~/api/types'
+import type { Proxy } from '~/api/types'
 
 export function NetworkPage() {
   const toast = useToast()
   const qc = useQueryClient()
   const proxies = useQuery({ queryKey: ['proxies'], queryFn: listProxies })
   const [search, setSearch] = useState('')
-  const [diagnostics, setDiagnostics] = useState<Record<string, ProxyDiagnostics>>({})
-  const [probing, setProbing] = useState<Set<string>>(new Set())
-  const [syncing, setSyncing] = useState(false)
-  const [preview, setPreview] = useState<XraySyncResult | null>(null)
   const [showAdd, setShowAdd] = useState(false)
   const [newLabel, setNewLabel] = useState('')
   const [newUrl, setNewUrl] = useState('')
@@ -38,64 +34,6 @@ export function NetworkPage() {
   const localReady = proxyList.filter((p) => p.localUrl).length
   const linkedAccounts = proxyList.reduce((sum, p) => sum + (p.accounts?.length ?? 0), 0)
   const managedCount = proxyList.filter((p) => p.kind === 'vless-upstream' && p.enabled !== false).length
-
-  const probe = async (proxyId: string) => {
-    setProbing((s) => new Set(s).add(proxyId))
-    try {
-      const result = await probeProxy(proxyId)
-      setDiagnostics((d) => ({ ...d, [proxyId]: result }))
-    } catch (e) {
-      toast.error(`Probe failed: ${(e as Error).message}`)
-    } finally {
-      setProbing((s) => { const n = new Set(s); n.delete(proxyId); return n })
-    }
-  }
-
-  const probeAll = async () => {
-    let count = 0
-    for (const p of filtered) {
-      setProbing((s) => new Set(s).add(p.id))
-      try {
-        const result = await probeProxy(p.id)
-        setDiagnostics((d) => ({ ...d, [p.id]: result }))
-        count++
-      } catch { /* skip */ }
-      setProbing((s) => { const n = new Set(s); n.delete(p.id); return n })
-    }
-    toast.success(`Probed ${count} nodes`)
-  }
-
-  const previewXray = async () => {
-    setSyncing(true)
-    try {
-      const result = await syncXrayConfig({ dryRun: true })
-      setPreview(result)
-      toast.success(`Xray preview: ${result.assignments.length} managed exits`)
-    } catch (e) {
-      toast.error(`Xray preview failed: ${(e as Error).message}`)
-    } finally {
-      setSyncing(false)
-    }
-  }
-
-  const syncXray = async () => {
-    if (!confirm('Generate COR managed Xray config and update local proxy URLs?')) return
-    setSyncing(true)
-    try {
-      const result = await syncXrayConfig({ validate: true, restart: true })
-      setPreview(result)
-      if (result.validation && !result.validation.ok) {
-        toast.error(`Xray validation failed${result.rolledBack ? ', rolled back' : ''}`)
-      } else {
-        toast.success(`Generated ${result.assignments.length} Xray exits${result.restart?.ok ? ', restarted' : ''}`)
-      }
-      qc.invalidateQueries({ queryKey: ['proxies'] })
-    } catch (e) {
-      toast.error(`Xray sync failed: ${(e as Error).message}`)
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   const createVlessProxy = async () => {
     const label = newLabel.trim()
@@ -137,21 +75,6 @@ export function NetworkPage() {
     }
   }
 
-  const autoProbed = useRef(false)
-  useEffect(() => {
-    if (proxyList.length > 0 && !autoProbed.current) {
-      autoProbed.current = true
-      ;(async () => {
-        for (const p of proxyList) {
-          try {
-            const result = await probeProxy(p.id)
-            setDiagnostics((d) => ({ ...d, [p.id]: result }))
-          } catch { /* skip */ }
-        }
-      })()
-    }
-  }, [proxyList])
-
   if (proxies.isLoading) return <PageSkeleton />
 
   return (
@@ -180,19 +103,6 @@ export function NetworkPage() {
         <button onClick={() => setShowAdd((v) => !v)} className="text-xs text-slate-300 hover:text-slate-100">
           {showAdd ? 'Hide Add' : 'Add VLESS'}
         </button>
-        <button
-          onClick={probeAll}
-          disabled={probing.size > 0}
-          className="text-xs text-indigo-300 hover:text-indigo-300 disabled:opacity-50"
-        >
-          Probe All ({filtered.length})
-        </button>
-        <button onClick={previewXray} disabled={syncing} className="text-xs text-cyan-300 hover:text-cyan-200 disabled:opacity-50">
-          Preview Xray
-        </button>
-        <button onClick={syncXray} disabled={syncing} className="text-xs text-emerald-300 hover:text-emerald-200 disabled:opacity-50">
-          Generate Xray Config
-        </button>
       </div>
 
       {showAdd && (
@@ -215,44 +125,12 @@ export function NetworkPage() {
         </section>
       )}
 
-      {preview && (
-        <section className="bg-bg-card border border-border-default rounded-xl p-4 shadow-xs space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="text-xs font-semibold uppercase tracking-wider text-cyan-300">Xray Plan</div>
-            <div className="text-[11px] text-slate-500">{preview.dryRun ? 'Preview only' : `Written to ${preview.path}`}</div>
-          </div>
-          {preview.assignments.length === 0 ? (
-            <div className="text-xs text-slate-500">No enabled VLESS upstreams.</div>
-          ) : (
-            <div className="grid grid-cols-2 gap-2 max-lg:grid-cols-1">
-              {preview.assignments.map((item) => {
-                const proxy = proxyList.find((p) => p.id === item.proxyId)
-                return (
-                  <div key={item.proxyId} className="rounded-lg border border-border-default/60 p-2 text-[11px] text-slate-400">
-                    <div className="text-slate-200">{proxy?.label ?? item.proxyId}</div>
-                    <div>Local: <span className="font-mono text-slate-300">{item.localUrl}</span></div>
-                    <div>Outbound: <span className="font-mono text-slate-300">{item.outboundTag}</span></div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-          {preview.restart && !preview.restart.ok && <div className="text-xs text-red-400">Restart failed: {preview.restart.error}</div>}
-          {preview.validation && (
-            <div className={preview.validation.ok ? 'text-xs text-emerald-300' : 'text-xs text-red-400'}>
-              Xray validation: {preview.validation.ok ? 'passed' : preview.validation.error ?? 'failed'}{preview.rolledBack ? ' · rolled back' : ''}
-            </div>
-          )}
-          {preview.backupPath && <div className="text-[11px] text-slate-500">Backup: <span className="font-mono">{preview.backupPath}</span></div>}
-        </section>
-      )}
-
       {filtered.length === 0 ? (
         <div className="text-center text-slate-500 py-8">No matching exits.</div>
       ) : (
         <div className="grid grid-cols-2 gap-3 max-lg:grid-cols-1">
           {filtered.map((p) => (
-            <ProxyCard key={p.id} proxy={p} diag={diagnostics[p.id]} isProbing={probing.has(p.id)} onProbe={() => probe(p.id)} />
+            <ProxyCard key={p.id} proxy={p} />
           ))}
         </div>
       )}
@@ -260,83 +138,44 @@ export function NetworkPage() {
   )
 }
 
-function ProxyCard({ proxy: p, diag }: {
-  proxy: Proxy
-  diag?: ProxyDiagnostics
-  isProbing: boolean
-  onProbe: () => void
-}) {
-  const [expanded, setExpanded] = useState(false)
-
-  const persistedStatus = p.lastProbeStatus ?? undefined
-  const status = diag?.status ?? persistedStatus
+function ProxyCard({ proxy: p }: { proxy: Proxy }) {
+  const status = p.lastProbeStatus ?? undefined
   const statusTone: BadgeTone = status === 'healthy' ? 'green' : status === 'degraded' ? 'yellow' : status === 'error' ? 'red' : 'gray'
   const statusLabel = status ?? 'Idle'
+  const checkedAt = p.lastProbeAt ? new Date(p.lastProbeAt).toLocaleString() : '—'
 
   return (
-    <div className="bg-bg-card border border-border-default rounded-xl p-4 shadow-xs">
+    <Link to={`/network/${encodeURIComponent(p.id)}`} className="block bg-bg-card border border-border-default rounded-xl p-4 shadow-xs hover:border-indigo-500/40 hover:bg-white/[0.02] transition-colors">
       <div className="flex items-start justify-between mb-3">
-        <div>
-          <Link to={`/network/${encodeURIComponent(p.id)}`} className="text-sm font-medium text-slate-100 hover:text-indigo-400">
-            {p.label}
-          </Link>
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-slate-100 truncate">{p.label}</div>
           <div className="text-[10px] text-slate-500">{p.accounts?.length ?? 0} accounts linked · {p.kind ?? 'local-http'}</div>
         </div>
         <Badge tone={statusTone}>{statusLabel}</Badge>
       </div>
 
-      <Link to={`/network/${encodeURIComponent(p.id)}`} className="block">
-        <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400 mb-3 hover:text-slate-300 transition-colors">
-          <div>Local: <span className="text-slate-300">{p.localUrl ? 'Ready' : 'Missing'}</span></div>
-          <div>Port: <span className="text-slate-300">{p.inboundPort ?? 'Auto'}</span></div>
-          <div>Latency: <span className="text-slate-300">{diag?.latencyMs ? `${diag.latencyMs}ms` : '—'}</span></div>
-          <div>IP: <span className="text-slate-300">{diag?.egressIp ?? p.egressIp ?? '—'}{diag?.egressFamily ? ` (${diag.egressFamily})` : ''}</span></div>
-          <div>Checked: <span className="text-slate-300">{diag?.checkedAt ?? p.lastProbeAt ? new Date(diag?.checkedAt ?? p.lastProbeAt!).toLocaleString() : '—'}</span></div>
-        </div>
-      </Link>
+      <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400 mb-3">
+        <div>Local: <span className="text-slate-300">{p.localUrl ? 'Ready' : 'Missing'}</span></div>
+        <div>Port: <span className="text-slate-300">{p.inboundPort ?? 'Auto'}</span></div>
+        <div>IP: <span className="text-slate-300">{p.egressIp ?? '—'}</span></div>
+        <div>Checked: <span className="text-slate-300">{checkedAt}</span></div>
+      </div>
 
-      <div className="text-[10px] text-slate-500 space-y-0.5 mb-3">
+      <div className="text-[10px] text-slate-500 space-y-0.5">
         <div>Remote: <span className="text-slate-400 font-mono">{truncateMiddle(p.url, 60)}</span></div>
         <div>Local: <span className="text-slate-400 font-mono">{p.localUrl ? truncateMiddle(p.localUrl, 60) : '—'}</span></div>
       </div>
 
-      <div className="flex gap-2">
-        <Link to={`/network/${encodeURIComponent(p.id)}`} className="text-[10px] text-emerald-300 hover:text-emerald-200">Open Details</Link>
-        <button onClick={() => setExpanded(!expanded)} className="text-[10px] text-slate-500 hover:text-slate-300 ml-auto">
-          {expanded ? 'Hide details' : 'Show details'}
-        </button>
-      </div>
-
-      {expanded && (
-        <div className="mt-3 pt-3 border-t border-border-default/50 space-y-2">
-          <div className="text-[10px] text-slate-400 break-all">
-            <div>Full Remote: <span className="font-mono text-slate-300">{p.url}</span></div>
-            <div>Full Local: <span className="font-mono text-slate-300">{p.localUrl ?? '—'}</span></div>
-            <div>Xray: <span className="font-mono text-slate-300">{p.xrayConfigPath ?? '—'}</span></div>
-            <div>Outbound: <span className="font-mono text-slate-300">{p.outboundTag ?? '—'}</span></div>
-          </div>
-          {p.accounts && p.accounts.length > 0 && (
-            <div>
-              <div className="text-[10px] text-slate-500 mb-1">Linked Accounts:</div>
-              <div className="flex flex-wrap gap-1">
-                {p.accounts.map((a) => (
-                  <Link key={a.id} to={`/accounts/${encodeURIComponent(a.id)}`} className="text-[10px] text-indigo-400 hover:underline">
-                    {a.label || a.emailAddress}
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
-          {diag && (
-            <div className="text-[10px] text-slate-400">
-              <div>Status: {diag.status} | Via: {diag.via ?? 'N/A'} | HTTP: {diag.httpStatus ?? '—'}{diag.error ? ` | Error: ${diag.error}` : ''}</div>
-            </div>
-          )}
-          {!diag && p.lastProbeStatus && (
-            <div className="text-[10px] text-slate-400">Last probe: {p.lastProbeStatus} · {p.lastProbeAt ? new Date(p.lastProbeAt).toLocaleString() : '—'}</div>
-          )}
+      {p.accounts && p.accounts.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1">
+          {p.accounts.slice(0, 4).map((account) => (
+            <span key={account.id} className="rounded-full bg-slate-800/80 px-2 py-0.5 text-[10px] text-slate-400">
+              {account.label || account.emailAddress}
+            </span>
+          ))}
+          {p.accounts.length > 4 && <span className="text-[10px] text-slate-500">+{p.accounts.length - 4}</span>}
         </div>
       )}
-    </div>
+    </Link>
   )
 }
