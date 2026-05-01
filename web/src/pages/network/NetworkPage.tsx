@@ -203,7 +203,7 @@ export function NetworkPage() {
             <input value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="vless://..." className="bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200 font-mono" />
             <button onClick={createVlessProxy} className="px-3 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-500">Add</button>
           </div>
-          <p className="text-[11px] text-slate-500">端口由后端自动分配；添加后可直接 Probe，系统会生成本地出口并重启 xray-cor。</p>
+          <p className="text-[11px] text-slate-500">端口由后端自动分配；添加后进入详情页点击 Probe，系统会生成本地出口并重启 xray-cor。</p>
           <div className="border-t border-border-default/60 pt-3 space-y-2">
             <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Bulk Import</div>
             <textarea value={bulkText} onChange={(e) => setBulkText(e.target.value)} rows={4} placeholder={'每行一个 vless://...，或 “备注<TAB>vless://...”'} className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-2 text-xs text-slate-200 font-mono" />
@@ -260,19 +260,18 @@ export function NetworkPage() {
   )
 }
 
-function ProxyCard({ proxy: p, diag, isProbing, onProbe }: {
+function ProxyCard({ proxy: p, diag }: {
   proxy: Proxy
   diag?: ProxyDiagnostics
   isProbing: boolean
   onProbe: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
-  const toast = useToast()
 
   const persistedStatus = p.lastProbeStatus ?? undefined
   const status = diag?.status ?? persistedStatus
   const statusTone: BadgeTone = status === 'healthy' ? 'green' : status === 'degraded' ? 'yellow' : status === 'error' ? 'red' : 'gray'
-  const statusLabel = isProbing ? 'Probing...' : status ?? 'Idle'
+  const statusLabel = status ?? 'Idle'
 
   return (
     <div className="bg-bg-card border border-border-default rounded-xl p-4 shadow-xs">
@@ -286,13 +285,15 @@ function ProxyCard({ proxy: p, diag, isProbing, onProbe }: {
         <Badge tone={statusTone}>{statusLabel}</Badge>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400 mb-3">
-        <div>Local: <span className="text-slate-300">{p.localUrl ? 'Ready' : 'Missing'}</span></div>
-        <div>Port: <span className="text-slate-300">{p.inboundPort ?? 'Auto'}</span></div>
-        <div>Latency: <span className="text-slate-300">{diag?.latencyMs ? `${diag.latencyMs}ms` : '—'}</span></div>
-        <div>IP: <span className="text-slate-300">{diag?.egressIp ?? p.egressIp ?? '—'}{diag?.egressFamily ? ` (${diag.egressFamily})` : ''}</span></div>
-        <div>Checked: <span className="text-slate-300">{diag?.checkedAt ?? p.lastProbeAt ? new Date(diag?.checkedAt ?? p.lastProbeAt!).toLocaleString() : '—'}</span></div>
-      </div>
+      <Link to={`/network/${encodeURIComponent(p.id)}`} className="block">
+        <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-400 mb-3 hover:text-slate-300 transition-colors">
+          <div>Local: <span className="text-slate-300">{p.localUrl ? 'Ready' : 'Missing'}</span></div>
+          <div>Port: <span className="text-slate-300">{p.inboundPort ?? 'Auto'}</span></div>
+          <div>Latency: <span className="text-slate-300">{diag?.latencyMs ? `${diag.latencyMs}ms` : '—'}</span></div>
+          <div>IP: <span className="text-slate-300">{diag?.egressIp ?? p.egressIp ?? '—'}{diag?.egressFamily ? ` (${diag.egressFamily})` : ''}</span></div>
+          <div>Checked: <span className="text-slate-300">{diag?.checkedAt ?? p.lastProbeAt ? new Date(diag?.checkedAt ?? p.lastProbeAt!).toLocaleString() : '—'}</span></div>
+        </div>
+      </Link>
 
       <div className="text-[10px] text-slate-500 space-y-0.5 mb-3">
         <div>Remote: <span className="text-slate-400 font-mono">{truncateMiddle(p.url, 60)}</span></div>
@@ -300,13 +301,6 @@ function ProxyCard({ proxy: p, diag, isProbing, onProbe }: {
       </div>
 
       <div className="flex gap-2">
-        <button onClick={() => { navigator.clipboard.writeText(p.url); toast.success('Copied remote URL') }} className="text-[10px] text-slate-400 hover:text-slate-200">Copy Remote</button>
-        {p.localUrl && (
-          <button onClick={() => { navigator.clipboard.writeText(p.localUrl!); toast.success('Copied local URL') }} className="text-[10px] text-slate-400 hover:text-slate-200">Copy Local</button>
-        )}
-        <button onClick={onProbe} disabled={isProbing} className="text-[10px] text-indigo-400 hover:text-indigo-300 disabled:opacity-50">
-          {isProbing ? 'Probing...' : 'Probe'}
-        </button>
         <Link to={`/network/${encodeURIComponent(p.id)}`} className="text-[10px] text-emerald-300 hover:text-emerald-200">Open Details</Link>
         <button onClick={() => setExpanded(!expanded)} className="text-[10px] text-slate-500 hover:text-slate-300 ml-auto">
           {expanded ? 'Hide details' : 'Show details'}

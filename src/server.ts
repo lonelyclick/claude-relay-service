@@ -4,6 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import net from "node:net";
 import express from "express";
 import pg from "pg";
 import { ProxyAgent, request } from "undici";
@@ -56,6 +57,31 @@ function splitShellWords(value) {
     .trim()
     .split(/\s+/)
     .filter(Boolean);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForTcpPort(host, port, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ok = await new Promise((resolve) => {
+      const socket = net.createConnection({ host, port });
+      const done = (result) => {
+        socket.removeAllListeners();
+        socket.destroy();
+        resolve(result);
+      };
+      socket.setTimeout(750);
+      socket.once("connect", () => done(true));
+      socket.once("timeout", () => done(false));
+      socket.once("error", () => done(false));
+    });
+    if (ok) return true;
+    await sleep(200);
+  }
+  return false;
 }
 const ADMIN_UI_DIST_DIR = path.join(projectRoot, "web/dist");
 const ADMIN_UI_INDEX_PATH = path.join(ADMIN_UI_DIST_DIR, "index.html");
@@ -2753,7 +2779,14 @@ async function syncManagedXrayConfig(services, options = {}) {
       restart = { ok: false, service: XRAY_MANAGED_SERVICE, error: sanitizeErrorMessage(error) };
     }
   }
-  return { dryRun: false, path: XRAY_MANAGED_CONFIG_PATH, backupPath, assignments, validation, restart };
+  const readiness = [];
+  if (restart?.ok) {
+    for (const assignment of assignments) {
+      const ready = await waitForTcpPort(XRAY_MANAGED_LISTEN, assignment.inboundPort);
+      readiness.push({ proxyId: assignment.proxyId, inboundPort: assignment.inboundPort, ready });
+    }
+  }
+  return { dryRun: false, path: XRAY_MANAGED_CONFIG_PATH, backupPath, assignments, validation, restart, readiness };
 }
 
 async function ensureProxyProbeReady(services, proxy) {
