@@ -36,7 +36,7 @@
 
 ```bash
 cd /home/ubuntu/projects/claude-oauth-relay
-./deploy.sh --local
+./deploy.sh
 ```
 
 部署脚本会执行：
@@ -62,15 +62,15 @@ REMOTE_NAME=origin
 跳过某些步骤：
 
 ```bash
-SKIP_INSTALL=1 ./deploy.sh --local
-SKIP_BUILD=1 ./deploy.sh --local
-SKIP_VERIFY=1 ./deploy.sh --local
+SKIP_INSTALL=1 ./deploy.sh
+SKIP_BUILD=1 ./deploy.sh
+SKIP_VERIFY=1 ./deploy.sh
 ```
 
 默认拒绝 dirty worktree。确实要在未提交状态下部署时才使用：
 
 ```bash
-ALLOW_DIRTY=1 ./deploy.sh --local
+ALLOW_DIRTY=1 ./deploy.sh
 ```
 
 ## 必要环境变量

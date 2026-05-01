@@ -13,11 +13,14 @@ SKIP_PULL=0
 
 usage() {
   cat <<'USAGE'
-Usage: ./deploy.sh [--remote|--local] [--skip-pull]
+Usage: ./deploy.sh [--remote] [--skip-pull]
 
-Modes:
+Default:
+  Deploy the current/production checkout.
+
+Options:
   --remote    SSH to the Tencent Singapore host, pull latest code, then deploy there.
-  --local     Run deploy in the current/production checkout. This is the default.
+  --skip-pull Skip git fetch/pull before deploying.
 
 Environment overrides:
   REMOTE_HOST=ubuntu@43.160.224.233
@@ -116,7 +119,7 @@ build_remote_command() {
   cmd+=" SKIP_BUILD=$(quote "${SKIP_BUILD:-0}")"
   cmd+=" SKIP_VERIFY=$(quote "${SKIP_VERIFY:-0}")"
   cmd+=" ALLOW_DIRTY=$(quote "${ALLOW_DIRTY:-0}")"
-  cmd+=" bash ./deploy.sh --local --skip-pull"
+  cmd+=" bash ./deploy.sh --skip-pull"
 
   printf '%s' "$cmd"
 }
@@ -125,9 +128,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --remote)
       MODE="remote"
-      ;;
-    --local)
-      MODE="local"
       ;;
     --skip-pull)
       SKIP_PULL=1
