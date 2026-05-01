@@ -60,7 +60,7 @@ BRANCH=main
 REMOTE_NAME=origin
 ```
 
-`frontend` 目标还需要 Cloudflare 凭证环境变量：
+`frontend` 目标会自动读取本机未提交文件 `.deploy.cloudflare.env`，文件格式：
 
 ```bash
 CLOUDFLARE_EMAIL=...
@@ -68,7 +68,7 @@ CLOUDFLARE_API_KEY=...
 CLOUDFLARE_ACCOUNT_ID=...
 ```
 
-不要把这些值写进仓库；从凭证 `cloudflare/default` 读取后在当前 shell 中注入。
+这个文件已被 `.gitignore` 忽略，不要提交。也可以用 `CLOUDFLARE_ENV_FILE=/path/to/file ./deploy.sh frontend` 指定其他凭证文件。
 
 ## 必要环境变量
 

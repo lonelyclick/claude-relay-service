@@ -1,6 +1,7 @@
 node_modules
 dist
 .env
+.deploy.cloudflare.env
 data
 dogfood-output/
 

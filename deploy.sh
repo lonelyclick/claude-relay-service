@@ -68,6 +68,25 @@ require_present_env() {
   [[ -n "${!key:-}" ]] || die "missing required environment variable: $key"
 }
 
+load_cloudflare_env() {
+  local candidates=()
+  local env_file
+
+  [[ -z "${CLOUDFLARE_ENV_FILE:-}" ]] || candidates+=("$CLOUDFLARE_ENV_FILE")
+  candidates+=(".deploy.cloudflare.env" "$HOME/.config/yoho/cloudflare-default.env")
+
+  for env_file in "${candidates[@]}"; do
+    if [[ -f "$env_file" ]]; then
+      set -a
+      # shellcheck disable=SC1090
+      source "$env_file"
+      set +a
+      log "loaded Cloudflare credentials from $env_file"
+      return
+    fi
+  done
+}
+
 ensure_main_branch() {
   local label="$1"
   local current_branch
@@ -147,6 +166,7 @@ deploy_frontend() {
   require_command pnpm
   require_command wrangler
   require_command curl
+  load_cloudflare_env
   require_present_env "CLOUDFLARE_EMAIL"
   require_present_env "CLOUDFLARE_API_KEY"
   require_present_env "CLOUDFLARE_ACCOUNT_ID"
@@ -188,7 +208,7 @@ done
 
 [[ -n "$TARGET" ]] || {
   usage >&2
-  die "missing deploy target: relay or server"
+  die "missing deploy target: relay, server, or frontend"
 }
 
 SSH_KEY="${SSH_KEY/#\~/$HOME}"
