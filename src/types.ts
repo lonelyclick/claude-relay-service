@@ -154,6 +154,17 @@ export interface ProxyEntry {
   label: string
   url: string
   localUrl: string | null
+  kind?: 'vless-upstream' | 'local-http' | 'local-socks'
+  enabled?: boolean
+  source?: 'manual' | 'x-ui' | 'generated'
+  listen?: string | null
+  inboundPort?: number | null
+  inboundProtocol?: 'http' | 'socks' | null
+  outboundTag?: string | null
+  xrayConfigPath?: string | null
+  lastProbeStatus?: string | null
+  lastProbeAt?: string | null
+  egressIp?: string | null
   createdAt: number
 }
 

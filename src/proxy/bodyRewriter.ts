@@ -41,12 +41,14 @@ export function loadBodyTemplate(templatePath: string | null): BodyTemplate | nu
     return null
   }
 
-  const resolved = path.resolve(process.cwd(), templatePath)
-  if (!fs.existsSync(resolved)) {
-    return null
+  if (!path.isAbsolute(templatePath)) {
+    throw new Error(`[bodyRewriter] templatePath must be absolute, got: ${templatePath}`)
+  }
+  if (!fs.existsSync(templatePath)) {
+    throw new Error(`[bodyRewriter] template not found: ${templatePath}`)
   }
 
-  const raw = JSON.parse(fs.readFileSync(resolved, 'utf8'))
+  const raw = JSON.parse(fs.readFileSync(templatePath, 'utf8'))
   return raw as BodyTemplate
 }
 

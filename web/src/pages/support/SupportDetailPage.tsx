@@ -55,6 +55,18 @@ function fmtDate(iso: string): string {
   }
 }
 
+function ownerLabel(ticket: SupportTicket): string {
+  if (ticket.organizationId) {
+    const name = ticket.organizationName || ticket.organizationId
+    return ticket.organizationKind === 'personal' ? `个人组织：${name}` : `团队组织：${name}`
+  }
+  return '个人用户工单'
+}
+
+function submitterLabel(ticket: SupportTicket): string {
+  return ticket.userEmail || ticket.userName || ticket.userId || '未知提交人'
+}
+
 export function SupportDetailPage() {
   const params = useParams()
   const ticketId = params.id ?? ''
@@ -116,20 +128,38 @@ export function SupportDetailPage() {
         <div className="flex items-center gap-2">
           <Badge tone={STATUS_TONE[ticket.status]}>{STATUS_LABEL[ticket.status]}</Badge>
           <Badge tone="gray">{CATEGORY_LABEL[ticket.category]}</Badge>
+          <Badge tone={ticket.organizationId ? 'cyan' : 'blue'}>{ownerLabel(ticket)}</Badge>
         </div>
       </div>
 
-      <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
-        <div className="flex flex-wrap items-baseline gap-2 text-xs text-slate-500">
-          <span className="font-mono">{ticket.id}</span>
-          <span>·</span>
-          <span>用户 {ticket.userEmail || ticket.userName || ticket.userId}</span>
-          <span>·</span>
-          <span>创建 {fmtDate(ticket.createdAt)}</span>
-          <span>·</span>
-          <span>最近活动 {fmtDate(ticket.updatedAt)}</span>
+      <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs space-y-4">
+        <div>
+          <div className="flex flex-wrap items-baseline gap-2 text-xs text-slate-500">
+            <span className="font-mono">{ticket.id}</span>
+            <span>·</span>
+            <span>创建 {fmtDate(ticket.createdAt)}</span>
+            <span>·</span>
+            <span>最近活动 {fmtDate(ticket.updatedAt)}</span>
+          </div>
+          <h2 className="mt-2 text-xl font-semibold text-slate-100">{ticket.title}</h2>
         </div>
-        <h2 className="mt-2 text-xl font-semibold text-slate-100">{ticket.title}</h2>
+
+        <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
+          <div className="rounded-lg border border-border-default bg-bg-card-raised/30 p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">工单归属</div>
+            <div className="mt-1 text-sm font-medium text-slate-100">{ownerLabel(ticket)}</div>
+            {ticket.organizationId ? (
+              <div className="mt-1 break-all font-mono text-[11px] text-slate-500">{ticket.organizationId}</div>
+            ) : (
+              <div className="mt-1 text-[11px] text-slate-500">不关联组织账本</div>
+            )}
+          </div>
+          <div className="rounded-lg border border-border-default bg-bg-card-raised/30 p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">提交用户</div>
+            <div className="mt-1 text-sm font-medium text-slate-100">{submitterLabel(ticket)}</div>
+            <div className="mt-1 break-all font-mono text-[11px] text-slate-500">{ticket.userId || '无个人 relay user id'}</div>
+          </div>
+        </div>
       </section>
 
       <div className="flex flex-wrap items-center gap-2">

@@ -308,7 +308,7 @@ export function deriveOpenAIRateLimitStatus(input: {
   if (input.error === 'token_expired_or_revoked') {
     return null
   }
-  if ((input.httpStatus ?? 0) >= 429) {
+  if (input.httpStatus === 429) {
     return 'rejected'
   }
 

@@ -127,7 +127,7 @@ export class KeepAliveRefresher {
               anthropicVersion: appConfig.anthropicVersion,
               anthropicBeta: appConfig.oauthBetaHeader,
             })
-          if (!result.error || result.error === 'rate_limited') {
+          if (!result.error || result.error === 'rate_limited' || result.error.startsWith('rate_limited:')) {
             await this.oauthService.recordRateLimitSnapshot({
               accountId: account.id,
               status: result.status,

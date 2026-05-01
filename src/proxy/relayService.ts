@@ -32,6 +32,7 @@ import {
 } from '../usage/usageExtractor.js'
 import type { ApiKeyStore, RelayApiKeyGroupAssignments } from '../usage/apiKeyStore.js'
 import type { UsageRecord, UsageStore } from '../usage/usageStore.js'
+import type { OrganizationStore, RelayOrganization } from '../usage/organizationStore.js'
 import type { UserStore } from '../usage/userStore.js'
 import {
   deriveOpenAIRateLimitStatus,
@@ -107,6 +108,7 @@ import {
   shouldForwardWebSocketFailureResponseHeader,
   shouldForwardWebSocketUpgradeResponseHeader,
 } from './headerPolicy.js'
+import type { ConnectionTracker } from '../runtime/connectionTracker.js'
 
 type RouteAuthStrategy =
   | 'prefer_incoming_auth'
@@ -142,6 +144,7 @@ type PreparedRequestBody = {
 
 type ResolvedRelayUserContext = {
   userId: string | null
+  organizationId: string | null
   userAccountId: string | null
   routingMode: 'auto' | 'pinned_account'
   billingMode: 'postpaid' | 'prepaid'
@@ -154,6 +157,7 @@ type ResolvedRelayUserContext = {
 
 type ResolvedRelayUserLookup = {
   user: RelayUser | null
+  organization: RelayOrganization | null
   resolvedKeyId: string | null
   groupAssignments: RelayApiKeyGroupAssignments | null
   relayKeySource: RelayKeySource | null
@@ -616,6 +620,7 @@ type WebSocketUsageContext = {
   requestHeaders: Record<string, string | string[] | undefined> | null
   target: string
   userId: string | null
+  organizationId: string | null
   relayKeySource: RelayKeySource | null
   sessionKey: string | null
   clientDeviceId: string | null
@@ -657,24 +662,43 @@ export class RelayService {
     private readonly logger: RelayLogger = new ConsoleRelayLogger(),
     private readonly usageStore: UsageStore | null = null,
     private readonly userStore: UserStore | null = null,
+    private readonly organizationStore: OrganizationStore | null = null,
     private readonly billingStore: BillingStore | null = null,
     private readonly apiKeyStore: ApiKeyStore | null = null,
+    private readonly connectionTracker: ConnectionTracker | null = null,
   ) {}
 
   private async lookupRelayUserByToken(token: string): Promise<ResolvedRelayUserLookup> {
     if (!this.apiKeyStore) {
-      return { user: null, resolvedKeyId: null, groupAssignments: null, relayKeySource: null }
+      return { user: null, organization: null, resolvedKeyId: null, groupAssignments: null, relayKeySource: null }
     }
     const hit = await this.apiKeyStore.lookupByKey(token)
     if (!hit) {
-      return { user: null, resolvedKeyId: null, groupAssignments: null, relayKeySource: null }
+      return { user: null, organization: null, resolvedKeyId: null, groupAssignments: null, relayKeySource: null }
+    }
+    if (hit.organizationId) {
+      const organization = await this.organizationStore?.getOrganizationById(hit.organizationId) ?? null
+      if (!organization) {
+        return { user: null, organization: null, resolvedKeyId: null, groupAssignments: null, relayKeySource: null }
+      }
+      return {
+        user: null,
+        organization,
+        resolvedKeyId: hit.keyId,
+        groupAssignments: hit.groupAssignments,
+        relayKeySource: 'relay_api_keys',
+      }
+    }
+    if (!hit.userId) {
+      return { user: null, organization: null, resolvedKeyId: null, groupAssignments: null, relayKeySource: null }
     }
     const user = await this.userStore?.getUserById(hit.userId) ?? null
     if (!user) {
-      return { user: null, resolvedKeyId: null, groupAssignments: null, relayKeySource: null }
+      return { user: null, organization: null, resolvedKeyId: null, groupAssignments: null, relayKeySource: null }
     }
     return {
       user,
+      organization: null,
       resolvedKeyId: hit.keyId,
       groupAssignments: hit.groupAssignments,
       relayKeySource: 'relay_api_keys',
@@ -685,6 +709,7 @@ export class RelayService {
     if (!this.userStore) {
       return {
         userId: null,
+        organizationId: null,
         userAccountId: null,
         routingMode: 'auto',
         billingMode: 'postpaid',
@@ -701,6 +726,7 @@ export class RelayService {
     if (!token.startsWith('rk_')) {
       return {
         userId: null,
+        organizationId: null,
         userAccountId: null,
         routingMode: 'auto',
         billingMode: 'postpaid',
@@ -712,13 +738,14 @@ export class RelayService {
       }
     }
 
-    const { user, resolvedKeyId, groupAssignments, relayKeySource } = await this.lookupRelayUserByToken(token)
-    if (user && resolvedKeyId) {
+    const { user, organization, resolvedKeyId, groupAssignments, relayKeySource } = await this.lookupRelayUserByToken(token)
+    if ((user || organization) && resolvedKeyId) {
       this.apiKeyStore?.touchLastUsed(resolvedKeyId)
     }
-    if (!user) {
+    if (!user && !organization) {
       return {
         userId: null,
+        organizationId: null,
         userAccountId: null,
         routingMode: 'auto',
         billingMode: 'postpaid',
@@ -729,9 +756,43 @@ export class RelayService {
         rejected: 'Invalid relay API key',
       }
     }
+    if (organization) {
+      if (!organization.isActive) {
+        return {
+          userId: null,
+          organizationId: null,
+          userAccountId: null,
+          routingMode: 'auto',
+          billingMode: organization.billingMode,
+          billingCurrency: organization.billingCurrency,
+          apiKeyGroupAssignments: groupAssignments,
+          relayKeySource,
+          stripped: false,
+          rejected: 'Organization is disabled',
+        }
+      }
+      headers.authorization = ''
+      delete headers['x-api-key']
+      return {
+        userId: null,
+        organizationId: organization.id,
+        userAccountId: null,
+        routingMode: 'auto',
+        billingMode: organization.billingMode,
+        billingCurrency: organization.billingCurrency,
+        apiKeyGroupAssignments: groupAssignments,
+        relayKeySource,
+        stripped: true,
+        rejected: null,
+      }
+    }
+    if (!user) {
+      throw new Error('unreachable relay auth state')
+    }
     if (!user.isActive) {
       return {
         userId: null,
+        organizationId: null,
         userAccountId: null,
         routingMode: 'auto',
         billingMode: user.billingMode,
@@ -747,6 +808,7 @@ export class RelayService {
     delete headers['x-api-key']
     return {
       userId: user.id,
+      organizationId: null,
       userAccountId: user.accountId,
       routingMode: user.routingMode === 'pinned_account' ? 'pinned_account' : 'auto',
       billingMode: user.billingMode,
@@ -772,14 +834,22 @@ export class RelayService {
 
   private async assertRelayUserCanConsume(input: {
     userId: string | null
+    organizationId: string | null
     billingMode: 'postpaid' | 'prepaid'
     method: string
     path: string
   }): Promise<void> {
-    if (!this.billingStore || !input.userId) {
+    if (!this.billingStore) {
       return
     }
     if (!this.isBillableUsageRequest(input.method, input.path)) {
+      return
+    }
+    if (input.organizationId) {
+      await this.billingStore.assertOrganizationCanConsume(input.organizationId)
+      return
+    }
+    if (!input.userId) {
       return
     }
     await this.billingStore.assertUserCanConsume(input.userId)
@@ -849,13 +919,14 @@ export class RelayService {
     /** Override the protocol inferred from `target` (e.g. when a Responses→Chat adapter rewrites upstream wire format). */
     effectiveProtocolOverride?: BillingModelProtocol | null
   }): Promise<boolean> {
-    if (!this.billingStore || !input.relayUser.userId || !this.isBillableUsageRequest(input.method, input.path)) {
+    if (!this.billingStore || (!input.relayUser.userId && !input.relayUser.organizationId) || !this.isBillableUsageRequest(input.method, input.path)) {
       return false
     }
     const model = input.effectiveModelOverride ?? this.extractRequestedModel(input.body)
     const intendedRoutingGroupId = input.routingGroupId
     const result = await this.billingStore.preflightBillableRequest({
       userId: input.relayUser.userId,
+      organizationId: input.relayUser.organizationId,
       billingCurrency: input.relayUser.billingCurrency,
       accountId: input.accountId,
       provider: input.provider,
@@ -889,7 +960,7 @@ export class RelayService {
     forceAccountId: string | null
     relayUser: ResolvedRelayUserContext
   }): Promise<void> {
-    if (!input.relayUser.userId) {
+    if (!input.relayUser.userId && !input.relayUser.organizationId) {
       input.res.status(401).json(
         localHttpErrorBody(
           '/v1/models',
@@ -899,7 +970,7 @@ export class RelayService {
         ),
       )
       this.logHttpRejection(input.trace, {
-        error: 'models_catalog_no_relay_user',
+        error: 'models_catalog_no_relay_owner',
         forceAccountId: input.forceAccountId,
         internalCode: RELAY_ERROR_CODES.RELAY_USER_REJECTED,
         routeAuthStrategy: input.route.authStrategy,
@@ -1082,6 +1153,7 @@ export class RelayService {
       try {
         await this.assertRelayUserCanConsume({
           userId: relayUser.userId,
+          organizationId: relayUser.organizationId,
           billingMode: relayUser.billingMode,
           method: req.method,
           path: req.path,
@@ -1438,6 +1510,7 @@ export class RelayService {
           requestId: trace.requestId,
           accountId: resolvedForProxy.account.id,
           userId: relayUser.userId,
+          organizationId: relayUser.organizationId,
           relayKeySource: relayUser.relayKeySource,
           sessionKey,
           clientDeviceId,
@@ -1738,6 +1811,7 @@ export class RelayService {
             requestId: trace.requestId,
             accountId: resolved.account.id,
             userId: relayUser.userId,
+            organizationId: relayUser.organizationId,
             relayKeySource: relayUser.relayKeySource,
             sessionKey,
             clientDeviceId,
@@ -1865,6 +1939,7 @@ export class RelayService {
             requestId: trace.requestId,
             accountId: resolved.account.id,
             userId: relayUser.userId,
+            organizationId: relayUser.organizationId,
             relayKeySource: relayUser.relayKeySource,
             sessionKey,
             clientDeviceId,
@@ -2208,6 +2283,7 @@ export class RelayService {
         requestHeaders: RelayService.sanitizeHeaders(req.headers),
         target: RelayService.normalizeUsageTarget(requestUrl.pathname),
         userId: relayUser.userId,
+        organizationId: relayUser.organizationId,
         relayKeySource: relayUser.relayKeySource,
         sessionKey,
         clientDeviceId,
@@ -2301,37 +2377,44 @@ export class RelayService {
       try {
         clientWsServer.handleUpgrade(req, socket, head, (clientWs) => {
           clientWsServer.off('headers', onHeaders)
-          if (upstream.accountId) {
-            void this.oauthService.markAccountUsed(upstream.accountId).catch(() => undefined)
-            // Auto-bind user to account on first successful WebSocket connection
-            if (relayUser.userId && !relayUser.userAccountId && this.userStore) {
-              this.userStore.bindAccountIfNeeded(relayUser.userId, upstream.accountId).catch(() => {})
+          const endWebSocket = this.connectionTracker?.beginWebSocket()
+          try {
+            if (upstream.accountId) {
+              void this.oauthService.markAccountUsed(upstream.accountId).catch(() => undefined)
+              // Auto-bind user to account on first successful WebSocket connection
+              if (relayUser.userId && !relayUser.userAccountId && this.userStore) {
+                this.userStore.bindAccountIfNeeded(relayUser.userId, upstream.accountId).catch(() => {})
+              }
             }
+            this.logWsOpened(trace, {
+              accountId: upstream.accountId,
+              authMode,
+              forceAccountId,
+              hasStickySessionKey: Boolean(sessionKey),
+              retryCount,
+              routeAuthStrategy: route.authStrategy,
+              upstreamHeaders: upstream.upgradeHeaders,
+            })
+            this.bridgeWebSockets(clientWs, upstream, {
+              onClose: (code, error) => {
+                endWebSocket?.()
+                this.logWsClosed(trace, {
+                  accountId: upstream.accountId,
+                  authMode,
+                  closeCode: code,
+                  error,
+                  forceAccountId,
+                  hasStickySessionKey: Boolean(sessionKey),
+                  retryCount,
+                  routeAuthStrategy: route.authStrategy,
+                  upstreamHeaders: upstream.upgradeHeaders,
+                })
+              },
+            })
+          } catch (error) {
+            endWebSocket?.()
+            throw error
           }
-          this.logWsOpened(trace, {
-            accountId: upstream.accountId,
-            authMode,
-            forceAccountId,
-            hasStickySessionKey: Boolean(sessionKey),
-            retryCount,
-            routeAuthStrategy: route.authStrategy,
-            upstreamHeaders: upstream.upgradeHeaders,
-          })
-          this.bridgeWebSockets(clientWs, upstream, {
-            onClose: (code, error) => {
-              this.logWsClosed(trace, {
-                accountId: upstream.accountId,
-                authMode,
-                closeCode: code,
-                error,
-                forceAccountId,
-                hasStickySessionKey: Boolean(sessionKey),
-                retryCount,
-                routeAuthStrategy: route.authStrategy,
-                upstreamHeaders: upstream.upgradeHeaders,
-              })
-            },
-          })
         })
       } catch (error) {
         clientWsServer.off('headers', onHeaders)
@@ -2978,6 +3061,7 @@ export class RelayService {
           requestId: input.trace.requestId,
           accountId: currentResolved.account.id,
           userId: input.relayUser.userId,
+          organizationId: input.relayUser.organizationId,
           relayKeySource: input.relayUser.relayKeySource,
           sessionKey: input.sessionKey,
           clientDeviceId: input.clientDeviceId,
@@ -3051,6 +3135,7 @@ export class RelayService {
           requestId: input.trace.requestId,
           accountId: currentResolved.account.id,
           userId: input.relayUser.userId,
+          organizationId: input.relayUser.organizationId,
           relayKeySource: input.relayUser.relayKeySource,
           sessionKey: input.sessionKey,
           clientDeviceId: input.clientDeviceId,
@@ -3318,6 +3403,7 @@ export class RelayService {
         requestId: input.trace.requestId,
         accountId: resolved.account.id,
         userId: input.relayUser.userId,
+        organizationId: input.relayUser.organizationId,
         relayKeySource: input.relayUser.relayKeySource,
         sessionKey: null,
         clientDeviceId: input.clientDeviceId,
@@ -4104,6 +4190,7 @@ export class RelayService {
           requestId: input.trace.requestId,
           accountId: currentResolved.account.id,
           userId: input.relayUser.userId,
+          organizationId: input.relayUser.organizationId,
           relayKeySource: input.relayUser.relayKeySource,
           sessionKey: null,
           clientDeviceId: input.clientDeviceId,
@@ -4189,6 +4276,7 @@ export class RelayService {
           requestId: input.trace.requestId,
           accountId: currentResolved.account.id,
           userId: input.relayUser.userId,
+          organizationId: input.relayUser.organizationId,
           relayKeySource: input.relayUser.relayKeySource,
           sessionKey: null,
           clientDeviceId: input.clientDeviceId,
@@ -5687,6 +5775,7 @@ export class RelayService {
       requestId: string
       accountId: string | null
       userId: string | null
+      organizationId?: string | null
       relayKeySource: RelayKeySource | null
       sessionKey: string | null
       clientDeviceId: string | null
@@ -5924,6 +6013,7 @@ export class RelayService {
           requestId: context.requestId,
           accountId: context.accountId,
           userId: context.userId ?? null,
+          organizationId: context.organizationId ?? null,
           relayKeySource: context.relayKeySource,
           sessionKey: context.sessionKey ?? null,
           clientDeviceId: context.clientDeviceId ?? null,
@@ -5961,6 +6051,7 @@ export class RelayService {
       requestId: string
       accountId: string | null
       userId: string | null
+      organizationId?: string | null
       relayKeySource: RelayKeySource | null
       sessionKey: string | null
       clientDeviceId: string | null
@@ -5981,6 +6072,7 @@ export class RelayService {
           requestId: context.requestId,
           accountId: context.accountId,
           userId: context.userId ?? null,
+          organizationId: context.organizationId ?? null,
           relayKeySource: context.relayKeySource,
           sessionKey: context.sessionKey ?? null,
           clientDeviceId: context.clientDeviceId ?? null,
@@ -6012,6 +6104,7 @@ export class RelayService {
     requestId: string
     accountId: string | null
     userId: string | null
+    organizationId?: string | null
     relayKeySource: RelayKeySource | null
     sessionKey: string | null
     clientDeviceId: string | null
@@ -6033,6 +6126,7 @@ export class RelayService {
       requestId: context.requestId,
       accountId: context.accountId,
       userId: context.userId ?? null,
+      organizationId: context.organizationId ?? null,
       relayKeySource: context.relayKeySource,
       sessionKey: context.sessionKey ?? null,
       clientDeviceId: context.clientDeviceId ?? null,

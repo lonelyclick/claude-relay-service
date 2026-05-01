@@ -7,6 +7,11 @@ import {
   normalizeVmFingerprintTemplateHeaders,
   type VmFingerprintTemplateHeader,
 } from '../proxy/fingerprintTemplate.js'
+import { projectRoot } from '../projectRoot.js'
+
+function toAbsolute(templatePath: string): string {
+  return path.isAbsolute(templatePath) ? templatePath : path.resolve(projectRoot, templatePath)
+}
 
 const vmFingerprintTemplateSchema = z.object({
   headers: z.record(z.union([z.string(), z.array(z.string())])),
@@ -24,13 +29,13 @@ export class FingerprintCache {
     if (!templatePath) {
       return null
     }
-    const resolved = path.resolve(process.cwd(), templatePath)
+    const resolved = toAbsolute(templatePath)
     const mtimeMs = this.getMtimeMs(resolved)
     const cached = this.bodyTemplates.get(resolved)
     if (cached && cached.mtimeMs === mtimeMs) {
       return cached.value
     }
-    const loaded = loadBodyTemplate(templatePath)
+    const loaded = loadBodyTemplate(resolved)
     this.bodyTemplates.set(resolved, { value: loaded, mtimeMs })
     return loaded
   }
@@ -39,7 +44,7 @@ export class FingerprintCache {
     if (!templatePath) {
       return []
     }
-    const resolved = path.resolve(process.cwd(), templatePath)
+    const resolved = toAbsolute(templatePath)
     const mtimeMs = this.getMtimeMs(resolved)
     const cached = this.vmHeaders.get(resolved)
     if (cached && cached.mtimeMs === mtimeMs) {
@@ -51,7 +56,7 @@ export class FingerprintCache {
   }
 
   invalidate(templatePath: string): void {
-    const resolved = path.resolve(process.cwd(), templatePath)
+    const resolved = toAbsolute(templatePath)
     this.bodyTemplates.delete(resolved)
     this.vmHeaders.delete(resolved)
   }

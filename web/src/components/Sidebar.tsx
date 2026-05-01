@@ -27,7 +27,6 @@ const sections = [
     items: [
       { to: '/network', label: 'Network' },
       { to: '/users', label: 'Access' },
-      { to: '/auth', label: 'Auth' },
     ],
   },
   {

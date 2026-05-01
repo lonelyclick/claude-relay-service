@@ -22,6 +22,10 @@ export function ProxyDetailPage() {
   const [isProbing, setIsProbing] = useState(false)
   const [label, setLabel] = useState('')
   const [localUrl, setLocalUrl] = useState('')
+  const [kind, setKind] = useState('local-http')
+  const [enabled, setEnabled] = useState(true)
+  const [inboundPort, setInboundPort] = useState('')
+  const [inboundProtocol, setInboundProtocol] = useState('http')
 
   useEffect(() => {
     if (!proxy) {
@@ -29,6 +33,10 @@ export function ProxyDetailPage() {
     }
     setLabel(proxy.label)
     setLocalUrl(proxy.localUrl ?? '')
+    setKind(proxy.kind ?? 'local-http')
+    setEnabled(proxy.enabled !== false)
+    setInboundPort(proxy.inboundPort ? String(proxy.inboundPort) : '')
+    setInboundProtocol(proxy.inboundProtocol ?? 'http')
   }, [proxy])
 
   const handleProbe = async () => {
@@ -51,7 +59,14 @@ export function ProxyDetailPage() {
       if (!proxyId) {
         throw new Error('Proxy id is missing')
       }
-      return updateProxy(proxyId, { label, localUrl: localUrl || null })
+      return updateProxy(proxyId, {
+        label,
+        localUrl: localUrl || null,
+        kind,
+        enabled,
+        inboundPort: inboundPort ? Number(inboundPort) : null,
+        inboundProtocol,
+      })
     },
     onSuccess: () => {
       toast.success('Proxy updated')
@@ -95,6 +110,10 @@ export function ProxyDetailPage() {
         <div className="space-y-1 text-xs text-slate-400">
           <div>Remote: <span className="font-mono text-slate-300 break-all">{proxy.url}</span></div>
           <div>Local: <span className="font-mono text-slate-300 break-all">{proxy.localUrl ?? '—'}</span></div>
+          <div>Kind: <span className="text-slate-300">{proxy.kind ?? 'local-http'}</span></div>
+          <div>Managed: <span className="text-slate-300">{proxy.enabled === false ? 'Disabled' : 'Enabled'}</span></div>
+          <div>Inbound: <span className="font-mono text-slate-300">{proxy.inboundProtocol ?? 'http'} {proxy.listen ?? '127.0.0.1'}:{proxy.inboundPort ?? '—'}</span></div>
+          <div>Xray Config: <span className="font-mono text-slate-300 break-all">{proxy.xrayConfigPath ?? '—'}</span></div>
           {proxy.createdAt && <div>Created: {new Date(proxy.createdAt).toLocaleString()}</div>}
         </div>
       </section>
@@ -140,6 +159,31 @@ export function ProxyDetailPage() {
           <label className="block space-y-1">
             <span className="text-xs text-slate-400">Local URL</span>
             <input value={localUrl} onChange={(e) => setLocalUrl(e.target.value)} className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200" placeholder="http://..." />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-xs text-slate-400">Kind</span>
+            <select value={kind} onChange={(e) => setKind(e.target.value)} className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200">
+              <option value="vless-upstream">VLESS upstream</option>
+              <option value="local-http">Local HTTP</option>
+              <option value="local-socks">Local SOCKS</option>
+            </select>
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block space-y-1">
+              <span className="text-xs text-slate-400">Inbound Protocol</span>
+              <select value={inboundProtocol} onChange={(e) => setInboundProtocol(e.target.value)} className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200">
+                <option value="http">HTTP</option>
+                <option value="socks">SOCKS</option>
+              </select>
+            </label>
+            <label className="block space-y-1">
+              <span className="text-xs text-slate-400">Inbound Port</span>
+              <input value={inboundPort} onChange={(e) => setInboundPort(e.target.value)} className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200" placeholder="10880" />
+            </label>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-slate-300">
+            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            Include in COR managed Xray config
           </label>
           <button onClick={() => updateMut.mutate()} disabled={updateMut.isPending} className="px-4 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-500 transition-colors duration-150 disabled:opacity-50">
             Save Changes

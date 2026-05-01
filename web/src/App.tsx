@@ -27,7 +27,6 @@ import { OrganizationDetailPage } from '~/pages/users/OrganizationDetailPage'
 import { RequestDetailPage } from '~/pages/users/RequestDetailPage'
 import { NetworkPage } from '~/pages/network/NetworkPage'
 import { ProxyDetailPage } from '~/pages/network/ProxyDetailPage'
-import { AuthManagementPage } from '~/pages/auth/AuthManagementPage'
 import { SupportListPage } from '~/pages/support/SupportListPage'
 import { SupportDetailPage } from '~/pages/support/SupportDetailPage'
 
@@ -74,7 +73,6 @@ const router = createBrowserRouter([
           { path: 'users/:id/requests/:requestId', element: <RequestDetailPage /> },
           { path: 'network', element: <NetworkPage /> },
           { path: 'network/:id', element: <ProxyDetailPage /> },
-          { path: 'auth', element: <AuthManagementPage /> },
           { path: 'support', element: <SupportListPage /> },
           { path: 'support/:id', element: <SupportDetailPage /> },
         ],

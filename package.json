@@ -8,27 +8,35 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "pnpm --dir web build && tsc -p tsconfig.json",
-    "start": "node dist/index.js",
-    "check": "tsc --noEmit -p tsconfig.json"
-  },
-  "dependencies": {
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "http-proxy-agent": "^9.0.0",
-    "https-proxy-agent": "^9.0.0",
-    "pg": "^8.20.0",
-    "undici": "^7.8.0",
-    "ws": "^8.20.0",
-    "zod": "^3.24.2"
+    "dev:relay": "pnpm --dir apps/relay dev",
+    "dev:server": "pnpm --dir apps/server dev",
+    "dev:web": "pnpm --dir apps/admin-web dev",
+    "build:relay": "pnpm --dir apps/relay build",
+    "build:server": "pnpm --dir apps/server build",
+    "build:web": "pnpm --dir apps/admin-web build",
+    "build": "pnpm run build:relay && pnpm run build:server && pnpm run build:web",
+    "start:relay": "pnpm --dir apps/relay start",
+    "start:server": "pnpm --dir apps/server start",
+    "check:relay": "pnpm --dir apps/relay check",
+    "check:server": "pnpm --dir apps/server check",
+    "check:web": "pnpm --dir apps/admin-web check",
+    "check:root": "tsc --noEmit -p tsconfig.json",
+    "check": "pnpm run check:root && pnpm run check:relay && pnpm run check:server && pnpm run check:web"
   },
   "devDependencies": {
     "@types/express": "^5.0.1",
     "@types/node": "^22.14.0",
     "@types/pg": "^8.20.0",
     "@types/ws": "^8.18.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "http-proxy-agent": "^9.0.0",
+    "https-proxy-agent": "^9.0.0",
+    "pg": "^8.20.0",
     "tsx": "^4.19.3",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "undici": "^7.8.0",
+    "ws": "^8.20.0",
+    "zod": "^3.24.2"
   }
 }

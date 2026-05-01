@@ -7,7 +7,8 @@ const { Pool } = pg
 const CREATE_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS relay_api_keys (
   id           TEXT PRIMARY KEY,
-  user_id      TEXT NOT NULL,
+  user_id      TEXT,
+  organization_id TEXT,
   key_hash     TEXT NOT NULL,
   key_preview  TEXT NOT NULL,
   key_plaintext TEXT,
@@ -27,7 +28,8 @@ CREATE INDEX IF NOT EXISTS idx_relay_api_keys_user_active
 
 export type RelayApiKey = {
   id: string
-  userId: string
+  userId: string | null
+  organizationId: string | null
   name: string
   keyPreview: string
   plaintextAvailable: boolean
@@ -65,6 +67,14 @@ export function buildApiKeyRotationLockKey(userId: string): readonly [number, nu
   return [digest.readInt32BE(0), digest.readInt32BE(4)] as const
 }
 
+function buildApiKeyCreateLockKey(ownerKind: 'user' | 'organization', ownerId: string): readonly [number, number] {
+  const digest = crypto
+    .createHash('sha256')
+    .update(`relay_api_keys.create:${ownerKind}:${ownerId}`)
+    .digest()
+  return [digest.readInt32BE(0), digest.readInt32BE(4)] as const
+}
+
 function hashApiKey(apiKey: string): string {
   return crypto.createHash('sha256').update(apiKey).digest('hex')
 }
@@ -85,7 +95,8 @@ function buildApiKeyName(options: { name?: string }, createdAtIso: string): stri
 function rowToApiKey(row: Record<string, unknown>): RelayApiKey {
   return {
     id: row.id as string,
-    userId: row.user_id as string,
+    userId: (row.user_id as string | null) ?? null,
+    organizationId: (row.organization_id as string | null) ?? null,
     name: (row.name as string) ?? '',
     keyPreview: (row.key_preview as string) ?? '',
     plaintextAvailable: typeof row.key_plaintext === 'string' && row.key_plaintext.length > 0,
@@ -100,7 +111,7 @@ function rowToApiKey(row: Record<string, unknown>): RelayApiKey {
   }
 }
 
-type CacheEntry = { keyId: string; userId: string }
+type CacheEntry = { keyId: string; userId: string | null; organizationId: string | null }
 export type ApiKeyLookupEntry = CacheEntry & { groupAssignments: RelayApiKeyGroupAssignments }
 
 export class ApiKeyStore {
@@ -119,6 +130,12 @@ export class ApiKeyStore {
     await this.pool.query('ALTER TABLE relay_api_keys ADD COLUMN IF NOT EXISTS openai_group_id TEXT')
     await this.pool.query('ALTER TABLE relay_api_keys ADD COLUMN IF NOT EXISTS google_group_id TEXT')
     await this.pool.query('ALTER TABLE relay_api_keys ADD COLUMN IF NOT EXISTS key_plaintext TEXT')
+    await this.pool.query('ALTER TABLE relay_api_keys ADD COLUMN IF NOT EXISTS organization_id TEXT')
+    await this.pool.query('ALTER TABLE relay_api_keys ALTER COLUMN user_id DROP NOT NULL')
+    await this.pool.query('DELETE FROM relay_api_keys WHERE user_id IS NULL AND organization_id IS NULL')
+    await this.pool.query(`ALTER TABLE relay_api_keys DROP CONSTRAINT IF EXISTS relay_api_keys_exactly_one_owner`)
+    await this.pool.query(`ALTER TABLE relay_api_keys ADD CONSTRAINT relay_api_keys_exactly_one_owner CHECK ((user_id IS NULL) <> (organization_id IS NULL)) NOT VALID`)
+    await this.pool.query('CREATE INDEX IF NOT EXISTS idx_relay_api_keys_org_active ON relay_api_keys (organization_id, created_at DESC) WHERE revoked_at IS NULL')
     await this.pool.query(
       `DO $$
        BEGIN
@@ -163,7 +180,7 @@ export class ApiKeyStore {
       return this.hashLookupCache.get(hash) ?? null
     }
     const { rows } = await this.pool.query(
-      `SELECT id, user_id, anthropic_group_id, openai_group_id, google_group_id FROM relay_api_keys
+      `SELECT id, user_id, organization_id, anthropic_group_id, openai_group_id, google_group_id FROM relay_api_keys
        WHERE key_hash = $1 AND revoked_at IS NULL
        LIMIT 1`,
       [hash],
@@ -171,7 +188,8 @@ export class ApiKeyStore {
     const entry: ApiKeyLookupEntry | null = rows[0]
       ? {
         keyId: rows[0].id as string,
-        userId: rows[0].user_id as string,
+        userId: (rows[0].user_id as string | null) ?? null,
+        organizationId: (rows[0].organization_id as string | null) ?? null,
         groupAssignments: {
           anthropic: (rows[0].anthropic_group_id as string | null) ?? null,
           openai: (rows[0].openai_group_id as string | null) ?? null,
@@ -208,6 +226,16 @@ export class ApiKeyStore {
     return rows.map(rowToApiKey)
   }
 
+  async listForOrganization(organizationId: string): Promise<RelayApiKey[]> {
+    const { rows } = await this.pool.query(
+      `SELECT * FROM relay_api_keys
+       WHERE organization_id = $1 AND revoked_at IS NULL
+       ORDER BY created_at DESC`,
+      [organizationId],
+    )
+    return rows.map(rowToApiKey)
+  }
+
   async getPlaintextForUserKey(userId: string, keyId: string): Promise<string | null> {
     const { rows } = await this.pool.query(
       `SELECT key_plaintext
@@ -229,29 +257,98 @@ export class ApiKeyStore {
     return rows[0]?.n ?? 0
   }
 
-  async create(userId: string, options: { name?: string; groupAssignments?: RelayApiKeyGroupAssignments } = {}): Promise<CreatedApiKey> {
-    const active = await this.countActiveForUser(userId)
-    if (active >= this.maxKeysPerUser) {
-      const err = new Error(
-        `已达 API Key 上限（${this.maxKeysPerUser}），请先撤销不再使用的 Key。`,
-      )
-      ;(err as Error & { code?: string }).code = 'api_key_quota_exceeded'
-      throw err
-    }
-    const apiKey = generateApiKey()
-    const id = newId()
-    const createdAtIso = new Date().toISOString()
-    const name = buildApiKeyName(options, createdAtIso)
-    const keyHash = hashApiKey(apiKey)
-    const keyPreview = maskApiKey(apiKey)
+  async countActiveForOrganization(organizationId: string): Promise<number> {
     const { rows } = await this.pool.query(
-      `INSERT INTO relay_api_keys (id, user_id, key_hash, key_preview, key_plaintext, name, anthropic_group_id, openai_group_id, google_group_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       RETURNING *`,
-      [id, userId, keyHash, keyPreview, apiKey, name, options.groupAssignments?.anthropic ?? null, options.groupAssignments?.openai ?? null, options.groupAssignments?.google ?? null],
+      `SELECT COUNT(*)::int AS n FROM relay_api_keys
+       WHERE organization_id = $1 AND revoked_at IS NULL`,
+      [organizationId],
     )
-    const record = rowToApiKey(rows[0])
-    return { ...record, apiKey }
+    return rows[0]?.n ?? 0
+  }
+
+  async createForOrganization(
+    organizationId: string,
+    options: { name?: string; groupAssignments?: RelayApiKeyGroupAssignments } = {},
+  ): Promise<CreatedApiKey> {
+    const client = await this.pool.connect()
+    try {
+      await client.query('BEGIN')
+      const [lockKeyA, lockKeyB] = buildApiKeyCreateLockKey('organization', organizationId)
+      await client.query('SELECT pg_advisory_xact_lock($1::integer, $2::integer)', [lockKeyA, lockKeyB])
+      const activeResult = await client.query(
+        `SELECT COUNT(*)::int AS n FROM relay_api_keys
+         WHERE organization_id = $1 AND revoked_at IS NULL`,
+        [organizationId],
+      )
+      const active = activeResult.rows[0]?.n ?? 0
+      if (active >= this.maxKeysPerUser) {
+        const err = new Error(`已达 API Key 上限（${this.maxKeysPerUser}），请先撤销不再使用的 Key。`)
+        ;(err as Error & { code?: string }).code = 'api_key_quota_exceeded'
+        throw err
+      }
+      const apiKey = generateApiKey()
+      const id = newId()
+      const createdAtIso = new Date().toISOString()
+      const name = buildApiKeyName(options, createdAtIso)
+      const keyHash = hashApiKey(apiKey)
+      const keyPreview = maskApiKey(apiKey)
+      const { rows } = await client.query(
+        `INSERT INTO relay_api_keys (id, user_id, organization_id, key_hash, key_preview, key_plaintext, name, anthropic_group_id, openai_group_id, google_group_id)
+         VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING *`,
+        [id, organizationId, keyHash, keyPreview, apiKey, name, options.groupAssignments?.anthropic ?? null, options.groupAssignments?.openai ?? null, options.groupAssignments?.google ?? null],
+      )
+      await client.query('COMMIT')
+      const record = rowToApiKey(rows[0])
+      return { ...record, apiKey }
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {})
+      throw error
+    } finally {
+      client.release()
+    }
+  }
+
+  async create(userId: string, options: { name?: string; groupAssignments?: RelayApiKeyGroupAssignments } = {}): Promise<CreatedApiKey> {
+    const client = await this.pool.connect()
+    try {
+      await client.query('BEGIN')
+      const [lockKeyA, lockKeyB] = buildApiKeyCreateLockKey('user', userId)
+      await client.query('SELECT pg_advisory_xact_lock($1::integer, $2::integer)', [lockKeyA, lockKeyB])
+      const activeResult = await client.query(
+        `SELECT COUNT(*)::int AS n FROM relay_api_keys
+         WHERE user_id = $1 AND revoked_at IS NULL`,
+        [userId],
+      )
+      const active = activeResult.rows[0]?.n ?? 0
+      if (active >= this.maxKeysPerUser) {
+        const err = new Error(
+          `已达 API Key 上限（${this.maxKeysPerUser}），请先撤销不再使用的 Key。`,
+        )
+        ;(err as Error & { code?: string }).code = 'api_key_quota_exceeded'
+        throw err
+      }
+      const apiKey = generateApiKey()
+      const id = newId()
+      const createdAtIso = new Date().toISOString()
+      const name = buildApiKeyName(options, createdAtIso)
+      const keyHash = hashApiKey(apiKey)
+      const keyPreview = maskApiKey(apiKey)
+      const { rows } = await client.query(
+        `INSERT INTO relay_api_keys (id, user_id, key_hash, key_preview, key_plaintext, name, anthropic_group_id, openai_group_id, google_group_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING *`,
+        [id, userId, keyHash, keyPreview, apiKey, name, options.groupAssignments?.anthropic ?? null, options.groupAssignments?.openai ?? null, options.groupAssignments?.google ?? null],
+      )
+      await client.query('COMMIT')
+      const record = rowToApiKey(rows[0])
+      return { ...record, apiKey }
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {})
+      throw error
+    } finally {
+      client.release()
+    }
   }
 
   async updateGroups(
@@ -267,6 +364,24 @@ export class ApiKeyStore {
        WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
        RETURNING *`,
       [keyId, userId, groupAssignments.anthropic, groupAssignments.openai, groupAssignments.google],
+    )
+    this.hashLookupCache.clear()
+    return rows[0] ? rowToApiKey(rows[0]) : null
+  }
+
+  async updateGroupsForOrganization(
+    organizationId: string,
+    keyId: string,
+    groupAssignments: RelayApiKeyGroupAssignments,
+  ): Promise<RelayApiKey | null> {
+    const { rows } = await this.pool.query(
+      `UPDATE relay_api_keys
+       SET anthropic_group_id = $3,
+           openai_group_id = $4,
+           google_group_id = $5
+       WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL
+       RETURNING *`,
+      [keyId, organizationId, groupAssignments.anthropic, groupAssignments.openai, groupAssignments.google],
     )
     this.hashLookupCache.clear()
     return rows[0] ? rowToApiKey(rows[0]) : null
@@ -376,6 +491,19 @@ export class ApiKeyStore {
        WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
        RETURNING *`,
       [keyId, userId],
+    )
+    if (rows.length === 0) return null
+    this.hashLookupCache.clear()
+    return rowToApiKey(rows[0])
+  }
+
+  async revokeForOrganization(organizationId: string, keyId: string): Promise<RelayApiKey | null> {
+    const { rows } = await this.pool.query(
+      `UPDATE relay_api_keys
+       SET revoked_at = NOW()
+       WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL
+       RETURNING *`,
+      [keyId, organizationId],
     )
     if (rows.length === 0) return null
     this.hashLookupCache.clear()

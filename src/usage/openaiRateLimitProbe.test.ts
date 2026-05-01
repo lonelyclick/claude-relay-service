@@ -98,3 +98,18 @@ test('deriveOpenAIRateLimitStatus marks near-exhausted windows as warnings', () 
     'rejected',
   )
 })
+
+test('deriveOpenAIRateLimitStatus does not treat upstream 5xx as quota rejection', () => {
+  assert.equal(
+    deriveOpenAIRateLimitStatus({
+      httpStatus: 503,
+    }),
+    null,
+  )
+  assert.equal(
+    deriveOpenAIRateLimitStatus({
+      httpStatus: 529,
+    }),
+    null,
+  )
+})

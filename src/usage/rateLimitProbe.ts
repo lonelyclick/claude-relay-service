@@ -119,8 +119,7 @@ export async function probeRateLimits(options: {
 
   base.httpStatus = response.statusCode
 
-  // Drain the response body
-  await response.body.text().catch(() => {})
+  const bodyText = await response.body.text().catch(() => '')
 
   // Parse rate limit headers
   const headers = response.headers as Record<string, string | string[] | undefined>
@@ -139,14 +138,46 @@ export async function probeRateLimits(options: {
     }
   }
 
-  // Set error for non-200 responses
+  // Set error for non-200 responses, attaching upstream message when available
   if (response.statusCode === 401 || response.statusCode === 403) {
-    base.error = 'token_expired_or_revoked'
+    base.error = appendUpstreamDetail('token_expired_or_revoked', bodyText)
   } else if (response.statusCode === 429) {
-    base.error = 'rate_limited'
+    base.error = appendUpstreamDetail('rate_limited', bodyText)
   } else if (response.statusCode >= 400) {
-    base.error = `http_${response.statusCode}`
+    base.error = appendUpstreamDetail(`http_${response.statusCode}`, bodyText)
   }
 
   return base
+}
+
+function appendUpstreamDetail(prefix: string, bodyText: string): string {
+  const detail = extractUpstreamMessage(bodyText)
+  return detail ? `${prefix}: ${detail}` : prefix
+}
+
+function extractUpstreamMessage(bodyText: string): string | null {
+  const trimmed = bodyText?.trim()
+  if (!trimmed) return null
+  try {
+    const parsed = JSON.parse(trimmed) as unknown
+    if (parsed && typeof parsed === 'object') {
+      const obj = parsed as Record<string, unknown>
+      const errorObj = obj.error
+      const candidates: unknown[] = [
+        typeof errorObj === 'object' && errorObj !== null ? (errorObj as Record<string, unknown>).message : undefined,
+        typeof errorObj === 'string' ? errorObj : undefined,
+        typeof errorObj === 'object' && errorObj !== null ? (errorObj as Record<string, unknown>).type : undefined,
+        obj.message,
+        obj.detail,
+      ]
+      for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate.trim()) {
+          return candidate.trim().slice(0, 200)
+        }
+      }
+    }
+  } catch {
+    // Fallthrough to raw body excerpt
+  }
+  return trimmed.slice(0, 200)
 }

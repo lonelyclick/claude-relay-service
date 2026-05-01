@@ -2,6 +2,7 @@ node_modules
 dist
 .env
 data
+dogfood-output/
 
 # yoho-remote uploaded files (never commit)
 .yoho-remote/

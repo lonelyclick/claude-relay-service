@@ -90,6 +90,13 @@ WebSocket:
 
 ## 运行
 
+### 当前环境边界（STOP RULE）
+
+- **生产环境**：`https://tokenqiao.com`、`https://dash.tokenqiao.com`、`https://api.tokenqiao.com` 经 Cloudflare proxied 到新加坡机器 `43.160.224.233:80`，由 nginx 分流到 `cc-webapp`（`:3012`）、`cor-relay`（`:3560`）和 `cor-server`（`:3561`）。
+- **旧 ncu 部署**：`cc.yohomobile.dev` / `dev.tokenqiao.com` / ncu 本地 `cc-webapp`、`claude-oauth-relay` 已下线，不再作为 dev 或生产入口。
+- **数据库边界**：PostgreSQL 16 中 `cor` 库供 `cc-webapp` 使用，`claude_oauth_relay` 库供 relay / `cor` 使用。
+- **操作规则**：涉及 `tokenqiao.com` / `dash.tokenqiao.com` / `api.tokenqiao.com` 的修复只改新加坡生产链路，不要反向恢复 ncu 旧部署。
+
 1. 安装依赖
 
 ```bash
@@ -102,39 +109,57 @@ pnpm install
 cp .env.example .env
 ```
 
-3. 启动开发模式
+3. 分别启动各个独立包
 
 ```bash
-pnpm dev
+pnpm run dev:relay
+pnpm run dev:server
+pnpm run dev:web
 ```
 
-4. 或构建后启动
+4. 或先统一构建，再分别启动
 
 ```bash
 pnpm build
-pnpm start
+PORT=3560 pnpm run start:relay
+PORT=3561 RELAY_CONTROL_URL=http://127.0.0.1:3560 pnpm run start:server
 ```
 
 ### 拆分 ccproxy 与 server 服务
 
-默认 `SERVICE_MODE=all` 保持旧行为：同一个进程同时提供 Claude Code relay、`/admin/*`、`/internal/ccwebapp/*` 和管理台静态页面。
+当前仓库只保留独立入口，不再提供单进程根入口，也不再支持 `SERVICE_MODE=all`。
 
-如果要把 `ccproxy.yohomobile.dev` 和 server/admin 服务拆开，建议启动两份同版本代码但使用不同端口与 `SERVICE_MODE`：
+三个运行单元如下：
 
 ```bash
-# 公开给 ccproxy.yohomobile.dev，只处理 Claude Code / OpenAI-compatible relay 流量。
-SERVICE_MODE=relay PORT=3560 pnpm start
+# relay 数据面
+pnpm run build:relay
+pnpm run start:relay
+
+# server 控制面
+pnpm run build:server
+pnpm run start:server
+
+# admin-web 前端
+pnpm run build:web
+```
+
+如果要把 `api.tokenqiao.com` 和 server/admin 服务拆开，直接启动两份独立进程：
+
+```bash
+# 公开给 api.tokenqiao.com，只处理 Claude Code / OpenAI-compatible relay 流量。
+PORT=3560 pnpm run start:relay
 
 # 供 server/admin 使用，只处理 /admin/*、/internal/ccwebapp/*、管理台静态页面。
-SERVICE_MODE=server PORT=3561 pnpm start
+PORT=3561 RELAY_CONTROL_URL=http://127.0.0.1:3560 pnpm run start:server
 ```
 
 反向代理建议：
 
-- `ccproxy.yohomobile.dev` 指向 `127.0.0.1:3560`
-- server/admin 域名指向 `127.0.0.1:3561`
+- `api.tokenqiao.com` 指向 `127.0.0.1:3560`
+- `dash.tokenqiao.com` server/admin 域名指向 `127.0.0.1:3561`
 
-这样 `ccproxy.yohomobile.dev` 上不会暴露 `/admin/*`、`/internal/ccwebapp/*` 或管理台页面；server/admin 域名也不会接管 relay catch-all / WebSocket，从而降低改动对线上 Claude Code 代理流量的影响。
+这样 `api.tokenqiao.com` 上不会暴露 `/admin/*`、`/internal/ccwebapp/*` 或管理台页面；server/admin 域名也不会接管 relay catch-all / WebSocket，从而降低改动对线上 Claude Code 代理流量的影响。
 
 ## 环境变量
 
@@ -143,10 +168,15 @@ SERVICE_MODE=server PORT=3561 pnpm start
 - `ADMIN_TOKEN`
 - `DATABASE_URL` — Postgres 连接串，用于 token store、usage analytics、relay user 管理、session route / handoff 持久化
 - `ADMIN_UI_SESSION_SECRET` — 至少 16 字节，用于签发 admin UI session cookie
+- `INTERNAL_TOKEN` — relay 私有 control API 与 `/internal/ccwebapp/*` 的 bearer token
+- `RELAY_CONTROL_URL` — `server` 进程必填；管理写接口转发到 relay private control API 的 base URL
+- `BETTER_AUTH_DATABASE_URL` — 使用本地 Better Auth SQL 管理接口时必填；供 `server` 进程访问 Better Auth 所在数据库
 
 常用可选：
 
-- `SERVICE_MODE` — `all` / `relay` / `server`，默认 `all` 保持兼容；用于拆分 ccproxy 与 server/admin 服务
+- `DRAIN_TIMEOUT_MS` — 进程进入 draining 后，最多等待多少毫秒再强制清理剩余连接
+- `DRAIN_POLL_INTERVAL_MS` — draining 期间轮询连接状态的间隔毫秒数
+- `DRAIN_DETACH_GRACE_MS` — `/readyz` 变为非 200 后，继续接受 relay 新流量的摘流量宽限期
 - `REQUEST_TIMEOUT_MS`
 - `API_TIMEOUT_MS`
 - `UPSTREAM_REQUEST_TIMEOUT_MS`

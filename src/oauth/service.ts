@@ -1881,9 +1881,26 @@ export class OAuthService {
     return this.resolveConfiguredProxyUrl(proxyUrl)
   }
 
-  async addProxy(label: string, url: string): Promise<ProxyEntry> {
+  async addProxy(label: string, url: string, options: Partial<ProxyEntry> = {}): Promise<ProxyEntry> {
     const id = crypto.randomUUID()
-    const entry: ProxyEntry = { id, label: label.trim(), url: url.trim(), localUrl: null, createdAt: Date.now() }
+    const entry: ProxyEntry = {
+      id,
+      label: label.trim(),
+      url: url.trim(),
+      localUrl: options.localUrl?.trim() || null,
+      kind: options.kind ?? (url.trim().toLowerCase().startsWith('vless://') ? 'vless-upstream' : 'local-http'),
+      enabled: options.enabled ?? true,
+      source: options.source ?? 'manual',
+      listen: options.listen ?? null,
+      inboundPort: options.inboundPort ?? null,
+      inboundProtocol: options.inboundProtocol ?? null,
+      outboundTag: options.outboundTag ?? null,
+      xrayConfigPath: options.xrayConfigPath ?? null,
+      lastProbeStatus: options.lastProbeStatus ?? null,
+      lastProbeAt: options.lastProbeAt ?? null,
+      egressIp: options.egressIp ?? null,
+      createdAt: Date.now(),
+    }
     await this.store.updateData((current) => ({
       data: { ...current, proxies: [...current.proxies, entry] },
       result: entry,
@@ -1891,7 +1908,7 @@ export class OAuthService {
     return entry
   }
 
-  async updateProxy(id: string, updates: { label?: string; url?: string; localUrl?: string | null }): Promise<ProxyEntry> {
+  async updateProxy(id: string, updates: Partial<Omit<ProxyEntry, 'id' | 'createdAt'>>): Promise<ProxyEntry> {
     return this.store.updateData((current) => {
       const proxy = current.proxies.find((p) => p.id === id)
       if (!proxy) throw new Error(`Proxy not found: ${id}`)
@@ -1900,6 +1917,17 @@ export class OAuthService {
       if (updates.label !== undefined) updated.label = updates.label.trim()
       if (updates.url !== undefined) updated.url = updates.url.trim()
       if (updates.localUrl !== undefined) updated.localUrl = updates.localUrl?.trim() || null
+      if (updates.kind !== undefined) updated.kind = updates.kind
+      if (updates.enabled !== undefined) updated.enabled = updates.enabled
+      if (updates.source !== undefined) updated.source = updates.source
+      if (updates.listen !== undefined) updated.listen = updates.listen?.trim() || null
+      if (updates.inboundPort !== undefined) updated.inboundPort = updates.inboundPort
+      if (updates.inboundProtocol !== undefined) updated.inboundProtocol = updates.inboundProtocol
+      if (updates.outboundTag !== undefined) updated.outboundTag = updates.outboundTag?.trim() || null
+      if (updates.xrayConfigPath !== undefined) updated.xrayConfigPath = updates.xrayConfigPath?.trim() || null
+      if (updates.lastProbeStatus !== undefined) updated.lastProbeStatus = updates.lastProbeStatus?.trim() || null
+      if (updates.lastProbeAt !== undefined) updated.lastProbeAt = updates.lastProbeAt
+      if (updates.egressIp !== undefined) updated.egressIp = updates.egressIp?.trim() || null
 
       // Update accounts that reference the old URL
       const accounts = updates.url !== undefined && updates.url.trim() !== oldUrl

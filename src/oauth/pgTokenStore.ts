@@ -13,6 +13,13 @@ import type {
 import { buildProviderScopedAccountId } from '../providers/accountRef.js'
 import { resolveProviderProfile } from '../providers/catalog.js'
 
+function inferProxyKind(url: string | null | undefined, localUrl: string | null | undefined): ProxyEntry['kind'] {
+  const source = `${url ?? ''} ${localUrl ?? ''}`.toLowerCase()
+  if (source.includes('vless://')) return 'vless-upstream'
+  if (source.includes('socks://') || source.includes('socks5://')) return 'local-socks'
+  return 'local-http'
+}
+
 function normalizeStatus(status: StoredAccount['status'] | undefined): StoredAccount['status'] {
   if (status === 'active' || status === 'temp_error' || status === 'revoked') {
     return status
@@ -462,7 +469,10 @@ export class PgTokenStore implements ITokenStore {
       'SELECT session_hash, account_id, primary_account_id, created_at, updated_at, expires_at FROM sticky_sessions',
     )
     const proxiesResult = await client.query(
-      'SELECT id, label, url, local_url, created_at FROM proxies',
+      `SELECT id, label, url, local_url, kind, enabled, source, listen,
+              inbound_port, inbound_protocol, outbound_tag, xray_config_path,
+              last_probe_status, last_probe_at, egress_ip, created_at
+       FROM proxies`,
     )
     const routingGroupsResult = await client.query(
       'SELECT id, name, type, description, description_zh, is_active, created_at, updated_at FROM routing_groups',
@@ -484,11 +494,39 @@ export class PgTokenStore implements ITokenStore {
     )
 
     const proxies: ProxyEntry[] = proxiesResult.rows.map(
-      (row: { id: string; label: string; url: string; local_url: string | null; created_at: string }) => ({
+      (row: {
+        id: string
+        label: string
+        url: string
+        local_url: string | null
+        kind: ProxyEntry['kind'] | null
+        enabled: boolean | null
+        source: ProxyEntry['source'] | null
+        listen: string | null
+        inbound_port: number | string | null
+        inbound_protocol: ProxyEntry['inboundProtocol'] | null
+        outbound_tag: string | null
+        xray_config_path: string | null
+        last_probe_status: string | null
+        last_probe_at: Date | string | null
+        egress_ip: string | null
+        created_at: string
+      }) => ({
         id: row.id,
         label: row.label,
         url: row.url,
         localUrl: row.local_url,
+        kind: row.kind ?? inferProxyKind(row.url, row.local_url),
+        enabled: row.enabled ?? true,
+        source: row.source ?? 'manual',
+        listen: row.listen,
+        inboundPort: row.inbound_port === null ? null : Number(row.inbound_port),
+        inboundProtocol: row.inbound_protocol,
+        outboundTag: row.outbound_tag,
+        xrayConfigPath: row.xray_config_path,
+        lastProbeStatus: row.last_probe_status,
+        lastProbeAt: row.last_probe_at instanceof Date ? row.last_probe_at.toISOString() : row.last_probe_at,
+        egressIp: row.egress_ip,
         createdAt: Number(row.created_at),
       }),
     )
@@ -572,9 +610,31 @@ export class PgTokenStore implements ITokenStore {
         label TEXT NOT NULL,
         url TEXT NOT NULL,
         local_url TEXT,
+        kind TEXT NOT NULL DEFAULT 'local-http',
+        enabled BOOLEAN NOT NULL DEFAULT true,
+        source TEXT NOT NULL DEFAULT 'manual',
+        listen TEXT,
+        inbound_port INTEGER,
+        inbound_protocol TEXT,
+        outbound_tag TEXT,
+        xray_config_path TEXT,
+        last_probe_status TEXT,
+        last_probe_at TIMESTAMPTZ,
+        egress_ip TEXT,
         created_at BIGINT NOT NULL
       )
     `)
+    await client.query("ALTER TABLE proxies ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'local-http'")
+    await client.query("ALTER TABLE proxies ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT true")
+    await client.query("ALTER TABLE proxies ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual'")
+    await client.query('ALTER TABLE proxies ADD COLUMN IF NOT EXISTS listen TEXT')
+    await client.query('ALTER TABLE proxies ADD COLUMN IF NOT EXISTS inbound_port INTEGER')
+    await client.query('ALTER TABLE proxies ADD COLUMN IF NOT EXISTS inbound_protocol TEXT')
+    await client.query('ALTER TABLE proxies ADD COLUMN IF NOT EXISTS outbound_tag TEXT')
+    await client.query('ALTER TABLE proxies ADD COLUMN IF NOT EXISTS xray_config_path TEXT')
+    await client.query('ALTER TABLE proxies ADD COLUMN IF NOT EXISTS last_probe_status TEXT')
+    await client.query('ALTER TABLE proxies ADD COLUMN IF NOT EXISTS last_probe_at TIMESTAMPTZ')
+    await client.query('ALTER TABLE proxies ADD COLUMN IF NOT EXISTS egress_ip TEXT')
     await client.query(`
       CREATE TABLE IF NOT EXISTS routing_groups (
         id TEXT PRIMARY KEY,
@@ -718,10 +778,35 @@ export class PgTokenStore implements ITokenStore {
 
     for (const proxy of newProxies) {
       await client.query(
-        `INSERT INTO proxies (id, label, url, local_url, created_at)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (id) DO UPDATE SET label = $2, url = $3, local_url = $4, created_at = $5`,
-        [proxy.id, proxy.label, proxy.url, proxy.localUrl, proxy.createdAt],
+        `INSERT INTO proxies (
+           id, label, url, local_url, kind, enabled, source, listen, inbound_port,
+           inbound_protocol, outbound_tag, xray_config_path, last_probe_status,
+           last_probe_at, egress_ip, created_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         ON CONFLICT (id) DO UPDATE SET
+           label = $2, url = $3, local_url = $4, kind = $5, enabled = $6,
+           source = $7, listen = $8, inbound_port = $9, inbound_protocol = $10,
+           outbound_tag = $11, xray_config_path = $12, last_probe_status = $13,
+           last_probe_at = $14, egress_ip = $15, created_at = $16`,
+        [
+          proxy.id,
+          proxy.label,
+          proxy.url,
+          proxy.localUrl,
+          proxy.kind ?? inferProxyKind(proxy.url, proxy.localUrl),
+          proxy.enabled ?? true,
+          proxy.source ?? 'manual',
+          proxy.listen ?? null,
+          proxy.inboundPort ?? null,
+          proxy.inboundProtocol ?? null,
+          proxy.outboundTag ?? null,
+          proxy.xrayConfigPath ?? null,
+          proxy.lastProbeStatus ?? null,
+          proxy.lastProbeAt ?? null,
+          proxy.egressIp ?? null,
+          proxy.createdAt,
+        ],
       )
     }
   }

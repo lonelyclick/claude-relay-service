@@ -8,20 +8,37 @@ import {
   normalizeVmFingerprintTemplateHeaders,
   type VmFingerprintTemplateHeader,
 } from './proxy/fingerprintTemplate.js'
+import { projectRoot } from './projectRoot.js'
 
 const isNodeTest = Boolean(process.env.NODE_TEST_CONTEXT || process.env.NODE_TEST_WORKER_ID)
 
 if (!isNodeTest) {
-  dotenv.config()
+  dotenv.config({ path: path.join(projectRoot, '.env') })
 }
+
+const emptyStringToUndefined = (value: unknown): unknown =>
+  typeof value === 'string' && value.trim() === '' ? undefined : value
 
 const envSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   PORT: z.coerce.number().int().positive().default(3560),
-  SERVICE_MODE: z.enum(['all', 'relay', 'server']).default('all'),
+  RELAY_CONTROL_URL: z.preprocess(
+    emptyStringToUndefined,
+    z
+      .string()
+      .url()
+      .optional()
+      .transform((value) => {
+        const trimmed = value?.trim()
+        return trimmed ? trimmed : null
+      }),
+  ),
+  DRAIN_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  DRAIN_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(250),
+  DRAIN_DETACH_GRACE_MS: z.coerce.number().int().min(0).default(5_000),
   ADMIN_TOKEN: z.string().min(16),
-  INTERNAL_TOKEN: z.string().min(16).optional(),
-  CCWEBAPP_NOTIFY_URL: z.string().url().optional(),
+  INTERNAL_TOKEN: z.preprocess(emptyStringToUndefined, z.string().min(16).optional()),
+  CCWEBAPP_NOTIFY_URL: z.preprocess(emptyStringToUndefined, z.string().url().optional()),
   STICKY_SESSION_TTL_HOURS: z.coerce.number().positive().default(1),
   ACCOUNT_ERROR_COOLDOWN_MS: z.coerce.number().int().positive().default(5 * 60 * 1000),
   API_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
@@ -126,27 +143,36 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
-  VM_FINGERPRINT_TEMPLATE_PATH: z
-    .string()
-    .optional()
-    .transform((value) => {
-      const trimmed = value?.trim()
-      return trimmed ? trimmed : null
-    }),
-  BODY_TEMPLATE_PATH: z
-    .string()
-    .optional()
-    .transform((value) => {
-      const trimmed = value?.trim()
-      return trimmed ? trimmed : null
-    }),
-  BODY_TEMPLATE_NEW_PATH: z
-    .string()
-    .optional()
-    .transform((value) => {
-      const trimmed = value?.trim()
-      return trimmed ? trimmed : null
-    }),
+  VM_FINGERPRINT_TEMPLATE_PATH: z.preprocess(
+    emptyStringToUndefined,
+    z
+      .string()
+      .optional()
+      .transform((value) => {
+        const trimmed = value?.trim()
+        return trimmed ? trimmed : null
+      }),
+  ),
+  BODY_TEMPLATE_PATH: z.preprocess(
+    emptyStringToUndefined,
+    z
+      .string()
+      .optional()
+      .transform((value) => {
+        const trimmed = value?.trim()
+        return trimmed ? trimmed : null
+      }),
+  ),
+  BODY_TEMPLATE_NEW_PATH: z.preprocess(
+    emptyStringToUndefined,
+    z
+      .string()
+      .optional()
+      .transform((value) => {
+        const trimmed = value?.trim()
+        return trimmed ? trimmed : null
+      }),
+  ),
   MIN_CLAUDE_VERSION: z
     .string()
     .default('2.1.90')
@@ -210,9 +236,10 @@ const envSchema = z.object({
   BILLING_FALLBACK_OUTPUT_PRICE_MICROS_PER_MILLION: z.coerce.number().int().nonnegative().default(450000000),
   BILLING_FALLBACK_CACHE_CREATION_PRICE_MICROS_PER_MILLION: z.coerce.number().int().nonnegative().default(112500000),
   BILLING_FALLBACK_CACHE_READ_PRICE_MICROS_PER_MILLION: z.coerce.number().int().nonnegative().default(9000000),
-  DATABASE_URL: z.string().min(1).optional(),
-  BETTER_AUTH_API_URL: z.string().url().default("https://cc.yohomobile.dev/api/auth"),
-  BETTER_AUTH_ADMIN_EMAIL: z.string().email().optional(),
+  DATABASE_URL: z.preprocess(emptyStringToUndefined, z.string().min(1).optional()),
+  BETTER_AUTH_API_URL: z.string().url().default("https://tokenqiao.com/api/auth"),
+  BETTER_AUTH_ADMIN_EMAIL: z.preprocess(emptyStringToUndefined, z.string().email().optional()),
+  BETTER_AUTH_DATABASE_URL: z.preprocess(emptyStringToUndefined, z.string().min(1).optional()),
 })
 
 const vmFingerprintTemplateSchema = z.object({
@@ -229,24 +256,27 @@ const rawEnv = isNodeTest
 
 const env = envSchema.parse(rawEnv)
 const vmFingerprintTemplatePath = env.VM_FINGERPRINT_TEMPLATE_PATH
-  ? path.resolve(process.cwd(), env.VM_FINGERPRINT_TEMPLATE_PATH)
+  ? path.resolve(projectRoot, env.VM_FINGERPRINT_TEMPLATE_PATH)
   : null
 const vmFingerprintTemplateHeaders = loadVmFingerprintTemplateHeaders(
   vmFingerprintTemplatePath,
 )
 const bodyTemplatePath = env.BODY_TEMPLATE_PATH
-  ? path.resolve(process.cwd(), env.BODY_TEMPLATE_PATH)
+  ? path.resolve(projectRoot, env.BODY_TEMPLATE_PATH)
   : null
-const bodyTemplate = loadBodyTemplate(env.BODY_TEMPLATE_PATH ?? null)
+const bodyTemplate = loadBodyTemplate(bodyTemplatePath)
 const bodyTemplateNewPath = env.BODY_TEMPLATE_NEW_PATH
-  ? path.resolve(process.cwd(), env.BODY_TEMPLATE_NEW_PATH)
+  ? path.resolve(projectRoot, env.BODY_TEMPLATE_NEW_PATH)
   : null
-const bodyTemplateNew = loadBodyTemplate(env.BODY_TEMPLATE_NEW_PATH ?? null)
+const bodyTemplateNew = loadBodyTemplate(bodyTemplateNewPath)
 
 export const appConfig = {
   host: env.HOST,
   port: env.PORT,
-  serviceMode: env.SERVICE_MODE,
+  relayControlUrl: env.RELAY_CONTROL_URL,
+  drainTimeoutMs: env.DRAIN_TIMEOUT_MS,
+  drainPollIntervalMs: env.DRAIN_POLL_INTERVAL_MS,
+  drainDetachGraceMs: env.DRAIN_DETACH_GRACE_MS,
   adminToken: env.ADMIN_TOKEN,
   internalToken: env.INTERNAL_TOKEN ?? null,
   ccwebappNotifyUrl: env.CCWEBAPP_NOTIFY_URL ?? null,
@@ -350,6 +380,7 @@ export const appConfig = {
   databaseUrl: env.DATABASE_URL ?? null,
   betterAuthApiUrl: env.BETTER_AUTH_API_URL.replace(/\/+$/, ""),
   betterAuthAdminEmail: env.BETTER_AUTH_ADMIN_EMAIL ?? null,
+  betterAuthDatabaseUrl: env.BETTER_AUTH_DATABASE_URL ?? null,
   claudeAiOrigin: 'https://claude.ai',
   claudeAiOrganizationsUrl: 'https://claude.ai/api/organizations',
   claudeAiCookieAuthorizeTemplate: 'https://claude.ai/v1/oauth/{organization_uuid}/authorize',

@@ -6,7 +6,10 @@ export type SupportMessageAuthorKind = 'user' | 'agent' | 'system'
 
 export interface SupportTicket {
   id: string
-  userId: string
+  userId: string | null
+  organizationId: string | null
+  organizationName: string | null
+  organizationKind: 'personal' | 'team' | null
   userName: string | null
   userEmail: string | null
   category: SupportTicketCategory

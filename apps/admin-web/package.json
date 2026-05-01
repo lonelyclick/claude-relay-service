@@ -1,0 +1,12 @@
+{
+  "name": "@cor/admin-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --dir ../../web dev",
+    "build": "pnpm --dir ../../web build",
+    "preview": "pnpm --dir ../../web preview",
+    "check": "pnpm --dir ../../web exec tsc -b --pretty false"
+  }
+}

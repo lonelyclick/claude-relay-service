@@ -74,7 +74,8 @@ export interface BillingResolvedSku {
 export interface BillingUsageCandidate {
   usageRecordId: number
   requestId: string
-  userId: string
+  userId: string | null
+  organizationId?: string | null
   userName: string | null
   billingCurrency: BillingCurrency
   accountId: string | null

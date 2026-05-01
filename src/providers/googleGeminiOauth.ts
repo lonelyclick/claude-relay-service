@@ -273,15 +273,15 @@ export async function retrieveGeminiUserQuota(options: {
   base.httpStatus = response.statusCode
   const bodyText = await response.body.text().catch(() => '')
   if (response.statusCode === 401 || response.statusCode === 403) {
-    base.error = 'token_expired_or_revoked'
+    base.error = appendUpstreamDetail('token_expired_or_revoked', bodyText)
     return base
   }
   if (response.statusCode === 429) {
-    base.error = 'rate_limited'
+    base.error = appendUpstreamDetail('rate_limited', bodyText)
     return base
   }
   if (response.statusCode < 200 || response.statusCode >= 300) {
-    base.error = `http_${response.statusCode}`
+    base.error = appendUpstreamDetail(`http_${response.statusCode}`, bodyText)
     return base
   }
 
@@ -1091,4 +1091,36 @@ function parseJsonMaybe(value: unknown): unknown {
   } catch {
     return null
   }
+}
+
+function appendUpstreamDetail(prefix: string, bodyText: string): string {
+  const detail = extractUpstreamMessage(bodyText)
+  return detail ? `${prefix}: ${detail}` : prefix
+}
+
+function extractUpstreamMessage(bodyText: string): string | null {
+  const trimmed = bodyText?.trim()
+  if (!trimmed) return null
+  try {
+    const parsed = JSON.parse(trimmed) as unknown
+    if (parsed && typeof parsed === 'object') {
+      const obj = parsed as Record<string, unknown>
+      const errorObj = obj.error
+      const candidates: unknown[] = [
+        typeof errorObj === 'object' && errorObj !== null ? (errorObj as Record<string, unknown>).message : undefined,
+        typeof errorObj === 'string' ? errorObj : undefined,
+        typeof errorObj === 'object' && errorObj !== null ? (errorObj as Record<string, unknown>).status : undefined,
+        obj.message,
+        obj.detail,
+      ]
+      for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate.trim()) {
+          return candidate.trim().slice(0, 200)
+        }
+      }
+    }
+  } catch {
+    // Fall through and use raw body excerpt
+  }
+  return trimmed.slice(0, 200)
 }

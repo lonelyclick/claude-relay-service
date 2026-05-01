@@ -164,8 +164,36 @@ export interface Proxy {
   label: string
   url: string
   localUrl?: string
+  kind?: 'vless-upstream' | 'local-http' | 'local-socks'
+  enabled?: boolean
+  source?: 'manual' | 'x-ui' | 'generated'
+  listen?: string | null
+  inboundPort?: number | null
+  inboundProtocol?: 'http' | 'socks' | null
+  outboundTag?: string | null
+  xrayConfigPath?: string | null
+  lastProbeStatus?: string | null
+  lastProbeAt?: string | null
+  egressIp?: string | null
   accounts?: { id: string; emailAddress: string; label?: string }[]
   createdAt?: string | number
+}
+
+export interface XraySyncResult {
+  dryRun: boolean
+  path: string
+  backupPath?: string | null
+  validation?: { ok: boolean; stdout?: string; stderr?: string; error?: string } | null
+  rolledBack?: boolean
+  assignments: Array<{
+    proxyId: string
+    localUrl: string
+    inboundPort: number
+    inboundProtocol: 'http' | 'socks'
+    outboundTag: string
+  }>
+  restart?: { ok: boolean; service: string; error?: string } | null
+  config?: unknown
 }
 
 export interface ProxyDiagnostics {

@@ -38,6 +38,18 @@ function fmtDate(iso: string): string {
   }
 }
 
+function ownerLabel(ticket: SupportTicket): string {
+  if (ticket.organizationId) {
+    const name = ticket.organizationName || ticket.organizationId
+    return ticket.organizationKind === 'personal' ? `个人组织：${name}` : `团队组织：${name}`
+  }
+  return '个人用户工单'
+}
+
+function submitterLabel(ticket: SupportTicket): string {
+  return ticket.userEmail || ticket.userName || ticket.userId || '未知提交人'
+}
+
 export function SupportListPage() {
   const [status, setStatus] = useState<SupportTicketStatus | 'all'>('all')
   const [search, setSearch] = useState('')
@@ -90,7 +102,7 @@ export function SupportListPage() {
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="搜索标题、用户邮箱或姓名"
+            placeholder="搜索工单 ID、标题、用户邮箱/姓名、组织 ID/名称"
             className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600"
           />
           <select
@@ -124,13 +136,15 @@ export function SupportListPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone={STATUS_TONE[ticket.status]}>{STATUS_LABEL[ticket.status]}</Badge>
                     <Badge tone="gray">{CATEGORY_LABEL[ticket.category]}</Badge>
+                    <Badge tone={ticket.organizationId ? 'cyan' : 'blue'}>{ownerLabel(ticket)}</Badge>
                     <span className="text-base font-semibold text-slate-100 truncate">{ticket.title}</span>
                   </div>
                   <div className="mt-1 text-xs text-slate-500 font-mono truncate">
-                    {ticket.id} · {ticket.userEmail || ticket.userName || ticket.userId}
+                    {ticket.id} · 提交人 {submitterLabel(ticket)}
                   </div>
                   <div className="mt-1 text-xs text-slate-500">
                     创建 {fmtDate(ticket.createdAt)} · 最近活动 {fmtDate(ticket.updatedAt)} · {ticket.messageCount} 条消息
+                    {ticket.organizationId ? ` · 组织 ID ${ticket.organizationId}` : ''}
                   </div>
                 </div>
                 <span className="text-slate-500">→</span>
