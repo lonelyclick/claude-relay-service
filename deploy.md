@@ -84,7 +84,8 @@ CLOUDFLARE_ACCOUNT_ID=...
 - `INTERNAL_TOKEN`
 - `RELAY_CONTROL_URL`
 - `BETTER_AUTH_DATABASE_URL`
-- `BETTER_AUTH_API_URL`
+- `BETTER_AUTH_API_URL=https://tokenqiao.com/api/auth`
+- `ADMIN_UI_ALLOWED_ORIGINS=https://dash.tokenqiao.com`
 
 `frontend` 目标要求开发机 `web/.env.production` 至少配置：
 

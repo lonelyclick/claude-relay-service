@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 import { Link } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { listAccounts } from '~/api/accounts'
-import { addProxy, importProxies, linkAccountsToProxy, listProxies, probeProxy, syncXrayConfig, unlinkAccountFromProxy } from '~/api/proxies'
+import { addProxy, deleteProxy, importProxies, linkAccountsToProxy, listProxies, probeProxy, syncXrayConfig, unlinkAccountFromProxy } from '~/api/proxies'
 import { PageSkeleton } from '~/components/LoadingSkeleton'
 import { StatCard } from '~/components/StatCard'
 import { Badge, type BadgeTone } from '~/components/Badge'
@@ -277,6 +277,7 @@ function ProxyCard({ proxy: p, accounts, diag, isProbing, onProbe }: {
   const [expanded, setExpanded] = useState(false)
   const [selectedAccountId, setSelectedAccountId] = useState('')
   const [savingLink, setSavingLink] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const toast = useToast()
   const qc = useQueryClient()
 
@@ -317,6 +318,25 @@ function ProxyCard({ proxy: p, accounts, diag, isProbing, onProbe }: {
     }
   }
 
+  const handleDelete = async () => {
+    const linkedCount = p.accounts?.length ?? 0
+    const message = linkedCount > 0
+      ? `Delete "${p.label}" and unlink ${linkedCount} account(s)?`
+      : `Delete "${p.label}"?`
+    if (!confirm(message)) return
+    setDeleting(true)
+    try {
+      await deleteProxy(p.id)
+      toast.success('Network deleted')
+      qc.invalidateQueries({ queryKey: ['proxies'] })
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+    } catch (e) {
+      toast.error(`Delete failed: ${(e as Error).message}`)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <div className="bg-bg-card border border-border-default rounded-xl p-4 shadow-xs">
       <div className="flex items-start justify-between mb-3">
@@ -349,6 +369,9 @@ function ProxyCard({ proxy: p, accounts, diag, isProbing, onProbe }: {
         )}
         <button onClick={onProbe} disabled={isProbing} className="text-[10px] text-indigo-400 hover:text-indigo-300 disabled:opacity-50">
           {isProbing ? 'Probing...' : 'Probe'}
+        </button>
+        <button onClick={handleDelete} disabled={deleting} className="text-[10px] text-red-400 hover:text-red-300 disabled:opacity-50">
+          {deleting ? 'Deleting...' : 'Delete'}
         </button>
         <button onClick={() => setExpanded(!expanded)} className="text-[10px] text-slate-500 hover:text-slate-300 ml-auto">
           {expanded ? 'Hide details' : 'Show details'}
