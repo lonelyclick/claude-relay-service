@@ -48,6 +48,7 @@ const XRAY_MANAGED_PORT_BASE = Number(process.env.COR_XRAY_PORT_BASE || 10880);
 const XRAY_MANAGED_SERVICE = process.env.COR_XRAY_SERVICE_NAME || "";
 const XRAY_MANAGED_BIN = process.env.COR_XRAY_BIN || "xray";
 const execFileAsync = promisify(execFile);
+const XRAY_TEST_UNSUPPORTED_PATTERN = /unknown command|Run 'xray help' for usage/i;
 const ADMIN_UI_DIST_DIR = path.join(projectRoot, "web/dist");
 const ADMIN_UI_INDEX_PATH = path.join(ADMIN_UI_DIST_DIR, "index.html");
 let ADMIN_UI_INDEX_CACHE = null;
@@ -2704,11 +2705,20 @@ async function syncManagedXrayConfig(services, options = {}) {
       const result = await execFileAsync(XRAY_MANAGED_BIN, ["test", "-config", XRAY_MANAGED_CONFIG_PATH], { timeout: 15_000 });
       validation = { ok: true, stdout: result.stdout?.slice(0, 2000) || "", stderr: result.stderr?.slice(0, 2000) || "" };
     } catch (error) {
-      validation = { ok: false, error: sanitizeErrorMessage(error) };
+      const message = sanitizeErrorMessage(error);
+      if (XRAY_TEST_UNSUPPORTED_PATTERN.test(message)) {
+        validation = { ok: true, skipped: true, reason: "xray_test_unsupported", error: message.slice(0, 500) };
+      } else {
+        validation = { ok: false, error: message };
+      }
+      if (validation.ok) {
+        // Continue when the installed Xray binary does not support `xray test`.
+      } else {
       if (backupPath) {
         await fs.promises.copyFile(backupPath, XRAY_MANAGED_CONFIG_PATH).catch(() => {});
       }
       return { dryRun: false, path: XRAY_MANAGED_CONFIG_PATH, backupPath, assignments, validation, rolledBack: Boolean(backupPath) };
+      }
     }
   }
   for (const assignment of assignments) {
@@ -2732,6 +2742,19 @@ async function syncManagedXrayConfig(services, options = {}) {
     }
   }
   return { dryRun: false, path: XRAY_MANAGED_CONFIG_PATH, backupPath, assignments, validation, restart };
+}
+
+async function ensureProxyProbeReady(services, proxy) {
+  const hasProbeTarget = Boolean(resolveProbeProxyTarget(proxy));
+  if (hasProbeTarget || proxy.kind !== "vless-upstream" || proxy.enabled === false) {
+    return proxy;
+  }
+  const syncResult = await syncManagedXrayConfig(services, { validate: true, restart: true });
+  if (syncResult.validation && syncResult.validation.ok === false) {
+    return proxy;
+  }
+  const proxies = await services.oauthService.listProxies();
+  return proxies.find((item) => item.id === proxy.id) || proxy;
 }
 
 async function probeProxyExit(proxy) {
@@ -5912,8 +5935,9 @@ export function createServer(services): express.Express {
             });
           return;
         }
-        const diagnostics = await probeProxyExit(proxy);
-        await services.oauthService.updateProxy(proxy.id, {
+        const probeReadyProxy = await ensureProxyProbeReady(services, proxy);
+        const diagnostics = await probeProxyExit(probeReadyProxy);
+        await services.oauthService.updateProxy(probeReadyProxy.id, {
           lastProbeStatus: diagnostics.status,
           lastProbeAt: diagnostics.checkedAt,
           egressIp: diagnostics.egressIp,

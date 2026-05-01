@@ -183,7 +183,7 @@ export interface XraySyncResult {
   dryRun: boolean
   path: string
   backupPath?: string | null
-  validation?: { ok: boolean; stdout?: string; stderr?: string; error?: string } | null
+  validation?: { ok: boolean; stdout?: string; stderr?: string; error?: string; skipped?: boolean; reason?: string } | null
   rolledBack?: boolean
   assignments: Array<{
     proxyId: string
