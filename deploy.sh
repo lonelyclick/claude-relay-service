@@ -155,6 +155,7 @@ build_remote_command() {
   cmd+=" && APP_DIR=$(quote "$APP_DIR")"
   cmd+=" BRANCH=$(quote "$BRANCH")"
   cmd+=" REMOTE_NAME=$(quote "$REMOTE_NAME")"
+  cmd+=" CI=true"
   cmd+=" DEPLOY_RUN_ON_SERVER=1"
   cmd+=" DEPLOY_SKIP_PULL=1"
   cmd+=" bash ./deploy.sh $(quote "$TARGET")"
