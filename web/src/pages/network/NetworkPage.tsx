@@ -23,9 +23,7 @@ export function NetworkPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [newLabel, setNewLabel] = useState('')
   const [newUrl, setNewUrl] = useState('')
-  const [newPort, setNewPort] = useState('')
   const [bulkText, setBulkText] = useState('')
-  const [bulkPortBase, setBulkPortBase] = useState('')
 
   const proxyList = proxies.data?.proxies ?? []
 
@@ -115,11 +113,9 @@ export function NetworkPage() {
         kind: 'vless-upstream',
         enabled: true,
         inboundProtocol: 'http',
-        inboundPort: newPort ? Number(newPort) : null,
       })
       setNewLabel('')
       setNewUrl('')
-      setNewPort('')
       setShowAdd(false)
       toast.success('VLESS upstream added')
       qc.invalidateQueries({ queryKey: ['proxies'] })
@@ -134,7 +130,7 @@ export function NetworkPage() {
       return
     }
     try {
-      const result = await importProxies({ text: bulkText, portBase: bulkPortBase ? Number(bulkPortBase) : null })
+      const result = await importProxies({ text: bulkText })
       setBulkText('')
       toast.success(`Imported ${result.proxies.length} upstreams${result.errors.length ? `, ${result.errors.length} failed` : ''}`)
       qc.invalidateQueries({ queryKey: ['proxies'] })
@@ -204,19 +200,18 @@ export function NetworkPage() {
       {showAdd && (
         <section className="bg-bg-card border border-border-default rounded-xl p-4 shadow-xs space-y-3">
           <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Add VLESS Upstream</div>
-          <div className="grid grid-cols-[220px_1fr_120px_auto] gap-2 max-lg:grid-cols-1">
+          <div className="grid grid-cols-[220px_1fr_auto] gap-2 max-lg:grid-cols-1">
             <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="备注名，例如 新加坡家庭2" className="bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200" />
             <input value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="vless://..." className="bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200 font-mono" />
-            <input value={newPort} onChange={(e) => setNewPort(e.target.value)} placeholder="10880" className="bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200" />
             <button onClick={createVlessProxy} className="px-3 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-500">Add</button>
           </div>
-          <p className="text-[11px] text-slate-500">添加后先 Preview，再 Generate。生成器只监听 127.0.0.1，不暴露公网。</p>
+          <p className="text-[11px] text-slate-500">端口由后端自动分配；添加后可直接 Probe，系统会生成本地出口并重启 xray-cor。</p>
           <div className="border-t border-border-default/60 pt-3 space-y-2">
             <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Bulk Import</div>
             <textarea value={bulkText} onChange={(e) => setBulkText(e.target.value)} rows={4} placeholder={'每行一个 vless://...，或 “备注<TAB>vless://...”'} className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-2 text-xs text-slate-200 font-mono" />
             <div className="flex gap-2 items-center">
-              <input value={bulkPortBase} onChange={(e) => setBulkPortBase(e.target.value)} placeholder="起始端口，例如 10880" className="bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200 w-48" />
               <button onClick={importVlessProxies} className="px-3 py-1.5 rounded-lg text-sm bg-slate-700 text-slate-100 hover:bg-slate-600">Import</button>
+              <span className="text-[11px] text-slate-500">端口自动分配</span>
             </div>
           </div>
         </section>

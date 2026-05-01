@@ -24,7 +24,6 @@ export function ProxyDetailPage() {
   const [localUrl, setLocalUrl] = useState('')
   const [kind, setKind] = useState('local-http')
   const [enabled, setEnabled] = useState(true)
-  const [inboundPort, setInboundPort] = useState('')
   const [inboundProtocol, setInboundProtocol] = useState('http')
 
   useEffect(() => {
@@ -35,7 +34,6 @@ export function ProxyDetailPage() {
     setLocalUrl(proxy.localUrl ?? '')
     setKind(proxy.kind ?? 'local-http')
     setEnabled(proxy.enabled !== false)
-    setInboundPort(proxy.inboundPort ? String(proxy.inboundPort) : '')
     setInboundProtocol(proxy.inboundProtocol ?? 'http')
   }, [proxy])
 
@@ -64,7 +62,6 @@ export function ProxyDetailPage() {
         localUrl: localUrl || null,
         kind,
         enabled,
-        inboundPort: inboundPort ? Number(inboundPort) : null,
         inboundProtocol,
       })
     },
@@ -176,10 +173,12 @@ export function ProxyDetailPage() {
                 <option value="socks">SOCKS</option>
               </select>
             </label>
-            <label className="block space-y-1">
+            <div className="block space-y-1">
               <span className="text-xs text-slate-400">Inbound Port</span>
-              <input value={inboundPort} onChange={(e) => setInboundPort(e.target.value)} className="block w-full bg-bg-input border border-border-default rounded-lg px-3 py-1.5 text-sm text-slate-200" placeholder="10880" />
-            </label>
+              <div className="rounded-lg border border-border-default bg-bg-input px-3 py-1.5 text-sm text-slate-400">
+                {proxy.inboundPort ?? 'Auto assigned after Probe / Generate'}
+              </div>
+            </div>
           </div>
           <label className="flex items-center gap-2 text-xs text-slate-300">
             <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
