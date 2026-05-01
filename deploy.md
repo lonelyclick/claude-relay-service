@@ -26,22 +26,31 @@
 
 ## 快速部署
 
-从开发机触发腾讯机器部署：
+从开发机触发腾讯机器部署。`relay` 和 `server` 必须分开执行，脚本不会一次性重启两个 PM2 进程：
 
 ```bash
-./deploy.sh
+./deploy.sh relay
+./deploy.sh server
 ```
+
+部署前强制要求：
+
+- 当前本地仓库必须在 `main` 分支。
+- 本地工作区必须干净，没有未提交文件。
+- 本地 `HEAD` 必须已经推送到 `origin/main`。
+- 腾讯生产目录也必须在 `main` 分支，且 pull 前工作区干净。
 
 部署脚本会执行：
 
-1. SSH 到腾讯新加坡机器的 `/home/ubuntu/projects/claude-oauth-relay`。
-2. `git fetch origin && git pull --ff-only origin main`。
-3. 检查 git 工作区是否干净。
-4. 检查必要 env key 是否存在，但不会打印密钥值。
-5. `pnpm install --frozen-lockfile`。
-6. `pnpm build`。
-7. 分别 `pm2 restart cor-relay --update-env`、`pm2 restart cor-server --update-env`，然后 `pm2 save`。
-8. 校验本地和公网 HTTP 端点。
+1. 在开发机检查 `main`、clean worktree、`HEAD == origin/main`。
+2. SSH 到腾讯新加坡机器的 `/home/ubuntu/projects/claude-oauth-relay`。
+3. 在生产目录检查 `main` 和 clean worktree。
+4. `git fetch origin main && git pull --ff-only origin main`。
+5. 检查目标所需 env key 是否存在，但不会打印密钥值。
+6. `pnpm install --frozen-lockfile`。
+7. `relay` 目标只执行 `pnpm run build:relay` 并重启 `cor-relay`。
+8. `server` 目标执行 `pnpm run build:server`、`pnpm run build:web` 并重启 `cor-server`。
+9. `pm2 save` 并校验目标对应的本地和公网 HTTP 端点。
 
 ## 可覆盖参数
 
@@ -53,23 +62,14 @@ BRANCH=main
 REMOTE_NAME=origin
 ```
 
-跳过某些步骤：
-
-```bash
-SKIP_INSTALL=1 ./deploy.sh
-SKIP_BUILD=1 ./deploy.sh
-SKIP_VERIFY=1 ./deploy.sh
-```
-
-默认拒绝 dirty worktree。确实要在未提交状态下部署时才使用：
-
-```bash
-ALLOW_DIRTY=1 ./deploy.sh
-```
-
 ## 必要环境变量
 
-生产机根目录 `.env` 必须至少配置：
+`relay` 目标要求生产机根目录 `.env` 至少配置：
+
+- `DATABASE_URL`
+- `INTERNAL_TOKEN`
+
+`server` 目标要求生产机根目录 `.env` 至少配置：
 
 - `DATABASE_URL`
 - `ADMIN_UI_SESSION_SECRET`
@@ -78,7 +78,7 @@ ALLOW_DIRTY=1 ./deploy.sh
 - `BETTER_AUTH_DATABASE_URL`
 - `BETTER_AUTH_API_URL`
 
-生产机 `web/.env.production` 必须至少配置：
+`server` 目标还要求生产机 `web/.env.production` 至少配置：
 
 - `VITE_API_BASE_URL=https://api.tokenqiao.com`
 
@@ -104,7 +104,9 @@ curl -sS -o /dev/null -w "dash HTTP %{http_code}\n" https://dash.tokenqiao.com/l
 ```bash
 git log --oneline -20
 git revert <bad-commit-sha>
-./deploy.sh
+./deploy.sh relay
+# 或
+./deploy.sh server
 ```
 
 ## 常见问题

@@ -7,16 +7,23 @@ REMOTE_HOST="${REMOTE_HOST:-ubuntu@43.160.224.233}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519_tencent_43_160_224_233}"
 REMOTE_NAME="${REMOTE_NAME:-origin}"
 BRANCH="${BRANCH:-main}"
-SKIP_PULL=0
+TARGET=""
 
 usage() {
   cat <<'USAGE'
-Usage: ./deploy.sh [--skip-pull]
+Usage: ./deploy.sh relay|server
 
-Deploys the Tencent Singapore production checkout over SSH.
+Deploys one claude-oauth-relay production process on the Tencent Singapore host.
 
-Options:
-  --skip-pull Skip git fetch/pull before deploying.
+Targets:
+  relay     Build and restart cor-relay only.
+  server    Build and restart cor-server plus the admin web assets.
+
+Hard requirements before deploy:
+  - The local checkout must be on main.
+  - The local worktree must be clean.
+  - The local HEAD must already be pushed to origin/main.
+  - The production checkout must also be on main and clean before pulling.
 
 Environment overrides:
   REMOTE_HOST=ubuntu@43.160.224.233
@@ -24,10 +31,6 @@ Environment overrides:
   APP_DIR=/home/ubuntu/projects/claude-oauth-relay
   BRANCH=main
   REMOTE_NAME=origin
-  SKIP_INSTALL=1
-  SKIP_BUILD=1
-  SKIP_VERIFY=1
-  ALLOW_DIRTY=1
 USAGE
 }
 
@@ -56,18 +59,32 @@ require_env_key() {
   grep -Eq "^${key}=.+" "$file" || die "$file is missing required key: $key"
 }
 
-check_clean_worktree() {
-  if [[ "${ALLOW_DIRTY:-0}" == "1" ]]; then
-    log "ALLOW_DIRTY=1, skipping git worktree cleanliness check"
-    return
-  fi
+ensure_main_branch() {
+  local label="$1"
+  local current_branch
+  current_branch="$(git rev-parse --abbrev-ref HEAD)"
+  [[ "$current_branch" == "$BRANCH" ]] || die "$label must be on $BRANCH, current branch is $current_branch"
+}
 
+ensure_clean_worktree() {
+  local label="$1"
   local status
   status="$(git status --porcelain --untracked-files=normal)"
   if [[ -n "$status" ]]; then
     printf '%s\n' "$status" >&2
-    die "git worktree is not clean; commit or stash changes before deploying"
+    die "$label worktree is not clean; commit or stash changes before deploying"
   fi
+}
+
+ensure_local_head_pushed() {
+  local local_head
+  local remote_head
+
+  log "checking $REMOTE_NAME/$BRANCH"
+  git fetch "$REMOTE_NAME" "$BRANCH"
+  local_head="$(git rev-parse HEAD)"
+  remote_head="$(git rev-parse "$REMOTE_NAME/$BRANCH")"
+  [[ "$local_head" == "$remote_head" ]] || die "local HEAD is not pushed to $REMOTE_NAME/$BRANCH"
 }
 
 wait_for_http() {
@@ -102,29 +119,26 @@ wait_for_http() {
 build_remote_command() {
   local cmd
   cmd="cd $(quote "$APP_DIR")"
-
-  if [[ "$SKIP_PULL" != "1" ]]; then
-    cmd+=" && git fetch $(quote "$REMOTE_NAME")"
-    cmd+=" && git pull --ff-only $(quote "$REMOTE_NAME") $(quote "$BRANCH")"
-  fi
-
+  cmd+=" && current_branch=\$(git rev-parse --abbrev-ref HEAD)"
+  cmd+=" && if [ \"\$current_branch\" != $(quote "$BRANCH") ]; then printf '%s\n' 'ERROR: production checkout is not on required branch' >&2; exit 1; fi"
+  cmd+=" && if [ -n \"\$(git status --porcelain --untracked-files=normal)\" ]; then git status --short; printf '%s\n' 'ERROR: production worktree is not clean' >&2; exit 1; fi"
+  cmd+=" && git fetch $(quote "$REMOTE_NAME") $(quote "$BRANCH")"
+  cmd+=" && git pull --ff-only $(quote "$REMOTE_NAME") $(quote "$BRANCH")"
   cmd+=" && APP_DIR=$(quote "$APP_DIR")"
   cmd+=" BRANCH=$(quote "$BRANCH")"
   cmd+=" REMOTE_NAME=$(quote "$REMOTE_NAME")"
-  cmd+=" SKIP_INSTALL=$(quote "${SKIP_INSTALL:-0}")"
-  cmd+=" SKIP_BUILD=$(quote "${SKIP_BUILD:-0}")"
-  cmd+=" SKIP_VERIFY=$(quote "${SKIP_VERIFY:-0}")"
-  cmd+=" ALLOW_DIRTY=$(quote "${ALLOW_DIRTY:-0}")"
   cmd+=" DEPLOY_RUN_ON_SERVER=1"
-  cmd+=" bash ./deploy.sh --skip-pull"
+  cmd+=" DEPLOY_SKIP_PULL=1"
+  cmd+=" bash ./deploy.sh $(quote "$TARGET")"
 
   printf '%s' "$cmd"
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --skip-pull)
-      SKIP_PULL=1
+    relay|server)
+      [[ -z "$TARGET" ]] || die "deploy target was provided more than once"
+      TARGET="$1"
       ;;
     -h|--help)
       usage
@@ -138,13 +152,27 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+[[ -n "$TARGET" ]] || {
+  usage >&2
+  die "missing deploy target: relay or server"
+}
+
 SSH_KEY="${SSH_KEY/#\~/$HOME}"
 
 if [[ "${DEPLOY_RUN_ON_SERVER:-0}" != "1" ]]; then
+  SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+  cd "$SCRIPT_DIR"
+
+  require_command git
+  require_command ssh
+  ensure_main_branch "local checkout"
+  ensure_clean_worktree "local checkout"
+  ensure_local_head_pushed
+
   [[ -n "$SSH_KEY" ]] || die "SSH_KEY cannot be empty for remote deploy"
   [[ -f "$SSH_KEY" ]] || die "SSH key not found: $SSH_KEY"
 
-  log "deploying on $REMOTE_HOST:$APP_DIR"
+  log "deploying $TARGET on $REMOTE_HOST:$APP_DIR"
   ssh -i "$SSH_KEY" -o BatchMode=yes "$REMOTE_HOST" "$(build_remote_command)"
   exit
 fi
@@ -163,46 +191,60 @@ require_command pnpm
 require_command pm2
 require_command curl
 
-check_clean_worktree
+ensure_main_branch "production checkout"
+ensure_clean_worktree "production checkout"
 
-if [[ "$SKIP_PULL" != "1" ]]; then
+if [[ "${DEPLOY_SKIP_PULL:-0}" != "1" ]]; then
   log "pulling $REMOTE_NAME/$BRANCH"
-  git fetch "$REMOTE_NAME"
+  git fetch "$REMOTE_NAME" "$BRANCH"
   git pull --ff-only "$REMOTE_NAME" "$BRANCH"
 fi
 
-require_env_key ".env" "DATABASE_URL"
-require_env_key ".env" "ADMIN_UI_SESSION_SECRET"
-require_env_key ".env" "INTERNAL_TOKEN"
-require_env_key ".env" "RELAY_CONTROL_URL"
-require_env_key ".env" "BETTER_AUTH_DATABASE_URL"
-require_env_key ".env" "BETTER_AUTH_API_URL"
-require_env_key "web/.env.production" "VITE_API_BASE_URL"
+case "$TARGET" in
+  relay)
+    require_env_key ".env" "DATABASE_URL"
+    require_env_key ".env" "INTERNAL_TOKEN"
 
-if [[ "${SKIP_INSTALL:-0}" != "1" ]]; then
-  log "installing dependencies"
-  pnpm install --frozen-lockfile
-fi
+    log "installing dependencies"
+    pnpm install --frozen-lockfile
 
-if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
-  log "building relay, server, and admin web"
-  pnpm build
-fi
+    log "building relay"
+    pnpm run build:relay
 
-log "restarting PM2 processes"
-pm2 restart cor-relay --update-env
-pm2 restart cor-server --update-env
-pm2 save
+    log "restarting cor-relay"
+    pm2 restart cor-relay --update-env
+    pm2 save
 
-if [[ "${SKIP_VERIFY:-0}" != "1" ]]; then
-  log "verifying local services"
-  wait_for_http "local relay health" "http://127.0.0.1:3560/healthz"
-  wait_for_http "local server health" "http://127.0.0.1:3561/healthz"
+    log "verifying relay endpoints"
+    wait_for_http "local relay health" "http://127.0.0.1:3560/healthz"
+    wait_for_http "api.tokenqiao.com health" "https://api.tokenqiao.com/healthz"
+    wait_for_http "ccproxy.yohomobile.dev health" "https://ccproxy.yohomobile.dev/healthz"
+    wait_for_http "ccapi.yohomobile.dev health" "https://ccapi.yohomobile.dev/healthz"
+    ;;
+  server)
+    require_env_key ".env" "DATABASE_URL"
+    require_env_key ".env" "ADMIN_UI_SESSION_SECRET"
+    require_env_key ".env" "INTERNAL_TOKEN"
+    require_env_key ".env" "RELAY_CONTROL_URL"
+    require_env_key ".env" "BETTER_AUTH_DATABASE_URL"
+    require_env_key ".env" "BETTER_AUTH_API_URL"
+    require_env_key "web/.env.production" "VITE_API_BASE_URL"
 
-  log "verifying public endpoints"
-  wait_for_http "api.tokenqiao.com health" "https://api.tokenqiao.com/healthz"
-  wait_for_http "ccproxy.yohomobile.dev health" "https://ccproxy.yohomobile.dev/healthz"
-  wait_for_http "dash.tokenqiao.com login" "https://dash.tokenqiao.com/login"
-fi
+    log "installing dependencies"
+    pnpm install --frozen-lockfile
 
-log "deploy complete"
+    log "building server and admin web"
+    pnpm run build:server
+    pnpm run build:web
+
+    log "restarting cor-server"
+    pm2 restart cor-server --update-env
+    pm2 save
+
+    log "verifying server endpoints"
+    wait_for_http "local server health" "http://127.0.0.1:3561/healthz"
+    wait_for_http "dash.tokenqiao.com login" "https://dash.tokenqiao.com/login"
+    ;;
+esac
+
+log "$TARGET deploy complete"
