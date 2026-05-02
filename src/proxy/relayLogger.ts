@@ -17,6 +17,7 @@ export type RelayLogEvent = {
     | 'retry_attempt'
     | 'http_stream_error_appended'
     | 'long_term_block_detected'
+    | 'cli_validation_failed'
   requestId: string
   method: string
   target: string
@@ -61,6 +62,10 @@ export type RelayLogEvent = {
   sourceModel?: string | null
   targetModel?: string | null
   tierHit?: 'opus' | 'sonnet' | 'haiku' | null
+  validatorMode?: 'shadow' | 'enforce'
+  validationLayer?: 'L2' | 'L3' | 'L4'
+  validationField?: string
+  validationReason?: string
 }
 
 export type RelayBodyCapture = {

@@ -4,6 +4,7 @@ import {
   ForcedAccountUnavailableError,
   SchedulerCapacityError,
 } from '../scheduler/accountScheduler.js'
+import { CliValidationError } from './cliValidator.js'
 
 export class RoutingGroupAccessError extends Error {
   constructor(readonly routingGroupId: string) {
@@ -87,6 +88,14 @@ export function fallbackRelayErrorCode(statusCode: number): RelayErrorCode {
 }
 
 export function classifyClientFacingRelayError(error: unknown): ClientFacingRelayError | null {
+  if (error instanceof CliValidationError) {
+    return {
+      statusCode: 400,
+      message: 'Unsupported client.',
+      code: RELAY_ERROR_CODES.UNSUPPORTED_CLIENT,
+    }
+  }
+
   if (error instanceof SchedulerCapacityError) {
     return {
       statusCode: 529,

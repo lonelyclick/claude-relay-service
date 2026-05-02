@@ -1,4 +1,4 @@
-# claude-oauth-relay 部署
+# TokenQiao 部署
 
 本仓库生产部署只保留腾讯新加坡机器链路，不再恢复 ncu 旧部署。
 
@@ -8,10 +8,10 @@
 |---|---|
 | 生产主机 | 腾讯云新加坡 `43.160.224.233` |
 | SSH | `ssh -i ~/.ssh/id_ed25519_tencent_43_160_224_233 ubuntu@43.160.224.233` |
-| 生产目录 | `/home/ubuntu/projects/claude-oauth-relay` |
+| 生产目录 | `/home/ubuntu/projects/tokenqiao` |
 | 分支 | `main` |
 | 包管理 | `pnpm` |
-| PM2 进程 | `cor-relay`、`cor-server` |
+| PM2 进程 | `tokenqiao-relay`、`tokenqiao-server` |
 | relay 端口 | `3560` |
 | server/admin 端口 | `3561` |
 | 前端发布 | Cloudflare Pages project `ccdash` |
@@ -45,8 +45,8 @@
 部署脚本会执行：
 
 1. 在开发机检查 `main`、clean worktree、`HEAD == origin/main`。
-2. `relay` 目标 SSH 到腾讯，pull 最新代码，`pnpm run build:relay`，只重启 `cor-relay`。
-3. `server` 目标 SSH 到腾讯，pull 最新代码，`pnpm run build:server`，只重启 `cor-server`。
+2. `relay` 目标 SSH 到腾讯，pull 最新代码，`pnpm run build:relay`，只重启 `tokenqiao-relay`。
+3. `server` 目标 SSH 到腾讯，pull 最新代码，`pnpm run build:server`，只重启 `tokenqiao-server`。
 4. `frontend` 目标在开发机 build `web`，然后用 Wrangler 发布 `web/dist` 到 Cloudflare Pages project `ccdash`。
 5. 校验目标对应的本地或公网 HTTP 端点。
 
@@ -55,7 +55,7 @@
 ```bash
 REMOTE_HOST=ubuntu@43.160.224.233
 SSH_KEY=~/.ssh/id_ed25519_tencent_43_160_224_233
-APP_DIR=/home/ubuntu/projects/claude-oauth-relay
+APP_DIR=/home/ubuntu/projects/tokenqiao
 BRANCH=main
 REMOTE_NAME=origin
 ```
@@ -96,7 +96,7 @@ CLOUDFLARE_ACCOUNT_ID=...
 ## 手工验证
 
 ```bash
-pm2 list | grep -E 'cor-relay|cor-server'
+pm2 list | grep -E 'tokenqiao-relay|tokenqiao-server'
 curl -sS -o /dev/null -w "relay local HTTP %{http_code}\n" http://127.0.0.1:3560/healthz
 curl -sS -o /dev/null -w "server local HTTP %{http_code}\n" http://127.0.0.1:3561/healthz
 curl -sS -o /dev/null -w "api HTTP %{http_code}\n" https://api.tokenqiao.com/healthz
@@ -123,8 +123,8 @@ git revert <bad-commit-sha>
 ## 常见问题
 
 - `pnpm install --frozen-lockfile` 失败：在开发机执行 `pnpm install --lockfile-only`，提交 `pnpm-lock.yaml` 后再部署。
-- PM2 显示 online 但端口不通：先等几秒，再分别看 `pm2 logs cor-relay --lines 120 --nostream` 和 `pm2 logs cor-server --lines 120 --nostream`。
+- PM2 显示 online 但端口不通：先等几秒，再分别看 `pm2 logs tokenqiao-relay --lines 120 --nostream` 和 `pm2 logs tokenqiao-server --lines 120 --nostream`。
 - `dash.tokenqiao.com` 页面没有更新：确认执行的是 `./deploy.sh frontend`，并查看 Wrangler 输出的 Cloudflare Pages deployment id。
-- 管理台报 `RELAY_CONTROL_URL is not configured`：检查生产 `.env` 中 `RELAY_CONTROL_URL=http://127.0.0.1:3560` 是否存在，并 `pm2 restart cor-server --update-env`。
+- 管理台报 `RELAY_CONTROL_URL is not configured`：检查生产 `.env` 中 `RELAY_CONTROL_URL=http://127.0.0.1:3560` 是否存在，并 `pm2 restart tokenqiao-server --update-env`。
 - `BETTER_AUTH_DATABASE_URL is not configured`：检查生产 `.env` 中该 key 是否存在，值应指向 cc-webapp 使用的 Better Auth 数据库。
 - CORS 报“当前来源未被允许访问管理台”：确认 `dash.tokenqiao.com` 仍由 Nginx 指向 `127.0.0.1:3561`，且相关 allowed origins 没被改回旧域名。

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-APP_NAME="claude-oauth-relay"
-APP_DIR="${APP_DIR:-/home/ubuntu/projects/claude-oauth-relay}"
+APP_NAME="tokenqiao"
+APP_DIR="${APP_DIR:-/home/ubuntu/projects/tokenqiao}"
 REMOTE_HOST="${REMOTE_HOST:-ubuntu@43.160.224.233}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519_tencent_43_160_224_233}"
 REMOTE_NAME="${REMOTE_NAME:-origin}"
@@ -13,11 +13,11 @@ usage() {
   cat <<'USAGE'
 Usage: ./deploy.sh relay|server|frontend
 
-Deploys one claude-oauth-relay production target.
+Deploys one tokenqiao production target.
 
 Targets:
-  relay     Build and restart cor-relay only.
-  server    Build and restart cor-server only.
+  relay     Build and restart tokenqiao-relay only.
+  server    Build and restart tokenqiao-server only.
   frontend  Build the admin web and deploy Cloudflare Pages project ccdash.
 
 Hard requirements before deploy:
@@ -29,7 +29,7 @@ Hard requirements before deploy:
 Environment overrides:
   REMOTE_HOST=ubuntu@43.160.224.233
   SSH_KEY=~/.ssh/id_ed25519_tencent_43_160_224_233
-  APP_DIR=/home/ubuntu/projects/claude-oauth-relay
+  APP_DIR=/home/ubuntu/projects/tokenqiao
   BRANCH=main
   REMOTE_NAME=origin
   CLOUDFLARE_EMAIL=...
@@ -273,8 +273,8 @@ case "$TARGET" in
     log "building relay"
     pnpm run build:relay
 
-    log "restarting cor-relay"
-    pm2 restart cor-relay --update-env
+    log "restarting tokenqiao-relay"
+    pm2 restart tokenqiao-relay --update-env
     pm2 save
 
     log "verifying relay endpoints"
@@ -297,8 +297,8 @@ case "$TARGET" in
     log "building server"
     pnpm run build:server
 
-    log "restarting cor-server"
-    pm2 restart cor-server --update-env
+    log "restarting tokenqiao-server"
+    pm2 restart tokenqiao-server --update-env
     pm2 save
 
     log "verifying server endpoints"

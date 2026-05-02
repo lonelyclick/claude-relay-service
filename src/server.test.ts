@@ -478,3 +478,58 @@ test('better-auth users overview keeps serving data when relay backfill fails', 
     },
   )
 })
+
+test('better-auth users overview queries Better Auth user table schema', async () => {
+  await withMockCorPgPool(
+    {
+      query: async (sql) => {
+        if (sql.includes('FROM "user"') && sql.includes('ORDER BY "createdAt" DESC')) {
+          return {
+            rows: [{
+              id: 'better-user-1',
+              name: 'Alice',
+              email: 'alice@example.com',
+              emailVerified: false,
+              image: null,
+              role: 'user',
+              banned: false,
+              banReason: null,
+              banExpires: null,
+              createdAt: '2026-04-30T00:00:00.000Z',
+              updatedAt: '2026-04-30T00:00:00.000Z',
+            }],
+          }
+        }
+        if (sql === 'SELECT COUNT(*)::int AS total FROM "user"') {
+          return { rows: [{ total: 1 }] }
+        }
+        if (sql.includes('FROM organization ORDER BY "createdAt" DESC NULLS LAST')) {
+          return { rows: [] }
+        }
+        throw new Error(`unexpected SQL in query: ${sql}`)
+      },
+    },
+    async () => {
+      const server = await startServer({
+        userStore: {
+          listUsersWithUsage: async () => [],
+          findOrCreateByExternalId: async () => null,
+        },
+      })
+
+      try {
+        const response = await fetch(`${server.baseUrl}/admin/better-auth/users`, {
+          headers: adminHeaders,
+        })
+        const body = await response.json()
+
+        assert.equal(response.status, 200)
+        assert.equal(body.ok, true)
+        assert.equal(body.users.length, 1)
+        assert.equal(body.users[0].id, 'better-user-1')
+      } finally {
+        await server.close()
+      }
+    },
+  )
+})

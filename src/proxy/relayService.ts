@@ -22,6 +22,13 @@ import WebSocket, { WebSocketServer, type RawData } from 'ws'
 import { appConfig } from '../config.js'
 import type { BodyTemplate } from './bodyRewriter.js'
 import { rewriteMessageBody, rewriteEventLoggingBody } from './bodyRewriter.js'
+import {
+  CliValidationError,
+  tryParseMessageBody,
+  validateCliRequest,
+  type CliValidationFailure,
+  type ParsedMessageBody,
+} from './cliValidator.js'
 import type { VmFingerprintTemplateHeader } from './fingerprintTemplate.js'
 import {
   createUsageTransform,
@@ -1384,6 +1391,26 @@ export class RelayService {
           })
           return
         }
+
+        const validationFailure = this.runCliValidator({
+          trace,
+          headers: req.headers,
+          rawRequestBody,
+          method: req.method,
+          path: req.path,
+          parsedClientVersion: normalizedClientVersion,
+        })
+        if (validationFailure && appConfig.cliValidatorMode === 'enforce') {
+          res.status(400).json(anthropicErrorBody(400, 'Unsupported client.', RELAY_ERROR_CODES.UNSUPPORTED_CLIENT))
+          this.logHttpRejection(trace, {
+            error: `cli_validation_failed:${validationFailure.layer}:${validationFailure.field}`,
+            internalCode: RELAY_ERROR_CODES.UNSUPPORTED_CLIENT,
+            routeAuthStrategy: route.authStrategy,
+            statusCode: 400,
+            statusText: STATUS_CODES[400] ?? 'Bad Request',
+          })
+          return
+        }
       }
 
       const authMode = this.resolveUpstreamAuthMode(
@@ -2143,6 +2170,26 @@ export class RelayService {
         this.logWsRejected(trace, {
           error: `unsupported_client_version: ${versionStr}`,
           internalCode: RELAY_ERROR_CODES.UNSUPPORTED_CLIENT_VERSION,
+          routeAuthStrategy: route.authStrategy,
+          statusCode: 400,
+          statusText: STATUS_CODES[400] ?? 'Bad Request',
+        })
+        return
+      }
+
+      const wsValidationFailure = this.runCliValidator({
+        trace,
+        headers: req.headers,
+        rawRequestBody: undefined,
+        method: req.method ?? 'GET',
+        path: requestUrl.pathname,
+        parsedClientVersion: clientVersion,
+      })
+      if (wsValidationFailure && appConfig.cliValidatorMode === 'enforce') {
+        this.rejectUpgrade(socket, 400, anthropicErrorBody(400, 'Unsupported client.', RELAY_ERROR_CODES.UNSUPPORTED_CLIENT))
+        this.logWsRejected(trace, {
+          error: `cli_validation_failed:${wsValidationFailure.layer}:${wsValidationFailure.field}`,
+          internalCode: RELAY_ERROR_CODES.UNSUPPORTED_CLIENT,
           routeAuthStrategy: route.authStrategy,
           statusCode: 400,
           statusText: STATUS_CODES[400] ?? 'Bad Request',
@@ -6172,6 +6219,13 @@ export class RelayService {
         if (appConfig.bodyRewriteSkipLogEnabled) {
           console.warn('[body-rewrite] skipped: rewriteMessageBody returned null for %s', path)
         }
+        if (appConfig.cliValidatorMode === 'enforce') {
+          throw new CliValidationError({
+            layer: 'L3',
+            field: 'body_rewrite',
+            reason: 'rewriteMessageBody returned null',
+          })
+        }
         return body
       }
       return rewritten
@@ -6672,6 +6726,51 @@ export class RelayService {
       upstreamRequestId: this.extractUpstreamRequestId(input.upstreamHeaders),
       upstreamRay: this.normalizeHeaderValue(input.upstreamHeaders['cf-ray']),
     })
+  }
+
+  private logCliValidationFailure(
+    trace: HttpTraceContext,
+    failure: CliValidationFailure,
+    mode: 'shadow' | 'enforce',
+  ): void {
+    this.safeLog({
+      event: 'cli_validation_failed',
+      requestId: trace.requestId,
+      method: trace.method,
+      target: trace.target,
+      durationMs: Date.now() - trace.startedAt,
+      validatorMode: mode,
+      validationLayer: failure.layer,
+      validationField: failure.field,
+      validationReason: failure.reason,
+    })
+  }
+
+  private runCliValidator(args: {
+    trace: HttpTraceContext
+    headers: IncomingHttpHeaders
+    rawRequestBody: Buffer | undefined
+    method: string
+    path: string
+    parsedClientVersion: readonly [number, number, number]
+  }): CliValidationFailure | null {
+    if (appConfig.cliValidatorMode === 'disabled') return null
+
+    const isMessagesPost =
+      args.method.toUpperCase() === 'POST' &&
+      (args.path === '/v1/messages' || args.path === '/v1/messages/count_tokens')
+    const parsedBody: ParsedMessageBody | null =
+      isMessagesPost && args.rawRequestBody ? tryParseMessageBody(args.rawRequestBody) : null
+    const failure = validateCliRequest({
+      headers: args.headers,
+      parsedBody,
+      parsedClientVersion: args.parsedClientVersion,
+      checkBody: isMessagesPost && parsedBody !== null,
+    })
+    if (failure) {
+      this.logCliValidationFailure(args.trace, failure, appConfig.cliValidatorMode)
+    }
+    return failure
   }
 
   private logHttpRejection(

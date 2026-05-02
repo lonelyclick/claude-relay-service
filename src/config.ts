@@ -143,6 +143,9 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
+  CLI_VALIDATOR_MODE: z
+    .enum(['disabled', 'shadow', 'enforce'])
+    .default('disabled'),
   VM_FINGERPRINT_TEMPLATE_PATH: z.preprocess(
     emptyStringToUndefined,
     z
@@ -328,6 +331,7 @@ export const appConfig = {
   relayCaptureEnabled: env.RELAY_CAPTURE_ENABLED,
   relayCaptureBodyMaxBytes: env.RELAY_CAPTURE_BODY_MAX_BYTES,
   bodyRewriteSkipLogEnabled: env.BODY_REWRITE_SKIP_LOG_ENABLED,
+  cliValidatorMode: env.CLI_VALIDATOR_MODE,
   vmFingerprintTemplatePath,
   vmFingerprintTemplateHeaders,
   bodyTemplatePath,

@@ -1,10 +1,8 @@
 import { useAuth } from '~/auth/AuthProvider'
-import { useQueryClient } from '@tanstack/react-query'
-import { API_URL, BUILD_TIME, BUILD_VERSION } from '~/lib/constants'
+import { BUILD_TIME, BUILD_VERSION } from '~/lib/constants'
 
 export function Topbar() {
   const { user, isAuthenticated, logout } = useAuth()
-  const queryClient = useQueryClient()
 
   return (
     <header className="sticky top-0 z-40 h-11 border-b border-border-default bg-bg-primary/90 backdrop-blur-md shadow-xs">
@@ -29,14 +27,6 @@ export function Topbar() {
           >
             {BUILD_VERSION}
           </span>
-          <span className="text-[10px] text-slate-600 hidden sm:inline">{API_URL}</span>
-          <button
-            onClick={() => queryClient.invalidateQueries()}
-            className="btn btn-ghost btn-sm text-xs"
-            title="Refresh"
-          >
-            &#x21bb;
-          </button>
           <button
             onClick={logout}
             className="btn btn-sm text-xs text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-md"
