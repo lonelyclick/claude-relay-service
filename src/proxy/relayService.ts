@@ -6212,12 +6212,15 @@ export class RelayService {
       return body
     }
 
-    // /v1/messages and /v1/messages/count_tokens: full structured rewrite
+    // /v1/messages: full structured rewrite.
     if (path === '/v1/messages' || path === '/v1/messages/count_tokens') {
       const rewritten = rewriteMessageBody(body, template)
       if (!rewritten) {
         if (appConfig.bodyRewriteSkipLogEnabled) {
           console.warn('[body-rewrite] skipped: rewriteMessageBody returned null for %s', path)
+        }
+        if (path === '/v1/messages/count_tokens') {
+          return body
         }
         if (appConfig.cliValidatorMode === 'enforce') {
           throw new CliValidationError({
