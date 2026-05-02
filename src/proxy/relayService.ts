@@ -6756,16 +6756,17 @@ export class RelayService {
   }): CliValidationFailure | null {
     if (appConfig.cliValidatorMode === 'disabled') return null
 
-    const isMessagesPost =
-      args.method.toUpperCase() === 'POST' &&
-      (args.path === '/v1/messages' || args.path === '/v1/messages/count_tokens')
+    const shouldValidateMessageBody =
+      args.method.toUpperCase() === 'POST' && args.path === '/v1/messages'
     const parsedBody: ParsedMessageBody | null =
-      isMessagesPost && args.rawRequestBody ? tryParseMessageBody(args.rawRequestBody) : null
+      shouldValidateMessageBody && args.rawRequestBody
+        ? tryParseMessageBody(args.rawRequestBody)
+        : null
     const failure = validateCliRequest({
       headers: args.headers,
       parsedBody,
       parsedClientVersion: args.parsedClientVersion,
-      checkBody: isMessagesPost && parsedBody !== null,
+      checkBody: shouldValidateMessageBody && parsedBody !== null,
     })
     if (failure) {
       this.logCliValidationFailure(args.trace, failure, appConfig.cliValidatorMode)

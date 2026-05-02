@@ -15,8 +15,7 @@ const X_STAINLESS_OS_ALLOWED = new Set(['Linux', 'Darwin', 'Windows'])
 const X_STAINLESS_ARCH_ALLOWED = new Set(['x64', 'arm64'])
 const RUNTIME_VERSION_REGEX = /^v\d+\.\d+\.\d+/
 const HEX_64_REGEX = /^[0-9a-f]{64}$/i
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const EMAIL_PREFIX_REGEX = /^email:.+@.+\..+$/i
+const ACCOUNT_ID_MAX_LENGTH = 256
 const NUMERIC_REGEX = /^\d+$/
 const CC_VERSION_BODY_REGEX = /cc_version=(\d+)\.(\d+)\.(\d+)\.\w+/
 const CC_ENTRYPOINT_BODY_REGEX = /cc_entrypoint=\S+/
@@ -207,9 +206,10 @@ export function validateCliRequestBody(
   const accountUuid = userId.account_uuid
   if (
     typeof accountUuid !== 'string' ||
-    (!UUID_REGEX.test(accountUuid) && !EMAIL_PREFIX_REGEX.test(accountUuid))
+    accountUuid.trim().length < 1 ||
+    accountUuid.length > ACCOUNT_ID_MAX_LENGTH
   ) {
-    return failL3('metadata.user_id.account_uuid', 'not UUID or email-prefixed')
+    return failL3('metadata.user_id.account_uuid', 'missing or invalid')
   }
 
   return null

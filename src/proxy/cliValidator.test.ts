@@ -254,6 +254,20 @@ test('cliValidator', async (t) => {
     assert.equal(failure, null)
   })
 
+  await t.test('L3: accepts opaque account_uuid from real clients', () => {
+    const failure = validateCliRequestBody(
+      makeBody({
+        metadata: {
+          user_id: JSON.stringify({
+            device_id: VALID_DEVICE_ID,
+            account_uuid: 'user_01HXREALCLIENTOPAQUEID',
+          }),
+        },
+      }),
+    )
+    assert.equal(failure, null)
+  })
+
   await t.test('L4: passes when UA version matches body cc_version', () => {
     assert.equal(
       validateCliRequestConsistency(makeHeaders(), makeBody(), [2, 1, 112]),
@@ -324,6 +338,18 @@ test('cliValidator', async (t) => {
       validateCliRequest({
         headers: makeHeaders(),
         parsedBody: null,
+        parsedClientVersion: [2, 1, 112],
+        checkBody: false,
+      }),
+      null,
+    )
+  })
+
+  await t.test('combined: skips count_tokens-style body when checkBody=false', () => {
+    assert.equal(
+      validateCliRequest({
+        headers: makeHeaders(),
+        parsedBody: makeBody({ system: undefined }),
         parsedClientVersion: [2, 1, 112],
         checkBody: false,
       }),
