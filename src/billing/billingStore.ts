@@ -29,6 +29,7 @@ import {
   isBillableUsageTarget,
   resolveBillingLineItem,
 } from "./engine.js";
+import { openAIOfficialSkuInputs } from "./openaiOfficialSkus.js";
 
 const DEFAULT_BILLING_CURRENCY = normalizeBillingCurrency(
   appConfig.billingCurrency,
@@ -1051,8 +1052,15 @@ export class BillingStore {
          VALUES ('last_usage_record_id', '0')
          ON CONFLICT (key) DO NOTHING`,
       );
+      await this.seedOpenAIOfficialSkus(client);
     } finally {
       client.release();
+    }
+  }
+
+  private async seedOpenAIOfficialSkus(client: pg.PoolClient): Promise<void> {
+    for (const sku of openAIOfficialSkuInputs()) {
+      await this.upsertBaseSkuWithClient(client, sku);
     }
   }
 
