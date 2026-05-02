@@ -265,13 +265,27 @@ test('cliValidator', async (t) => {
     assert.equal(failure, null)
   })
 
-  await t.test('L3: accepts opaque account_uuid from real clients', () => {
+  await t.test('L3: ignores opaque account_uuid from real clients', () => {
     const failure = validateCliRequestBody(
       makeBody({
         metadata: {
           user_id: JSON.stringify({
             device_id: VALID_DEVICE_ID,
             account_uuid: 'user_01HXREALCLIENTOPAQUEID',
+          }),
+        },
+      }),
+    )
+    assert.equal(failure, null)
+  })
+
+  await t.test('L3: ignores non-string account_uuid from real clients', () => {
+    const failure = validateCliRequestBody(
+      makeBody({
+        metadata: {
+          user_id: JSON.stringify({
+            device_id: VALID_DEVICE_ID,
+            account_uuid: null,
           }),
         },
       }),
