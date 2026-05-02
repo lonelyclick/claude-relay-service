@@ -226,6 +226,17 @@ test('cliValidator', async (t) => {
     assert.equal(failure?.field, 'metadata.user_id.device_id')
   })
 
+  await t.test('L3: accepts missing optional account_uuid', () => {
+    const failure = validateCliRequestBody(
+      makeBody({
+        metadata: {
+          user_id: JSON.stringify({ device_id: VALID_DEVICE_ID }),
+        },
+      }),
+    )
+    assert.equal(failure, null)
+  })
+
   await t.test('L3: rejects metadata.user_id with short device_id', () => {
     const failure = validateCliRequestBody(
       makeBody({

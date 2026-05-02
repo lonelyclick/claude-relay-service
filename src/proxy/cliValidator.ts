@@ -204,12 +204,14 @@ export function validateCliRequestBody(
   }
 
   const accountUuid = userId.account_uuid
-  if (
-    typeof accountUuid !== 'string' ||
-    accountUuid.trim().length < 1 ||
-    accountUuid.length > ACCOUNT_ID_MAX_LENGTH
-  ) {
-    return failL3('metadata.user_id.account_uuid', 'missing or invalid')
+  if (accountUuid !== undefined) {
+    if (
+      typeof accountUuid !== 'string' ||
+      accountUuid.trim().length < 1 ||
+      accountUuid.length > ACCOUNT_ID_MAX_LENGTH
+    ) {
+      return failL3('metadata.user_id.account_uuid', 'invalid')
+    }
   }
 
   return null
