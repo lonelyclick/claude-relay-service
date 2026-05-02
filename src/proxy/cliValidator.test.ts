@@ -109,6 +109,19 @@ test('cliValidator', async (t) => {
     assert.equal(failure?.field, 'sec-fetch-mode')
   })
 
+  await t.test('L2: tolerates missing browser/proxy-dependent headers', () => {
+    assert.equal(
+      validateCliRequestHeaders(
+        makeHeaders({
+          'accept-encoding': undefined,
+          'accept-language': undefined,
+          'sec-fetch-mode': undefined,
+        }),
+      ),
+      null,
+    )
+  })
+
   await t.test('L2: rejects bad runtime-version format', () => {
     const failure = validateCliRequestHeaders(
       makeHeaders({ 'x-stainless-runtime-version': '24.12.0' }),

@@ -105,8 +105,8 @@ export function validateCliRequestHeaders(
   }
 
   const fetchMode = getHeaderValue(headers, 'sec-fetch-mode')
-  if (fetchMode !== 'cors') {
-    return failL2('sec-fetch-mode', `expected 'cors' got ${fetchMode ?? '(missing)'}`)
+  if (fetchMode !== null && fetchMode !== 'cors') {
+    return failL2('sec-fetch-mode', `expected 'cors' got ${fetchMode}`)
   }
 
   const packageVersion = getHeaderValue(headers, 'x-stainless-package-version')
@@ -123,15 +123,15 @@ export function validateCliRequestHeaders(
   }
 
   const acceptLanguage = getHeaderValue(headers, 'accept-language')
-  if (!acceptLanguage) {
-    return failL2('accept-language', 'missing')
+  if (acceptLanguage !== null && acceptLanguage.length < 1) {
+    return failL2('accept-language', 'empty')
   }
 
   const acceptEncoding = getHeaderValue(headers, 'accept-encoding')
-  if (!acceptEncoding || !/gzip/i.test(acceptEncoding)) {
+  if (acceptEncoding !== null && !/gzip/i.test(acceptEncoding)) {
     return failL2(
       'accept-encoding',
-      `expected to include gzip got ${acceptEncoding ?? '(missing)'}`,
+      `expected to include gzip got ${acceptEncoding}`,
     )
   }
 
