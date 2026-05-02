@@ -1053,6 +1053,7 @@ export class BillingStore {
          ON CONFLICT (key) DO NOTHING`,
       );
       await this.seedOpenAIOfficialSkus(client);
+      await this.seedOpenAIOfficialChannelMultipliers(client);
     } finally {
       client.release();
     }
@@ -1062,6 +1063,36 @@ export class BillingStore {
     for (const sku of openAIOfficialSkuInputs()) {
       await this.upsertBaseSkuWithClient(client, sku);
     }
+  }
+
+  private async seedOpenAIOfficialChannelMultipliers(
+    client: pg.PoolClient,
+  ): Promise<void> {
+    await client.query(
+      `WITH openai_groups AS (
+         SELECT DISTINCT routing_group_id, provider, model_vendor, protocol
+         FROM billing_channel_multipliers
+         WHERE provider = $2
+           AND model_vendor = $3
+       )
+       INSERT INTO billing_channel_multipliers (
+         id, routing_group_id, provider, model_vendor, protocol, model,
+         multiplier_micros, is_active, show_in_frontend, allow_calls
+       )
+       SELECT
+         concat_ws($4, g.routing_group_id, g.protocol, b.model_vendor, b.model),
+         g.routing_group_id, g.provider, g.model_vendor, g.protocol, b.model,
+         $1, true, true, true
+       FROM openai_groups g
+       JOIN billing_base_skus b
+         ON b.provider = g.provider
+        AND b.model_vendor = g.model_vendor
+        AND b.protocol = g.protocol
+        AND b.currency = $5
+        AND b.is_active = true
+       ON CONFLICT (routing_group_id, protocol, model_vendor, model) DO NOTHING`,
+      [ONE_MILLION_MICROS, "openai", "openai", ":", "USD"],
+    );
   }
 
   private normalizeBaseSkuInput(
@@ -1140,12 +1171,8 @@ export class BillingStore {
          cache_creation_price_micros_per_million, cache_read_price_micros_per_million,
          topup_currency, topup_amount_micros, credit_amount_micros
        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-       ON CONFLICT (id) DO UPDATE SET
+       ON CONFLICT (protocol, model_vendor, model, currency) DO UPDATE SET
          provider = EXCLUDED.provider,
-         model_vendor = EXCLUDED.model_vendor,
-         protocol = EXCLUDED.protocol,
-         model = EXCLUDED.model,
-         currency = EXCLUDED.currency,
          display_name = EXCLUDED.display_name,
          is_active = EXCLUDED.is_active,
          supports_prompt_caching = EXCLUDED.supports_prompt_caching,
