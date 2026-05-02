@@ -1,4 +1,5 @@
 import type { BillingBaseSkuInput } from './billingStore.js'
+import type { BillingCurrency } from '../types.js'
 
 type OfficialOpenAISku = {
   model: string
@@ -127,24 +128,28 @@ function dollarsPerMillionToMicros(value: string): string {
   return micros.toString()
 }
 
+const OFFICIAL_OPENAI_SKU_CURRENCIES: BillingCurrency[] = ['USD', 'CNY']
+
 export function openAIOfficialSkuInputs(): BillingBaseSkuInput[] {
   const inputs: BillingBaseSkuInput[] = []
   for (const sku of OPENAI_OFFICIAL_TEXT_TOKEN_SKUS) {
     for (const protocol of ['openai_chat', 'openai_responses'] as const) {
-      inputs.push({
-        provider: 'openai',
-        modelVendor: 'openai',
-        protocol,
-        model: sku.model,
-        currency: 'USD',
-        displayName: sku.model,
-        isActive: true,
-        supportsPromptCaching: sku.cachedInput !== '0',
-        inputPriceMicrosPerMillion: dollarsPerMillionToMicros(sku.input),
-        outputPriceMicrosPerMillion: dollarsPerMillionToMicros(sku.output),
-        cacheReadPriceMicrosPerMillion: dollarsPerMillionToMicros(sku.cachedInput),
-        cacheCreationPriceMicrosPerMillion: '0',
-      })
+      for (const currency of OFFICIAL_OPENAI_SKU_CURRENCIES) {
+        inputs.push({
+          provider: 'openai',
+          modelVendor: 'openai',
+          protocol,
+          model: sku.model,
+          currency,
+          displayName: sku.model,
+          isActive: true,
+          supportsPromptCaching: sku.cachedInput !== '0',
+          inputPriceMicrosPerMillion: dollarsPerMillionToMicros(sku.input),
+          outputPriceMicrosPerMillion: dollarsPerMillionToMicros(sku.output),
+          cacheReadPriceMicrosPerMillion: dollarsPerMillionToMicros(sku.cachedInput),
+          cacheCreationPriceMicrosPerMillion: '0',
+        })
+      }
     }
   }
   return inputs

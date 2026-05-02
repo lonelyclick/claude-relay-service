@@ -6,15 +6,20 @@ import { openAIOfficialSkuInputs } from './openaiOfficialSkus.js'
 test('OpenAI official SKU seed includes gpt-5.4-mini for chat and responses', () => {
   const skus = openAIOfficialSkuInputs().filter((sku) => sku.model === 'gpt-5.4-mini')
 
-  assert.equal(skus.length, 2)
+  assert.equal(skus.length, 4)
   assert.deepEqual(
-    skus.map((sku) => sku.protocol).sort(),
-    ['openai_chat', 'openai_responses'],
+    skus.map((sku) => `${sku.currency}:${sku.protocol}`).sort(),
+    [
+      'CNY:openai_chat',
+      'CNY:openai_responses',
+      'USD:openai_chat',
+      'USD:openai_responses',
+    ],
   )
   for (const sku of skus) {
     assert.equal(sku.provider, 'openai')
     assert.equal(sku.modelVendor, 'openai')
-    assert.equal(sku.currency, 'USD')
+    assert.match(sku.currency, /^(USD|CNY)$/)
     assert.equal(sku.inputPriceMicrosPerMillion, '750000')
     assert.equal(sku.cacheReadPriceMicrosPerMillion, '75000')
     assert.equal(sku.outputPriceMicrosPerMillion, '4500000')
@@ -24,7 +29,7 @@ test('OpenAI official SKU seed includes gpt-5.4-mini for chat and responses', ()
 
 test('OpenAI official SKU seed includes codex and latest GPT families', () => {
   const keyed = new Set(
-    openAIOfficialSkuInputs().map((sku) => `${sku.protocol}:${sku.model}`),
+    openAIOfficialSkuInputs().map((sku) => `${sku.currency}:${sku.protocol}:${sku.model}`),
   )
 
   for (const model of [
@@ -35,7 +40,21 @@ test('OpenAI official SKU seed includes codex and latest GPT families', () => {
     'gpt-5-codex',
     'gpt-5.1-codex-mini',
   ]) {
-    assert.equal(keyed.has(`openai_chat:${model}`), true)
-    assert.equal(keyed.has(`openai_responses:${model}`), true)
+    assert.equal(keyed.has(`USD:openai_chat:${model}`), true)
+    assert.equal(keyed.has(`USD:openai_responses:${model}`), true)
+    assert.equal(keyed.has(`CNY:openai_chat:${model}`), true)
+    assert.equal(keyed.has(`CNY:openai_responses:${model}`), true)
+  }
+})
+
+test('OpenAI official SKU seed keeps CNY prices 1:1 with USD', () => {
+  const byKey = new Map(openAIOfficialSkuInputs().map((sku) => [`${sku.model}:${sku.protocol}:${sku.currency}`, sku]))
+
+  for (const usd of openAIOfficialSkuInputs().filter((sku) => sku.currency === 'USD')) {
+    const cny = byKey.get(`${usd.model}:${usd.protocol}:CNY`)
+    assert.ok(cny, `missing CNY SKU for ${usd.protocol}:${usd.model}`)
+    assert.equal(cny.inputPriceMicrosPerMillion, usd.inputPriceMicrosPerMillion)
+    assert.equal(cny.cacheReadPriceMicrosPerMillion, usd.cacheReadPriceMicrosPerMillion)
+    assert.equal(cny.outputPriceMicrosPerMillion, usd.outputPriceMicrosPerMillion)
   }
 })
