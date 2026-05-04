@@ -40,7 +40,13 @@ import {
   createRelayControlClient,
   RelayControlConfigError,
 } from "./control/relayControlClient.js";
-const PROXY_CONNECTIVITY_CHECK_URL = "https://cp.cloudflare.com/generate_204";
+// Probe 用多个 captive-portal 端点做 fallback：任一通过即视为链路通。
+// 单一端点（如 cp.cloudflare.com）会被某些出口 ISP/路由器拦截，导致节点能正常上网却被误判 unhealthy。
+const PROXY_CONNECTIVITY_CHECK_URLS = [
+  "https://www.gstatic.com/generate_204",
+  "https://cp.cloudflare.com/generate_204",
+  "https://captive.apple.com/hotspot-detect.html",
+];
 const PROXY_EGRESS_IP_URL = "http://api64.ipify.org?format=json";
 const PROXY_PROBE_TIMEOUT_MS = 12_000;
 const XRAY_MANAGED_CONFIG_PATH = process.env.COR_XRAY_CONFIG_PATH || "/etc/xray/cor-managed.json";
@@ -2821,21 +2827,37 @@ async function probeProxyExitOnce(proxy) {
     };
   }
   const dispatcher = new ProxyAgent(target.proxyUrl);
-  const startedAt = Date.now();
   try {
-    const connectivity = await request(PROXY_CONNECTIVITY_CHECK_URL, {
-      method: "GET",
-      headers: buildProxyProbeHeaders(),
-      dispatcher,
-      signal: AbortSignal.timeout(PROXY_PROBE_TIMEOUT_MS),
-    });
-    const latencyMs = Date.now() - startedAt;
-    await connectivity.body.text().catch(() => "");
+    let connectivity = null;
+    let connectivityUrl = null;
+    let latencyMs = null;
+    const failures = [];
+    for (const url of PROXY_CONNECTIVITY_CHECK_URLS) {
+      const attemptStart = Date.now();
+      try {
+        const resp = await request(url, {
+          method: "GET",
+          headers: buildProxyProbeHeaders(),
+          dispatcher,
+          signal: AbortSignal.timeout(PROXY_PROBE_TIMEOUT_MS),
+        });
+        latencyMs = Date.now() - attemptStart;
+        await resp.body.text().catch(() => "");
+        connectivity = resp;
+        connectivityUrl = url;
+        break;
+      } catch (error) {
+        failures.push(`${url}: ${sanitizeErrorMessage(error)}`);
+      }
+    }
+    if (!connectivity) {
+      throw new Error(`所有连通性端点均失败 — ${failures.join("; ")}`);
+    }
     // 收到任何 HTTP 响应（含 4xx/5xx）都说明 DNS→TCP→TLS→HTTP 全链路通；
     // 仅目标端点的业务层响应，不作为代理健康度判据。
     const connectivityNotice =
       connectivity.statusCode >= 400
-        ? `连通性端点返回 HTTP ${connectivity.statusCode}（链路可达，目标端点拒绝或无响应体）`
+        ? `连通性端点 ${connectivityUrl} 返回 HTTP ${connectivity.statusCode}（链路可达，目标端点拒绝或无响应体）`
         : null;
     let ipLookupStatus = null;
     let egressIp = null;
