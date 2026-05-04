@@ -12,7 +12,7 @@ export function getKeepAliveRefreshReason(
   now: number,
   policy: KeepAlivePolicy,
 ): KeepAliveRefreshReason | null {
-  if (!account.isActive || account.status === 'revoked' || !account.refreshToken) {
+  if (!account.isActive || account.status === 'revoked' || account.status === 'banned' || !account.refreshToken) {
     return null
   }
   if (account.cooldownUntil !== null && account.cooldownUntil > now) {

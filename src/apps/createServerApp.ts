@@ -12,8 +12,13 @@ export function createServerApp(runtime: ServerRuntime) {
     billingStore: runtime.billingStore,
     apiKeyStore: runtime.apiKeyStore,
     supportStore: runtime.supportStore,
+    accountLifecycleStore: runtime.accountLifecycleStore,
+    accountRiskStore: runtime.accountRiskStore,
+    accountRiskService: runtime.accountRiskService,
     geminiLoopback: null,
     runtimeState: runtime.runtimeState,
     connectionTracker: runtime.connectionTracker,
+    mailerService: runtime.mailerService,
+    balanceAlertScheduler: runtime.balanceAlertScheduler,
   })
 }

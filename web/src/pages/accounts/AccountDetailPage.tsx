@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getAccount, deleteAccount, refreshAccount, updateAccountSettings, probeRateLimit, generateAuthUrl, exchangeCode } from '~/api/accounts'
+import { getLifecycleEvents } from '~/api/risk'
 import { listRoutingGroups } from '~/api/routing'
 import { listProxies } from '~/api/proxies'
 import { ProxySelect } from './OnboardPage'
@@ -9,8 +10,9 @@ import { Badge, type BadgeTone } from '~/components/Badge'
 import { PageSkeleton } from '~/components/LoadingSkeleton'
 import { useToast } from '~/components/Toast'
 import { accountPlanLabel, isClaudeProvider, needsProxyWarning } from '~/lib/account'
+import { cn } from '~/lib/cn'
 import { fmtShanghaiDateTime, timeAgo } from '~/lib/format'
-import type { Account, RateLimitProbe, RoutingGroup } from '~/api/types'
+import type { Account, AccountLifecycleEvent, ClaudeWarmupPolicyId, RateLimitProbe, RoutingGroup } from '~/api/types'
 
 export function AccountDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -35,7 +37,10 @@ export function AccountDetailPage() {
       <HeaderSection account={a} />
       <AccountLabelSection account={a} toast={toast} qc={qc} />
       <SchedulerSection account={a} toast={toast} qc={qc} />
-      <NetworkSection account={a} proxies={proxies.data?.proxies ?? []} />
+      {a.provider === 'claude-official' && (
+        <WarmupSection account={a} toast={toast} qc={qc} />
+      )}
+      <NetworkSection account={a} proxies={proxies.data?.proxies ?? []} toast={toast} qc={qc} />
       <RoutingGroupSection account={a} groups={groups.data?.routingGroups ?? []} toast={toast} qc={qc} />
       {a.provider === 'claude-compatible' && (
         <ClaudeCompatibleModelSection account={a} toast={toast} qc={qc} />
@@ -44,6 +49,7 @@ export function AccountDetailPage() {
         <OpenAICompatibleModelSection account={a} toast={toast} qc={qc} />
       )}
       <RateLimitSection accountId={a.id} protocol={a.protocol} />
+      {a.provider === 'claude-official' && <WarmupHistorySection accountId={a.id} />}
       <OAuthLoginSection account={a} toast={toast} qc={qc} />
       <ActionsSection account={a} toast={toast} qc={qc} navigate={navigate} />
       <AdvancedSection account={a} />
@@ -51,16 +57,63 @@ export function AccountDetailPage() {
   )
 }
 
-function NetworkSection({ account: a, proxies }: { account: Account; proxies: import('~/api/types').Proxy[] }) {
+function NetworkSection({ account: a, proxies, toast, qc }: {
+  account: Account
+  proxies: import('~/api/types').Proxy[]
+  toast: ReturnType<typeof useToast>
+  qc: ReturnType<typeof useQueryClient>
+}) {
   const network = proxies.find((proxy) => a.proxyUrl && (proxy.localUrl === a.proxyUrl || proxy.url === a.proxyUrl))
+  const directEnabled = a.directEgressEnabled === true
+  const canDirect = a.provider === 'claude-official'
+  const effectiveEgress = a.proxyUrl
+    ? `Proxy · ${network?.label ?? 'Unknown network'}`
+    : directEnabled
+      ? 'Direct server egress'
+      : 'None'
+
+  const mut = useMutation({
+    mutationFn: () => updateAccountSettings(a.id, { directEgressEnabled: !directEnabled }),
+    onSuccess: () => {
+      toast.success(!directEnabled ? 'Direct egress enabled' : 'Direct egress disabled')
+      qc.invalidateQueries({ queryKey: ['account', a.id] })
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+    },
+    onError: (e) => toast.error(e.message),
+  })
 
   return (
-    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
-      <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Network</div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-400 max-md:grid-cols-1">
-        <div>Bound Network: <span className="text-slate-200">{network?.label ?? (a.proxyUrl ? 'Unknown network' : 'None')}</span></div>
-        <div>Proxy URL: <span className="text-slate-200 font-mono break-all">{a.proxyUrl ?? '—'}</span></div>
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs space-y-4">
+      <div className="flex items-start justify-between gap-3 max-md:flex-col">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300 mb-3">Network</div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-400 max-md:grid-cols-1">
+            <div>Effective Egress: <span className="text-slate-200">{effectiveEgress}</span></div>
+            <div>Bound Network: <span className="text-slate-200">{network?.label ?? (a.proxyUrl ? 'Unknown network' : 'None')}</span></div>
+            <div>Proxy URL: <span className="text-slate-200 font-mono break-all">{a.proxyUrl ?? '—'}</span></div>
+            <div>Direct Whitelist: <span className={directEnabled ? 'text-amber-300' : 'text-slate-300'}>{directEnabled ? 'Enabled' : 'Disabled'}</span></div>
+          </div>
+        </div>
+        {canDirect && (
+          <button
+            onClick={() => mut.mutate()}
+            disabled={mut.isPending}
+            className={cn(
+              'px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors disabled:opacity-50 shrink-0',
+              directEnabled
+                ? 'bg-amber-500/15 text-amber-100 border-amber-500/30 hover:bg-amber-500/25'
+                : 'bg-bg-card-raised border-border-default text-slate-200 hover:text-white',
+            )}
+          >
+            {mut.isPending ? 'Saving…' : directEnabled ? '关闭直连白名单' : '允许无代理直连'}
+          </button>
+        )}
       </div>
+      {canDirect && (
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-100/80">
+          开启后，该 Claude Official 账号在未绑定 proxy 时可从服务器出口直连；如绑定了 proxy，仍优先使用 proxy。
+        </div>
+      )}
     </section>
   )
 }
@@ -108,15 +161,41 @@ function AccountLabelSection({ account: a, toast, qc }: { account: Account; toas
   )
 }
 
+
+function formatAutoBlockedReason(reason?: string | null): string {
+  if (!reason) return 'unknown'
+  const normalized = reason.startsWith('risk_guardrail:') ? reason.slice('risk_guardrail:'.length) : reason
+  if (!normalized.startsWith('warmup_auto_block|')) return reason
+  const fields = new Map<string, string>()
+  for (const part of normalized.split('|').slice(1)) {
+    const idx = part.indexOf('=')
+    if (idx > 0) fields.set(part.slice(0, idx), part.slice(idx + 1))
+  }
+  const triggered = fields.get('triggered')
+    ?.split(';')
+    .filter(Boolean)
+    .map((item) => {
+      const [code, value] = item.split('=')
+      return value ? `${code} ${value}` : item
+    })
+    .join(', ')
+  const stage = fields.get('stage') ?? 'unknown_stage'
+  const stageLabel = fields.get('stageLabel')
+  const cooldownMs = Number(fields.get('cooldownMs'))
+  const cooldownText = Number.isFinite(cooldownMs) && cooldownMs > 0 ? `, cooldown ${Math.round(cooldownMs / 60000)}m` : ''
+  return `Warmup auto-block: ${stageLabel ? `${stageLabel} (${stage})` : stage}; triggered ${triggered ?? 'unknown'}${cooldownText}`
+}
+
 function HeaderSection({ account: a }: { account: Account }) {
   const signals: { label: string; tone: BadgeTone }[] = []
   const autoBlockedUntil =
     a.schedulerState === 'auto_blocked' && a.autoBlockedUntil != null
       ? fmtShanghaiDateTime(a.autoBlockedUntil)
       : null
+  if (a.status === 'banned') signals.push({ label: '被封禁 / Banned', tone: 'red' })
   if (a.schedulerState === 'auto_blocked') {
     const unblockText = autoBlockedUntil ? ` - 解封时间 ${autoBlockedUntil}` : ''
-    signals.push({ label: `Auto-blocked: ${a.autoBlockedReason ?? 'unknown'}${unblockText}`, tone: 'red' })
+    signals.push({ label: `Auto-blocked: ${formatAutoBlockedReason(a.autoBlockedReason)}${unblockText}`, tone: 'red' })
   }
   if (!a.isActive) signals.push({ label: 'Inactive', tone: 'red' })
   if (needsProxyWarning(a)) signals.push({ label: 'No proxy', tone: 'yellow' })
@@ -140,11 +219,13 @@ function HeaderSection({ account: a }: { account: Account }) {
         <Badge tone={isClaudeProvider(a.provider) ? 'orange' : 'green'}>{a.provider}</Badge>
         <Badge tone="blue">{a.protocol}</Badge>
         <Badge tone="gray">{a.authMode}</Badge>
+        {a.status === 'banned' && <Badge tone="red">banned</Badge>}
       </div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-400 mb-3 max-md:grid-cols-1">
         <div>Plan: <span className="text-slate-200">{plan ?? '—'}</span></div>
         <div>Workspace: <span className="text-slate-200">{a.organizationUuid ?? '—'}</span></div>
         <div>Model: <span className="text-slate-200">{a.modelName ?? '—'}</span></div>
+        <div>Status: <span className={a.status === 'banned' ? 'text-red-300' : 'text-slate-200'}>{a.status ?? '—'}</span></div>
         <div>Rate Limit: <span className="text-slate-200">{a.lastRateLimitStatus ?? '—'}</span></div>
         <div>5h Seen: <span className="text-slate-200">{a.lastRateLimit5hUtilization != null ? `${Math.round(a.lastRateLimit5hUtilization * 100)}%` : '—'}</span></div>
         <div>7d Seen: <span className="text-slate-200">{a.lastRateLimit7dUtilization != null ? `${Math.round(a.lastRateLimit7dUtilization * 100)}%` : '—'}</span></div>
@@ -163,6 +244,164 @@ function HeaderSection({ account: a }: { account: Account }) {
       )}
     </section>
   )
+}
+
+
+function WarmupSection({ account: a, toast, qc }: { account: Account; toast: ReturnType<typeof useToast>; qc: ReturnType<typeof useQueryClient> }) {
+  const enabled = a.warmupEnabled !== false
+  const policyId = a.warmupPolicyId ?? 'a'
+  const saveMut = useMutation({
+    mutationFn: async (settings: { warmupEnabled?: boolean; warmupPolicyId?: ClaudeWarmupPolicyId }) => (await updateAccountSettings(a.id, settings)) as Account,
+    onSuccess: (updated: Account) => {
+      toast.success(updated.warmupEnabled === false ? 'Warmup disabled' : `Warmup ${updated.warmupPolicyId ?? 'a'} saved`)
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      qc.invalidateQueries({ queryKey: ['account', a.id] })
+      qc.invalidateQueries({ queryKey: ['risk-lifecycle-summary'] })
+    },
+    onError: (e) => toast.error(e.message),
+  })
+
+  return (
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
+      <div className="flex items-start justify-between gap-4 max-lg:flex-col">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold uppercase tracking-wider text-amber-300 mb-2">Warmup 防风控</div>
+          <div className="text-sm text-slate-200">{enabled ? `已启用策略 ${policyId.toUpperCase()}` : '已关闭新号 warmup 限速'}</div>
+          <div className="mt-1 text-xs leading-5 text-slate-500">
+            A 是默认均衡；B 更宽松；C 最宽松。关闭后不执行新号阶段 RPM / tokens / cacheRead 限速，但生命周期和全局风控日志仍会记录。
+          </div>
+        </div>
+        <div className="flex items-center gap-2 max-sm:w-full max-sm:flex-col">
+          <select
+            value={policyId}
+            onChange={(event) => saveMut.mutate({ warmupEnabled: true, warmupPolicyId: event.target.value as ClaudeWarmupPolicyId })}
+            disabled={!enabled || saveMut.isPending}
+            className="bg-bg-input border border-border-default rounded-lg px-3 py-2 text-sm text-slate-200 disabled:opacity-50 max-sm:w-full"
+          >
+            <option value="a">A 默认均衡</option>
+            <option value="b">B 宽松</option>
+            <option value="c">C 最宽松</option>
+            <option value="d">D 超宽松</option>
+            <option value="e">E 灾难保护</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => saveMut.mutate({ warmupEnabled: !enabled, warmupPolicyId: policyId })}
+            disabled={saveMut.isPending}
+            className={cn(
+              'px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 shrink-0 max-sm:w-full',
+              enabled
+                ? 'bg-amber-500/15 text-amber-100 border border-amber-500/30 hover:bg-amber-500/25'
+                : 'bg-indigo-600 text-white hover:bg-indigo-500',
+            )}
+          >
+            {saveMut.isPending ? 'Saving...' : enabled ? '关闭 warmup' : '重新启用 warmup'}
+          </button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+
+function WarmupHistorySection({ accountId }: { accountId: string }) {
+  const warmupEvents = useQuery({
+    queryKey: ['account-warmup-history', accountId],
+    queryFn: () => getLifecycleEvents({ accountId, eventTypes: ['warmup_task'], limit: 20 }),
+    refetchInterval: 60_000,
+  })
+  const rows = warmupEvents.data?.events ?? []
+  const lastOk = rows.find((event) => event.outcome === 'ok') ?? null
+
+  return (
+    <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs space-y-4">
+      <div className="flex items-start justify-between gap-3 max-md:flex-col">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-emerald-300 mb-2">Warmup History</div>
+          <div className="text-sm text-slate-200">
+            {lastOk ? `最近成功：${fmtShanghaiDateTime(lastOk.occurredAt)}` : '还没有成功 warmup 记录'}
+          </div>
+          <div className="mt-1 text-xs text-slate-500">自动低频 /v1/messages 健康 warmup，展示最近 20 条生命周期事件。</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => warmupEvents.refetch()}
+          disabled={warmupEvents.isFetching}
+          className="px-3 py-1.5 rounded-lg text-sm bg-bg-card-raised border border-border-default text-slate-200 hover:text-white disabled:opacity-50"
+        >
+          {warmupEvents.isFetching ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+
+      {warmupEvents.error && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          加载 warmup 历史失败：{(warmupEvents.error as Error).message}
+        </div>
+      )}
+
+      {rows.length === 0 && !warmupEvents.isLoading ? (
+        <div className="rounded-lg border border-border-default bg-bg-input px-3 py-4 text-sm text-slate-500">
+          暂无 warmup_task 记录。若刚开启，最多等待一个调度周期后刷新。
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-border-default">
+          <table className="min-w-full text-left text-xs">
+            <thead className="bg-bg-input text-slate-500">
+              <tr>
+                <th className="px-3 py-2 font-medium">时间</th>
+                <th className="px-3 py-2 font-medium">结果</th>
+                <th className="px-3 py-2 font-medium">HTTP</th>
+                <th className="px-3 py-2 font-medium">Unified</th>
+                <th className="px-3 py-2 font-medium">Overage</th>
+                <th className="px-3 py-2 font-medium">耗时</th>
+                <th className="px-3 py-2 font-medium">Request</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border-default">
+              {rows.map((event) => (
+                <WarmupHistoryRow key={event.id} event={event} />
+              ))}
+              {warmupEvents.isLoading && (
+                <tr>
+                  <td colSpan={7} className="px-3 py-4 text-center text-slate-500">Loading…</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function WarmupHistoryRow({ event }: { event: AccountLifecycleEvent }) {
+  const notes = event.notes ?? {}
+  const unifiedStatus = stringNote(notes, 'unifiedStatus') ?? '—'
+  const overageStatus = stringNote(notes, 'overageStatus') ?? '—'
+  const overageReason = stringNote(notes, 'overageDisabledReason')
+  const tone: BadgeTone = event.outcome === 'ok' ? 'green' : event.outcome === 'failure' ? 'red' : 'gray'
+  return (
+    <tr className="hover:bg-bg-input/50 align-top">
+      <td className="px-3 py-2 whitespace-nowrap">
+        <div className="text-slate-200">{fmtShanghaiDateTime(event.occurredAt)}</div>
+        <div className="text-[10px] text-slate-500">{timeAgo(event.occurredAt)}</div>
+      </td>
+      <td className="px-3 py-2"><Badge tone={tone}>{event.outcome ?? 'info'}</Badge></td>
+      <td className="px-3 py-2 text-slate-300">{event.upstreamStatus ?? '—'}</td>
+      <td className="px-3 py-2 text-slate-300">{unifiedStatus}</td>
+      <td className="px-3 py-2 text-slate-300">
+        <div>{overageStatus}</div>
+        {overageReason && <div className="text-[10px] text-amber-300">{overageReason}</div>}
+      </td>
+      <td className="px-3 py-2 text-slate-400">{event.durationMs != null ? `${event.durationMs}ms` : '—'}</td>
+      <td className="px-3 py-2 font-mono text-[11px] text-slate-500 break-all">{event.upstreamRequestId ?? '—'}</td>
+    </tr>
+  )
+}
+
+function stringNote(notes: Record<string, unknown>, key: string): string | null {
+  const value = notes[key]
+  return typeof value === 'string' && value.trim() ? value : null
 }
 
 function SchedulerSection({ account: a, toast, qc }: { account: Account; toast: ReturnType<typeof useToast>; qc: ReturnType<typeof useQueryClient> }) {
@@ -280,7 +519,7 @@ function SchedulerSection({ account: a, toast, qc }: { account: Account; toast: 
           </button>
         ))}
         {a.schedulerState === 'auto_blocked' && (
-          <Badge tone="red">Auto-blocked: {a.autoBlockedReason ?? 'unknown'}</Badge>
+          <Badge tone="red">Auto-blocked: {formatAutoBlockedReason(a.autoBlockedReason)}</Badge>
         )}
       </div>
       {autoBlockedUntil && (
@@ -1010,6 +1249,7 @@ function AdvancedSection({ account: a }: { account: Account }) {
     ['Auth Mode', a.authMode],
     ['Status', a.status ?? '—'],
     ['Proxy URL', a.proxyUrl ?? '—'],
+    ['Direct Egress', a.directEgressEnabled ? 'Enabled' : 'Disabled'],
     ['Model', a.modelName ?? '—'],
     ['Opus → ', a.modelTierMap?.opus ?? '—'],
     ['Sonnet → ', a.modelTierMap?.sonnet ?? '—'],

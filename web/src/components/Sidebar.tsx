@@ -13,6 +13,7 @@ const sections = [
       { to: '/accounts', label: 'Accounts' },
       { to: '/routing', label: 'Routing' },
       { to: '/usage', label: 'Usage' },
+      { to: '/risk', label: 'Risk Lab' },
     ],
   },
   {

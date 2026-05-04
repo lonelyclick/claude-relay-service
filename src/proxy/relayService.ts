@@ -37,8 +37,11 @@ import {
   extractUsageFromJsonBody,
   type ExtractedUsage,
 } from '../usage/usageExtractor.js'
+import type { AccountLifecycleStore } from '../usage/accountLifecycleStore.js'
 import type { ApiKeyStore, RelayApiKeyGroupAssignments } from '../usage/apiKeyStore.js'
 import type { UsageRecord, UsageStore } from '../usage/usageStore.js'
+import { RiskAlertService } from '../usage/riskAlertService.js'
+import { resolveClaudeWarmupAccountSwitchLimit, resolveClaudeWarmupStatus } from '../usage/claudeWarmupPolicy.js'
 import type { OrganizationStore, RelayOrganization } from '../usage/organizationStore.js'
 import type { UserStore } from '../usage/userStore.js'
 import {
@@ -117,6 +120,87 @@ import {
 } from './headerPolicy.js'
 import type { ConnectionTracker } from '../runtime/connectionTracker.js'
 
+type AnthropicOverageDisabledAction = {
+  reason: string
+  overageStatus: string | null
+  unifiedStatus: string | null
+  cooldownMs: number | null
+  severity: 'observe' | 'warn' | 'block'
+  notes: string[]
+}
+
+const POLICY_DISABLED_FAMILY = /(^|_)(policy|account_level|enterprise|seat|tier|trust)(_|$)/
+const RED_REASONS = new Set(['policy_disabled'])
+const ORG_LEVEL_REASONS = new Set(['org_level_disabled'])
+const COOLDOWN_HARD_CAP_MS = 24 * 60 * 60 * 1000
+const COOLDOWN_HARD_FLOOR_MS = 5 * 60 * 1000
+
+export function resolveAnthropicOverageDisabledAction(input: {
+  reasonRaw: string | null | undefined
+  overageStatus: string | null | undefined
+  unifiedStatus: string | null | undefined
+  statusCode: number
+  allowedWarningCooldownMs: number
+  rejectedCooldownMs: number
+  policyDisabledCooldownMs: number
+  representativeClaim?: string | null
+  fallbackPercentage?: number | null
+}): AnthropicOverageDisabledAction | null {
+  const reason = (input.reasonRaw ?? '').trim().toLowerCase()
+  if (!reason || reason === 'no_overage_purchased') return null
+
+  const overageStatus = (input.overageStatus ?? '').trim().toLowerCase() || null
+  const unifiedStatus = (input.unifiedStatus ?? '').trim().toLowerCase() || null
+  const representativeClaim = (input.representativeClaim ?? '').trim().toLowerCase()
+  const fallbackPercentage = input.fallbackPercentage ?? null
+  const isRejected = input.statusCode === 429 || unifiedStatus === 'rejected'
+  const notes: string[] = []
+
+  let severity: 'observe' | 'warn' | 'block'
+  let cooldownMs: number | null
+
+  if (RED_REASONS.has(reason) || POLICY_DISABLED_FAMILY.test(reason)) {
+    severity = 'block'
+    cooldownMs = input.policyDisabledCooldownMs
+    notes.push('policy_family_red')
+  } else if (isRejected) {
+    severity = 'block'
+    cooldownMs = input.rejectedCooldownMs
+    notes.push('rejected_or_429')
+  } else if (unifiedStatus === 'allowed_warning' || overageStatus === 'allowed_warning') {
+    severity = 'warn'
+    cooldownMs = input.allowedWarningCooldownMs
+    notes.push('allowed_warning')
+  } else if (ORG_LEVEL_REASONS.has(reason) || reason.includes('org_level')) {
+    severity = 'observe'
+    cooldownMs = null
+    notes.push('org_level_allowed_observe')
+  } else {
+    severity = 'warn'
+    cooldownMs = input.allowedWarningCooldownMs
+    notes.push(`unknown_reason:${reason}`)
+  }
+
+  if (representativeClaim === 'seven_day' && cooldownMs != null) {
+    cooldownMs = Math.min(cooldownMs * 2, COOLDOWN_HARD_CAP_MS)
+    notes.push('seven_day_amplified')
+  }
+  if (
+    fallbackPercentage != null &&
+    Number.isFinite(fallbackPercentage) &&
+    fallbackPercentage < 1 &&
+    cooldownMs != null
+  ) {
+    cooldownMs = Math.min(Math.round(cooldownMs * 1.5), COOLDOWN_HARD_CAP_MS)
+    notes.push(`fallback_${fallbackPercentage}_amplified`)
+  }
+  if (cooldownMs != null && cooldownMs > 0 && cooldownMs < COOLDOWN_HARD_FLOOR_MS) {
+    cooldownMs = COOLDOWN_HARD_FLOOR_MS
+  }
+
+  return { reason, overageStatus, unifiedStatus, cooldownMs, severity, notes }
+}
+
 type RouteAuthStrategy =
   | 'prefer_incoming_auth'
   | 'preserve_incoming_auth'
@@ -125,6 +209,7 @@ type RouteAuthStrategy =
 type HttpMethod = 'DELETE' | 'GET' | 'PATCH' | 'POST' | 'PUT'
 
 type HttpTraceContext = {
+  headers: IncomingHttpHeaders
   method: string
   requestId: string
   startedAt: number
@@ -147,6 +232,34 @@ type RelayRequestBody = Buffer | Readable | undefined
 type PreparedRequestBody = {
   body: RelayRequestBody
   bufferedBody: Buffer | undefined
+}
+
+/**
+ * Default lower bound for output token estimation in billing preflight.
+ * Picked to cover the cost of a small but non-empty completion. Higher than
+ * this bumps "barely-funded" users into rejection; lower lets near-empty
+ * accounts through and end up with a debit they can't cover.
+ */
+const PREFLIGHT_DEFAULT_OUTPUT_TOKEN_FLOOR = 256
+
+/** Approximate bytes per BPE token. Used as a coarse input-token floor. */
+const PREFLIGHT_BYTES_PER_INPUT_TOKEN = 4
+
+function formatBillingMicrosForDisplay(
+  micros: bigint | string,
+  currency: BillingCurrency,
+): string {
+  const value = typeof micros === 'bigint' ? micros : BigInt(micros)
+  const negative = value < 0n
+  const abs = negative ? -value : value
+  const major = abs / 1_000_000n
+  const minorRaw = (abs % 1_000_000n).toString().padStart(6, '0')
+  const trimmed = minorRaw.replace(/0+$/, '')
+  const minor = trimmed.length < 2 ? minorRaw.slice(0, 2) : trimmed
+  const sign = negative ? '-' : ''
+  const symbol =
+    currency === 'USD' ? '$' : currency === 'CNY' ? '¥' : `${currency} `
+  return `${sign}${symbol}${major}.${minor}`
 }
 
 type ResolvedRelayUserContext = {
@@ -658,9 +771,88 @@ class UpstreamWebSocketError extends Error {
   }
 }
 
+export function classifyTerminalAccountFailureReason(
+  statusCode: number,
+  responseText: string,
+): string | null {
+  if (statusCode !== 400 && statusCode !== 401 && statusCode !== 403) {
+    return null
+  }
+
+  const normalized = responseText.toLowerCase()
+  if (
+    normalized.includes('disabled organization') ||
+    normalized.includes('organization is disabled') ||
+    normalized.includes('organization has been disabled') ||
+    normalized.includes('belongs to a disabled organization') ||
+    normalized.includes('your organization does not have access to claude') ||
+    normalized.includes('oauth authentication is currently not allowed for this organization')
+  ) {
+    return 'account_disabled_organization'
+  }
+  if (
+    normalized.includes('anthropic_api_key') &&
+    normalized.includes('update or unset') &&
+    normalized.includes('environment variable')
+  ) {
+    return 'account_disabled_organization'
+  }
+  return null
+}
+
+const ANTHROPIC_FORENSIC_HEADER_KEYS = [
+  'anthropic-organization-id',
+  'anthropic-account-id',
+  'anthropic-ratelimit-tier',
+  'anthropic-ratelimit-organization-id',
+  'anthropic-ratelimit-requests-limit',
+  'anthropic-ratelimit-requests-remaining',
+  'anthropic-ratelimit-tokens-limit',
+  'anthropic-ratelimit-tokens-remaining',
+  'anthropic-ratelimit-input-tokens-limit',
+  'anthropic-ratelimit-input-tokens-remaining',
+  'anthropic-ratelimit-output-tokens-limit',
+  'anthropic-ratelimit-output-tokens-remaining',
+  'anthropic-version',
+  'request-id',
+  'x-request-id',
+  'x-served-by',
+  'cf-ray',
+  'cf-cache-status',
+  'server',
+  'x-anthropic-organization-uuid',
+]
+
+function pickHeaderValue(
+  headers: Record<string, string | string[] | undefined> | null,
+  name: string,
+): string | null {
+  if (!headers) return null
+  const lower = name.toLowerCase()
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== lower) continue
+    if (Array.isArray(value)) return value[0] ?? null
+    if (typeof value === 'string') return value
+  }
+  return null
+}
+
+function filterAnthropicForensicHeaders(
+  headers: Record<string, string | string[] | undefined> | null,
+): Record<string, string> | null {
+  if (!headers) return null
+  const out: Record<string, string> = {}
+  for (const target of ANTHROPIC_FORENSIC_HEADER_KEYS) {
+    const value = pickHeaderValue(headers, target)
+    if (value) out[target] = value.slice(0, 256)
+  }
+  return Object.keys(out).length > 0 ? out : null
+}
+
 export class RelayService {
   private readonly recentServerFailures: UpstreamFailureRecord[] = []
   private upstreamIncidentActiveUntil = 0
+  private readonly riskAlertService: RiskAlertService
 
   constructor(
     private readonly oauthService: OAuthService,
@@ -673,7 +865,10 @@ export class RelayService {
     private readonly billingStore: BillingStore | null = null,
     private readonly apiKeyStore: ApiKeyStore | null = null,
     private readonly connectionTracker: ConnectionTracker | null = null,
-  ) {}
+    private readonly accountLifecycleStore: AccountLifecycleStore | null = null,
+  ) {
+    this.riskAlertService = new RiskAlertService(userStore)
+  }
 
   private async lookupRelayUserByToken(token: string): Promise<ResolvedRelayUserLookup> {
     if (!this.apiKeyStore) {
@@ -839,29 +1034,6 @@ export class RelayService {
     )
   }
 
-  private async assertRelayUserCanConsume(input: {
-    userId: string | null
-    organizationId: string | null
-    billingMode: 'postpaid' | 'prepaid'
-    method: string
-    path: string
-  }): Promise<void> {
-    if (!this.billingStore) {
-      return
-    }
-    if (!this.isBillableUsageRequest(input.method, input.path)) {
-      return
-    }
-    if (input.organizationId) {
-      await this.billingStore.assertOrganizationCanConsume(input.organizationId)
-      return
-    }
-    if (!input.userId) {
-      return
-    }
-    await this.billingStore.assertUserCanConsume(input.userId)
-  }
-
   private extractRequestedModel(body: RelayRequestBody): string | null {
     if (!Buffer.isBuffer(body)) {
       return null
@@ -929,7 +1101,8 @@ export class RelayService {
     if (!this.billingStore || (!input.relayUser.userId && !input.relayUser.organizationId) || !this.isBillableUsageRequest(input.method, input.path)) {
       return false
     }
-    const model = input.effectiveModelOverride ?? this.extractRequestedModel(input.body)
+    const inspected = this.inspectRequestBodyForBilling(input.body)
+    const model = input.effectiveModelOverride ?? inspected.model
     const intendedRoutingGroupId = input.routingGroupId
     const result = await this.billingStore.preflightBillableRequest({
       userId: input.relayUser.userId,
@@ -941,23 +1114,98 @@ export class RelayService {
       routingGroupId: intendedRoutingGroupId,
       target: input.target,
       protocolOverride: input.effectiveProtocolOverride ?? null,
+      estimatedInputTokens: inspected.estimatedInputTokens,
+      estimatedOutputTokens: inspected.estimatedOutputTokens,
     })
     if (result.ok) {
       return false
     }
-    const message = `Billing SKU missing or zero-priced for model ${model ?? '(unknown)'}. Request blocked before upstream forwarding.`
-    input.res.status(402).json(
-      localHttpErrorBody(input.path, 402, message, RELAY_ERROR_CODES.BILLING_RULE_MISSING),
+    const insufficientBalance = result.status === 'insufficient_balance'
+    const displayCurrency = result.currency ?? input.relayUser.billingCurrency
+    const estimatedDisplay = result.estimatedAmountMicros
+      ? formatBillingMicrosForDisplay(result.estimatedAmountMicros, displayCurrency)
+      : '(unknown)'
+    const availableDisplay = formatBillingMicrosForDisplay(
+      result.availableMicros ?? '0',
+      displayCurrency,
     )
+    const message = insufficientBalance
+      ? `Insufficient balance for model ${model ?? '(unknown)'}. Estimated minimum charge ${estimatedDisplay}, available balance ${availableDisplay}. Please top up and retry.`
+      : `Billing SKU missing or zero-priced for model ${model ?? '(unknown)'}. Request blocked before upstream forwarding.`
+    input.res.status(402).json(
+      localHttpErrorBody(
+        input.path,
+        402,
+        message,
+        insufficientBalance
+          ? RELAY_ERROR_CODES.BILLING_INSUFFICIENT_BALANCE
+          : RELAY_ERROR_CODES.BILLING_RULE_MISSING,
+      ),
+    )
+    const logSuffix = insufficientBalance
+      ? ` estimatedMicros=${result.estimatedAmountMicros ?? 'unknown'} availableMicros=${result.availableMicros ?? '0'}`
+      : ''
     this.logHttpRejection(input.trace, {
-      error: `billing_sku_preflight_failed:${result.status}: model=${model ?? '(unknown)'} provider=${input.provider ?? '(none)'} group=${intendedRoutingGroupId ?? '(none)'} currency=${input.relayUser.billingCurrency}`,
+      error: `billing_sku_preflight_failed:${result.status}: model=${model ?? '(unknown)'} provider=${input.provider ?? '(none)'} group=${intendedRoutingGroupId ?? '(none)'} currency=${displayCurrency}${logSuffix}`,
       forceAccountId: input.forceAccountId,
-      internalCode: RELAY_ERROR_CODES.BILLING_RULE_MISSING,
+      internalCode: insufficientBalance
+        ? RELAY_ERROR_CODES.BILLING_INSUFFICIENT_BALANCE
+        : RELAY_ERROR_CODES.BILLING_RULE_MISSING,
       routeAuthStrategy: input.routeAuthStrategy,
       statusCode: 402,
       statusText: STATUS_CODES[402] ?? 'Payment Required',
     })
     return true
+  }
+
+  /**
+   * Best-effort inspection of a buffered request body to derive the model name
+   * and rough token-count floors used by `preflightBillableRequest`. Returns
+   * conservative defaults (1 input token, `PREFLIGHT_DEFAULT_OUTPUT_TOKEN_FLOOR`
+   * output tokens) when the body is streamed or unparseable.
+   */
+  private inspectRequestBodyForBilling(body: RelayRequestBody): {
+    model: string | null
+    estimatedInputTokens: number
+    estimatedOutputTokens: number
+  } {
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      return {
+        model: null,
+        estimatedInputTokens: 1,
+        estimatedOutputTokens: PREFLIGHT_DEFAULT_OUTPUT_TOKEN_FLOOR,
+      }
+    }
+    const estimatedInputTokens = Math.max(
+      1,
+      Math.ceil(body.length / PREFLIGHT_BYTES_PER_INPUT_TOKEN),
+    )
+    let model: string | null = null
+    let estimatedOutputTokens = PREFLIGHT_DEFAULT_OUTPUT_TOKEN_FLOOR
+    try {
+      const parsed = JSON.parse(body.toString('utf8')) as Record<string, unknown>
+      const rawModel = parsed.model
+      if (typeof rawModel === 'string' && rawModel.trim()) {
+        model = rawModel.trim()
+      }
+      // Anthropic Messages → max_tokens (required); OpenAI Chat → max_tokens (optional);
+      // OpenAI Responses → max_output_tokens (optional).
+      const candidate =
+        typeof parsed.max_tokens === 'number'
+          ? parsed.max_tokens
+          : typeof parsed.max_output_tokens === 'number'
+            ? parsed.max_output_tokens
+            : null
+      if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0) {
+        estimatedOutputTokens = Math.min(
+          Math.floor(candidate),
+          PREFLIGHT_DEFAULT_OUTPUT_TOKEN_FLOOR,
+        )
+      }
+    } catch {
+      // unparseable body — fall back to defaults
+    }
+    return { model, estimatedInputTokens, estimatedOutputTokens }
   }
 
   private async serveModelsCatalog(input: {
@@ -1157,34 +1405,9 @@ export class RelayService {
       if (relayUser.routingMode === 'pinned_account' && relayUser.userAccountId && !forceAccountId) {
         forceAccountId = relayUser.userAccountId
       }
-      try {
-        await this.assertRelayUserCanConsume({
-          userId: relayUser.userId,
-          organizationId: relayUser.organizationId,
-          billingMode: relayUser.billingMode,
-          method: req.method,
-          path: req.path,
-        })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        res.status(402).json(
-          localHttpErrorBody(
-            req.path,
-            402,
-            message,
-            RELAY_ERROR_CODES.BILLING_INSUFFICIENT_BALANCE,
-          ),
-        )
-        this.logHttpRejection(trace, {
-          error: `insufficient_balance: ${message}`,
-          forceAccountId,
-          internalCode: RELAY_ERROR_CODES.BILLING_INSUFFICIENT_BALANCE,
-          routeAuthStrategy: route.authStrategy,
-          statusCode: 402,
-          statusText: STATUS_CODES[402] ?? 'Payment Required',
-        })
-        return
-      }
+      // Balance + SKU preflight is performed by `rejectIfMissingBillingRule`
+      // at each forwarding site, after the upstream account/route is known.
+      // This single chokepoint avoids drift between two parallel checks.
 
       if (req.method === 'GET' && req.path === '/v1/models') {
         await this.serveModelsCatalog({
@@ -1475,10 +1698,7 @@ export class RelayService {
           }
           throw error
         }
-        const accountProxyUrl = this.requireProxyUrl(
-          resolvedForProxy.proxyUrl,
-          `Account ${resolvedForProxy.account.id} has no proxy configured`,
-        )
+        const accountProxyUrl = this.resolveAccountProxyUrl(resolvedForProxy.account, resolvedForProxy.proxyUrl)
         const effectiveTemplate = this.applyAccountOverrides(
           this.selectBodyTemplate(normalizedClientVersion, resolvedForProxy.bodyTemplate),
           resolvedForProxy.account,
@@ -1518,7 +1738,7 @@ export class RelayService {
         const upstream = await this.forward(req, null, forwardedBody, authMode, {
           routeAuthStrategy: route.authStrategy,
           trace,
-          dispatcher: this.proxyPool.getHttpDispatcher(accountProxyUrl),
+          dispatcher: this.getOptionalHttpDispatcher(accountProxyUrl),
           vmFingerprintHeaders: resolvedForProxy.vmFingerprintHeaders,
           anthropicBeta: effectiveTemplate?.anthropicBeta,
           allowClientBetaPassthrough: canPassthroughClientBetas(
@@ -1665,10 +1885,7 @@ export class RelayService {
       })
       const canReplayRequestBody = this.canReplayRequestBody(baseRequestBody)
 
-      let accountProxyUrl = this.requireProxyUrl(
-        resolved.proxyUrl,
-        `Account ${resolved.account.id} has no proxy configured`,
-      )
+      let accountProxyUrl = this.resolveAccountProxyUrl(resolved.account, resolved.proxyUrl)
 
       while (true) {
         let requestBody = baseRequestBody
@@ -1705,7 +1922,7 @@ export class RelayService {
           upstream = await this.forward(req, resolved.account.accessToken, requestBody, 'oauth', {
             routeAuthStrategy: route.authStrategy,
             trace,
-            dispatcher: this.proxyPool.getHttpDispatcher(accountProxyUrl),
+            dispatcher: this.getOptionalHttpDispatcher(accountProxyUrl),
             vmFingerprintHeaders: resolved.vmFingerprintHeaders,
             anthropicBeta: effectiveTemplate?.anthropicBeta,
             headerOverrides: routedRequest.headerOverrides,
@@ -1741,7 +1958,13 @@ export class RelayService {
           bufferedFailureBody = Buffer.from(
             await upstream.body.arrayBuffer().catch(() => new ArrayBuffer(0)),
           )
-          bufferedFailureText = bufferedFailureBody.toString('utf8')
+          bufferedFailureText = RelayService.decodeResponseBodyPreview(
+            bufferedFailureBody,
+            typeof upstream.headers['content-encoding'] === 'string'
+              ? upstream.headers['content-encoding'].trim().toLowerCase()
+              : null,
+            Number.MAX_SAFE_INTEGER,
+          ) ?? bufferedFailureBody.toString('utf8')
         }
 
         const rl = bufferedFailureBody
@@ -1881,27 +2104,27 @@ export class RelayService {
               handoffReason: sameRequestMigrationReason,
               currentRequestBodyPreview: RelayService.truncateBody(rawRequestBody),
             })
-            accountProxyUrl = this.requireProxyUrl(
-              resolved.proxyUrl,
-              `Account ${resolved.account.id} has no proxy configured`,
-            )
+            accountProxyUrl = this.resolveAccountProxyUrl(resolved.account, resolved.proxyUrl)
             retryCount += 1
             continue
           } catch (error) {
             const clientError = terminalAccountFailureReason
               ? classifyClientFacingRelayError(error)
               : null
-            if (clientError) {
-              res.status(clientError.statusCode).json(
-                anthropicErrorBody(clientError.statusCode, clientError.message, clientError.code),
+            if (terminalAccountFailureReason) {
+              const statusCode = clientError?.statusCode ?? 503
+              const message = clientError?.message ?? 'Service is temporarily unavailable. Please try again later.'
+              const code = clientError?.code ?? RELAY_ERROR_CODES.ACCOUNT_POOL_UNAVAILABLE
+              res.status(statusCode).json(
+                anthropicErrorBody(statusCode, message, code),
               )
               this.logHttpRejection(trace, {
                 error: error instanceof Error ? error.message : String(error),
                 forceAccountId,
-                internalCode: clientError.code,
+                internalCode: code,
                 routeAuthStrategy: route.authStrategy,
-                statusCode: clientError.statusCode,
-                statusText: STATUS_CODES[clientError.statusCode] ?? 'Error',
+                statusCode,
+                statusText: STATUS_CODES[statusCode] ?? 'Error',
               })
               return
             }
@@ -1929,6 +2152,26 @@ export class RelayService {
                 ? upstream.headers['content-encoding'].trim().toLowerCase()
                 : null,
             )
+            this.recordBufferedUpstreamFailureUsage({
+              trace,
+              accountId: resolved.account.id,
+              userId: relayUser.userId,
+              organizationId: relayUser.organizationId,
+              relayKeySource: relayUser.relayKeySource,
+              sessionKey,
+              clientDeviceId,
+              target: trace.target,
+              statusCode: upstream.statusCode,
+              rateLimitStatus: rl.status,
+              rateLimit5hUtilization: rl.fiveHourUtilization,
+              rateLimit7dUtilization: rl.sevenDayUtilization,
+              rateLimitReset: rl.resetTimestamp,
+              requestHeaders: RelayService.sanitizeHeaders(req.headers),
+              requestBodyPreview: RelayService.truncateBody(rawRequestBody),
+              responseHeaders: RelayService.sanitizeHeaders(upstream.headers),
+              responseBodyPreview: errorPreview,
+              upstreamRequestHeaders: upstream.upstreamRequestHeaders ? RelayService.rawHeadersToObject(upstream.upstreamRequestHeaders) : null,
+            })
             this.logHttpCompleted(trace, {
               accountId: resolved.account.id,
               authMode: 'oauth',
@@ -2037,6 +2280,26 @@ export class RelayService {
               ? upstream.headers['content-encoding'].trim().toLowerCase()
               : null,
           )
+          this.recordBufferedUpstreamFailureUsage({
+            trace,
+            accountId: resolved.account.id,
+            userId: relayUser.userId,
+            organizationId: relayUser.organizationId,
+            relayKeySource: relayUser.relayKeySource,
+            sessionKey,
+            clientDeviceId,
+            target: trace.target,
+            statusCode: upstream.statusCode,
+            rateLimitStatus: rl.status,
+            rateLimit5hUtilization: rl.fiveHourUtilization,
+            rateLimit7dUtilization: rl.sevenDayUtilization,
+            rateLimitReset: rl.resetTimestamp,
+            requestHeaders: RelayService.sanitizeHeaders(req.headers),
+            requestBodyPreview: RelayService.truncateBody(rawRequestBody),
+            responseHeaders: RelayService.sanitizeHeaders(upstream.headers),
+            responseBodyPreview: errorPreview,
+            upstreamRequestHeaders: upstream.upstreamRequestHeaders ? RelayService.rawHeadersToObject(upstream.upstreamRequestHeaders) : null,
+          })
           this.logHttpCompleted(trace, {
             accountId: resolved.account.id,
             authMode: 'oauth',
@@ -2070,10 +2333,7 @@ export class RelayService {
 
           retryCount += 1
           resolved = recovery.resolved
-          accountProxyUrl = this.requireProxyUrl(
-            resolved.proxyUrl,
-            `Account ${resolved.account.id} has no proxy configured`,
-          )
+          accountProxyUrl = this.resolveAccountProxyUrl(resolved.account, resolved.proxyUrl)
         } catch {
           this.writeResponseHead(
             res,
@@ -2089,6 +2349,26 @@ export class RelayService {
               ? upstream.headers['content-encoding'].trim().toLowerCase()
               : null,
           )
+          this.recordBufferedUpstreamFailureUsage({
+            trace,
+            accountId: resolved.account.id,
+            userId: relayUser.userId,
+            organizationId: relayUser.organizationId,
+            relayKeySource: relayUser.relayKeySource,
+            sessionKey,
+            clientDeviceId,
+            target: trace.target,
+            statusCode: upstream.statusCode,
+            rateLimitStatus: rl.status,
+            rateLimit5hUtilization: rl.fiveHourUtilization,
+            rateLimit7dUtilization: rl.sevenDayUtilization,
+            rateLimitReset: rl.resetTimestamp,
+            requestHeaders: RelayService.sanitizeHeaders(req.headers),
+            requestBodyPreview: RelayService.truncateBody(rawRequestBody),
+            responseHeaders: RelayService.sanitizeHeaders(upstream.headers),
+            responseBodyPreview: errorPreview,
+            upstreamRequestHeaders: upstream.upstreamRequestHeaders ? RelayService.rawHeadersToObject(upstream.upstreamRequestHeaders) : null,
+          })
           this.logHttpCompleted(trace, {
             accountId: resolved.account.id,
             authMode: 'oauth',
@@ -3034,7 +3314,13 @@ export class RelayService {
           upstream.body,
           appConfig.nonStreamResponseCaptureMaxBytes,
         )
-        bufferedFailureText = bufferedFailureBody.toString('utf8')
+        bufferedFailureText = RelayService.decodeResponseBodyPreview(
+          bufferedFailureBody,
+          typeof upstreamHeaders['content-encoding'] === 'string'
+            ? upstreamHeaders['content-encoding'].trim().toLowerCase()
+            : null,
+          Number.MAX_SAFE_INTEGER,
+        ) ?? bufferedFailureBody.toString('utf8')
         responseBody = Readable.from([bufferedFailureBody]) as ForwardedHttpResponse['body']
       }
 
@@ -4394,10 +4680,7 @@ export class RelayService {
         userId: input.userId,
         clientDeviceId: input.clientDeviceId,
       })
-      const accountProxyUrl = this.requireProxyUrl(
-        resolvedForProxy.proxyUrl,
-        `Account ${resolvedForProxy.account.id} has no proxy configured`,
-      )
+      const accountProxyUrl = this.resolveAccountProxyUrl(resolvedForProxy.account, resolvedForProxy.proxyUrl)
       const upstreamRequestHeaders = buildWebSocketUpstreamHeaders(
         input.rawHeaders,
         input.headers,
@@ -4446,10 +4729,7 @@ export class RelayService {
       clientDeviceId: input.clientDeviceId,
       userId: input.userId,
     })
-    let accountProxyUrl = this.requireProxyUrl(
-      resolved.proxyUrl,
-      `Account ${resolved.account.id} has no proxy configured`,
-    )
+    let accountProxyUrl = this.resolveAccountProxyUrl(resolved.account, resolved.proxyUrl)
 
     let retryCount = 0
 
@@ -4521,6 +4801,7 @@ export class RelayService {
               resolved.account.id,
               this.computeRateLimitCooldownMs(retryAfterSec4, rl.resetTimestamp),
               {
+                headers: {},
                 requestId: input.usage.requestId,
                 method: 'GET',
                 startedAt: input.usage.startedAt,
@@ -4587,10 +4868,7 @@ export class RelayService {
               disallowedAccountId: resolved.account.id,
               handoffReason: websocketMigrationReason,
             })
-            accountProxyUrl = this.requireProxyUrl(
-              resolved.proxyUrl,
-              `Account ${resolved.account.id} has no proxy configured`,
-            )
+            accountProxyUrl = this.resolveAccountProxyUrl(resolved.account, resolved.proxyUrl)
             retryCount += 1
             continue
           } catch {
@@ -4643,10 +4921,7 @@ export class RelayService {
 
           retryCount += 1
           resolved = recovery.resolved
-          accountProxyUrl = this.requireProxyUrl(
-            resolved.proxyUrl,
-            `Account ${resolved.account.id} has no proxy configured`,
-          )
+          accountProxyUrl = this.resolveAccountProxyUrl(resolved.account, resolved.proxyUrl)
         } catch {
           this.recordWebSocketUsage({
             usage: input.usage,
@@ -4680,7 +4955,7 @@ export class RelayService {
     enablePerMessageDeflate: boolean,
     accountId: string | null,
     retryCount: number,
-    proxyUrl: string,
+    proxyUrl: string | null,
   ): Promise<ConnectedUpstreamSocket> {
     const ws = this.createUpstreamWebSocket(
       upstreamUrl,
@@ -4783,20 +5058,20 @@ export class RelayService {
     headers: Record<string, string>,
     websocketProtocols: string[],
     enablePerMessageDeflate: boolean,
-    proxyUrl: string,
+    proxyUrl: string | null,
   ): WebSocket {
     const urlString = this.toWebSocketUrl(upstreamUrl).toString()
-    const agent = this.createWebSocketProxyAgent(upstreamUrl, proxyUrl)
+    const agent = proxyUrl ? this.createWebSocketProxyAgent(upstreamUrl, proxyUrl) : undefined
     if (websocketProtocols.length > 0) {
       return new WebSocket(urlString, websocketProtocols, {
-        agent,
+        ...(agent ? { agent } : {}),
         handshakeTimeout: appConfig.requestTimeoutMs,
         headers,
         perMessageDeflate: enablePerMessageDeflate,
       })
     }
     return new WebSocket(urlString, {
-      agent,
+      ...(agent ? { agent } : {}),
       handshakeTimeout: appConfig.requestTimeoutMs,
       headers,
       perMessageDeflate: enablePerMessageDeflate,
@@ -5123,6 +5398,7 @@ export class RelayService {
     headers: IncomingHttpHeaders,
   ): HttpTraceContext {
     return {
+      headers,
       method: method.toUpperCase(),
       requestId:
         this.normalizeHeaderValue(headers['x-request-id']) ??
@@ -5182,11 +5458,14 @@ export class RelayService {
     return Boolean(value?.trim())
   }
 
-  private requireProxyUrl(proxyUrl: string | null, errorMessage: string): string {
-    if (!proxyUrl) {
-      throw new Error(errorMessage)
+  private resolveAccountProxyUrl(account: import('../types.js').StoredAccount, proxyUrl: string | null): string | null {
+    if (proxyUrl) {
+      return proxyUrl
     }
-    return proxyUrl
+    if (account.directEgressEnabled === true) {
+      return null
+    }
+    throw new Error(`Account ${account.id} has no proxy configured`)
   }
 
   private getOptionalHttpDispatcher(proxyUrl: string | null): Dispatcher | undefined {
@@ -5658,6 +5937,11 @@ export class RelayService {
     return pathname
   }
 
+  private static normalizeStoredTarget(target: string): string {
+    const pathOnly = target.split('?')[0] || target
+    return RelayService.normalizeUsageTarget(pathOnly)
+  }
+
   private recordUsageRecord(record: UsageRecord, method: string = 'POST'): void {
     if (!this.usageStore) {
       return
@@ -5666,6 +5950,30 @@ export class RelayService {
     void (async () => {
       try {
         const usageRecordId = await usageStore.insertRecord(record)
+        const normalizedTarget = RelayService.normalizeStoredTarget(record.target)
+        this.logRiskObservation(record, usageRecordId, method, normalizedTarget)
+        this.recordFirstRealRequestLifecycle(record, normalizedTarget)
+        try {
+          await this.riskAlertService.evaluate({
+            usageRecordId,
+            record,
+            method,
+            normalizedPath: normalizedTarget,
+          })
+          await this.applyClaudeNewAccountGuardrail(record, normalizedTarget)
+          await this.applyAnthropicOverageDisabledGuardrail(record)
+        } catch (error) {
+          this.safeLog({
+            event: 'risk_alert_failed',
+            requestId: record.requestId,
+            method,
+            target: record.target,
+            accountId: record.accountId,
+            durationMs: record.durationMs,
+            statusCode: record.statusCode,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
         const billingStore = this.billingStore
         if (billingStore && usageRecordId > 0) {
           await billingStore.syncUsageRecordById(usageRecordId)
@@ -5675,6 +5983,65 @@ export class RelayService {
           event: 'usage_record_failed',
           requestId: record.requestId,
           method,
+          target: record.target,
+          accountId: record.accountId,
+          durationMs: record.durationMs,
+          statusCode: record.statusCode,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    })()
+  }
+
+  private recordFirstRealRequestLifecycle(record: UsageRecord, normalizedTarget: string): void {
+    const lifecycleStore = this.accountLifecycleStore
+    if (!lifecycleStore || !record.accountId) return
+    if (!normalizedTarget.startsWith('/v1/')) return
+    if (normalizedTarget === '/v1/organizations' || normalizedTarget === '/v1/me') return
+
+    const responseHeaders = record.responseHeaders ?? null
+    const upstreamRequestId =
+      pickHeaderValue(responseHeaders, 'request-id') ??
+      pickHeaderValue(responseHeaders, 'x-request-id')
+    const upstreamOrganizationId =
+      pickHeaderValue(responseHeaders, 'anthropic-organization-id') ??
+      pickHeaderValue(responseHeaders, 'anthropic-ratelimit-organization-id')
+    const rateLimitTier = pickHeaderValue(responseHeaders, 'anthropic-ratelimit-tier')
+
+    const filteredHeaders = filterAnthropicForensicHeaders(responseHeaders)
+
+    void (async () => {
+      try {
+        await lifecycleStore.recordEvent({
+          accountId: record.accountId!,
+          eventType: 'first_real_request',
+          outcome: record.statusCode >= 400 ? 'failure' : 'ok',
+          ingressIp: null,
+          ingressUserAgent: pickHeaderValue(record.requestHeaders ?? null, 'user-agent'),
+          ingressForwardedFor: pickHeaderValue(record.requestHeaders ?? null, 'x-forwarded-for'),
+          egressProvider: null,
+          upstreamStatus: record.statusCode,
+          upstreamRequestId,
+          upstreamOrganizationId,
+          upstreamRateLimitTier: rateLimitTier,
+          anthropicHeaders: filteredHeaders,
+          durationMs: record.durationMs,
+          notes: {
+            target: normalizedTarget,
+            requestId: record.requestId,
+            sessionKey: record.sessionKey,
+            userId: record.userId,
+            relayKeySource: record.relayKeySource ?? null,
+            anthropicBeta: pickHeaderValue(record.requestHeaders ?? null, 'anthropic-beta'),
+            antDirectBrowser: pickHeaderValue(record.requestHeaders ?? null, 'anthropic-dangerous-direct-browser-access'),
+            xAppHeader: pickHeaderValue(record.requestHeaders ?? null, 'x-app'),
+          },
+        })
+      } catch (error) {
+        this.safeLog({
+          event: 'lifecycle_first_real_request_failed',
+          requestId: record.requestId,
+          method: 'POST',
           target: record.target,
           accountId: record.accountId,
           durationMs: record.durationMs,
@@ -5944,10 +6311,21 @@ export class RelayService {
               durationMs: context.durationMs,
             })
           }
+          const streamErrorPreview = sseErrorTransform.errorEventPreview ?? (respPreviewChunks.length > 0 ? Buffer.concat(respPreviewChunks).toString('utf8') : null) ?? `stream_interrupted: ${err instanceof Error ? err.message : String(err)}`
+          this.recordPipelineStreamFailureUsage({
+            context,
+            statusCode: upstream.statusCode >= 400 ? upstream.statusCode : 599,
+            rateLimitStatus: rl.status,
+            rateLimit5hUtilization: rl.fiveHourUtilization,
+            rateLimit7dUtilization: rl.sevenDayUtilization,
+            rateLimitReset: rl.resetTimestamp,
+            responseHeaders: RelayService.sanitizeHeaders(upstream.headers),
+            responseBodyPreview: streamErrorPreview,
+          })
           this.logHttpStreamError(context, {
             error: err instanceof Error ? err.message : String(err),
             responseContentType: contentType,
-            responseBodyPreview: sseErrorTransform.errorEventPreview,
+            responseBodyPreview: streamErrorPreview,
             statusCode: upstream.statusCode,
             statusText: upstream.statusText,
             upstreamHeaders: upstream.headers,
@@ -5993,10 +6371,21 @@ export class RelayService {
               durationMs: context.durationMs,
             })
           }
+          const streamErrorPreview = sseErrorTransform.errorEventPreview ?? (respPreviewChunks.length > 0 ? Buffer.concat(respPreviewChunks).toString('utf8') : null) ?? `stream_interrupted: ${err instanceof Error ? err.message : String(err)}`
+          this.recordPipelineStreamFailureUsage({
+            context,
+            statusCode: upstream.statusCode >= 400 ? upstream.statusCode : 599,
+            rateLimitStatus: rl.status,
+            rateLimit5hUtilization: rl.fiveHourUtilization,
+            rateLimit7dUtilization: rl.sevenDayUtilization,
+            rateLimitReset: rl.resetTimestamp,
+            responseHeaders: RelayService.sanitizeHeaders(upstream.headers),
+            responseBodyPreview: streamErrorPreview,
+          })
           this.logHttpStreamError(context, {
             error: err instanceof Error ? err.message : String(err),
             responseContentType: contentType,
-            responseBodyPreview: sseErrorTransform.errorEventPreview,
+            responseBodyPreview: streamErrorPreview,
             statusCode: upstream.statusCode,
             statusText: upstream.statusText,
             upstreamHeaders: upstream.headers,
@@ -6015,15 +6404,16 @@ export class RelayService {
           upstreamHeaders: upstream.headers,
         })
       }
+      const storedStreamPreview = sseErrorTransform.errorEventPreview ?? respBodyPreview
       this.fireAndForgetUsage(
         usagePromise,
         upstream.headers,
-        { ...context, responseBodyPreview: respBodyPreview },
+        { ...context, responseBodyPreview: storedStreamPreview },
         upstream.statusCode,
       )
       return {
         rateLimitStatus: rl.status,
-        responseBodyPreview: upstream.statusCode >= 400 ? respBodyPreview : null,
+        responseBodyPreview: upstream.statusCode >= 400 || sseErrorTransform.errorEventPreview ? storedStreamPreview : null,
         responseContentType: contentType,
       }
     } else {
@@ -6195,6 +6585,98 @@ export class RelayService {
       responseHeaders: context.responseHeaders ?? null,
       responseBodyPreview: context.responseBodyPreview ?? null,
       upstreamRequestHeaders: context.upstreamRequestHeaders ?? null,
+    })
+  }
+
+
+  private recordBufferedUpstreamFailureUsage(input: {
+    trace: { requestId: string; startedAt: number }
+    accountId: string | null
+    userId: string | null
+    organizationId?: string | null
+    relayKeySource: RelayKeySource | null
+    sessionKey: string | null
+    clientDeviceId: string | null
+    target: string
+    statusCode: number
+    rateLimitStatus: string | null
+    rateLimit5hUtilization: number | null
+    rateLimit7dUtilization: number | null
+    rateLimitReset: number | null
+    requestHeaders: Record<string, string | string[] | undefined> | null
+    requestBodyPreview: string | null
+    responseHeaders: Record<string, string | string[] | undefined> | null
+    responseBodyPreview: string | null
+    upstreamRequestHeaders: Record<string, string | string[] | undefined> | null
+  }): void {
+    this.recordImmediateFailureUsage({
+      requestId: input.trace.requestId,
+      accountId: input.accountId,
+      userId: input.userId,
+      organizationId: input.organizationId ?? null,
+      relayKeySource: input.relayKeySource,
+      sessionKey: input.sessionKey,
+      clientDeviceId: input.clientDeviceId,
+      durationMs: Date.now() - input.trace.startedAt,
+      target: input.target,
+      statusCode: input.statusCode,
+      rateLimitStatus: input.rateLimitStatus,
+      rateLimit5hUtilization: input.rateLimit5hUtilization,
+      rateLimit7dUtilization: input.rateLimit7dUtilization,
+      rateLimitReset: input.rateLimitReset,
+      attemptKind: 'final',
+      requestHeaders: input.requestHeaders,
+      requestBodyPreview: input.requestBodyPreview,
+      responseHeaders: input.responseHeaders,
+      responseBodyPreview: input.responseBodyPreview,
+      upstreamRequestHeaders: input.upstreamRequestHeaders,
+    })
+  }
+
+  private recordPipelineStreamFailureUsage(input: {
+    context: {
+      requestId: string
+      accountId: string | null
+      userId: string | null
+      organizationId?: string | null
+      relayKeySource: RelayKeySource | null
+      sessionKey: string | null
+      clientDeviceId: string | null
+      durationMs: number
+      target: string
+      requestHeaders?: Record<string, string | string[] | undefined> | null
+      requestBodyPreview?: string | null
+      upstreamRequestHeaders?: Record<string, string | string[] | undefined> | null
+    }
+    statusCode: number
+    rateLimitStatus: string | null
+    rateLimit5hUtilization: number | null
+    rateLimit7dUtilization: number | null
+    rateLimitReset: number | null
+    responseHeaders: Record<string, string | string[] | undefined> | null
+    responseBodyPreview: string | null
+  }): void {
+    this.recordImmediateFailureUsage({
+      requestId: input.context.requestId,
+      accountId: input.context.accountId,
+      userId: input.context.userId ?? null,
+      organizationId: input.context.organizationId ?? null,
+      relayKeySource: input.context.relayKeySource,
+      sessionKey: input.context.sessionKey ?? null,
+      clientDeviceId: input.context.clientDeviceId ?? null,
+      durationMs: input.context.durationMs,
+      target: input.context.target,
+      statusCode: input.statusCode,
+      rateLimitStatus: input.rateLimitStatus,
+      rateLimit5hUtilization: input.rateLimit5hUtilization,
+      rateLimit7dUtilization: input.rateLimit7dUtilization,
+      rateLimitReset: input.rateLimitReset,
+      attemptKind: 'final',
+      requestHeaders: input.context.requestHeaders ?? null,
+      requestBodyPreview: input.context.requestBodyPreview ?? null,
+      responseHeaders: input.responseHeaders,
+      responseBodyPreview: input.responseBodyPreview,
+      upstreamRequestHeaders: input.context.upstreamRequestHeaders ?? null,
     })
   }
 
@@ -6625,27 +7107,7 @@ export class RelayService {
     statusCode: number,
     responseText: string,
   ): string | null {
-    if (statusCode !== 400 && statusCode !== 401 && statusCode !== 403) {
-      return null
-    }
-
-    const normalized = responseText.toLowerCase()
-    if (
-      normalized.includes('disabled organization') ||
-      normalized.includes('organization is disabled') ||
-      normalized.includes('organization has been disabled') ||
-      normalized.includes('belongs to a disabled organization')
-    ) {
-      return 'account_disabled_organization'
-    }
-    if (
-      normalized.includes('anthropic_api_key') &&
-      normalized.includes('update or unset') &&
-      normalized.includes('environment variable')
-    ) {
-      return 'account_disabled_organization'
-    }
-    return null
+    return classifyTerminalAccountFailureReason(statusCode, responseText)
   }
 
   private isAuthenticationFailure(statusCode: number): boolean {
@@ -6731,6 +7193,281 @@ export class RelayService {
     })
   }
 
+
+  private async applyClaudeNewAccountGuardrail(record: UsageRecord, normalizedTarget: string): Promise<void> {
+    if (!appConfig.claudeNewAccountGuardEnabled) return
+    if (!this.userStore) return
+    if (!record.accountId?.startsWith('claude-official:')) return
+    if (!record.userId) return
+    if (!['/v1/messages', '/v1/sessions/ws', '/v1/chat/completions'].includes(normalizedTarget)) return
+
+    const account = await this.oauthService.getAccount(record.accountId)
+    if (!account || account.provider !== 'claude-official') return
+
+    const snapshot = await this.userStore.getNewClaudeAccountRiskSnapshot({
+      accountId: record.accountId,
+      userId: record.userId,
+      clientDeviceId: record.clientDeviceId ?? null,
+    })
+    const warmup = resolveClaudeWarmupStatus({ account, firstSeenAt: snapshot.accountFirstSeenAt })
+    if (!warmup.enabled) return
+
+    const totalTokens = record.inputTokens + record.outputTokens + record.cacheCreationInputTokens + record.cacheReadInputTokens
+    const limits = warmup.stage
+    const triggers: Array<{ code: string; current: number; limit: number; label: string }> = []
+    if (totalTokens >= limits.singleRequestTokens) {
+      triggers.push({ code: 'single_request_tokens', current: totalTokens, limit: limits.singleRequestTokens, label: 'single request total tokens' })
+    }
+    if (snapshot.accountRequestCount1m >= limits.rpm) {
+      triggers.push({ code: 'account_rpm_1m', current: snapshot.accountRequestCount1m, limit: limits.rpm, label: 'account requests/min' })
+    }
+    if (snapshot.accountTokens1m >= limits.tokensPerMinute) {
+      triggers.push({ code: 'account_tokens_1m', current: snapshot.accountTokens1m, limit: limits.tokensPerMinute, label: 'account tokens/min' })
+    }
+    if (snapshot.accountCacheRead1m >= limits.cacheReadPerMinute) {
+      triggers.push({ code: 'account_cache_read_1m', current: snapshot.accountCacheRead1m, limit: limits.cacheReadPerMinute, label: 'account cacheRead/min' })
+    }
+    if (
+      appConfig.claudeNewAccountCacheGuardEnabled &&
+      snapshot.accountCacheRead1m >= appConfig.claudeNewAccountCacheGuardCriticalCacheRead1m
+    ) {
+      triggers.push({
+        code: 'account_cache_read_1m_critical',
+        current: snapshot.accountCacheRead1m,
+        limit: appConfig.claudeNewAccountCacheGuardCriticalCacheRead1m,
+        label: 'critical account cacheRead/min',
+      })
+    }
+    const accountSwitchLimit24h = resolveClaudeWarmupAccountSwitchLimit(
+      appConfig.claudeNewAccountGuardBlockAccounts24h,
+      warmup.policyId,
+    )
+    if (snapshot.userDistinctClaudeOfficialAccounts24h >= accountSwitchLimit24h) {
+      triggers.push({ code: 'user_claude_accounts_24h', current: snapshot.userDistinctClaudeOfficialAccounts24h, limit: accountSwitchLimit24h, label: 'user distinct Claude official accounts/24h' })
+    }
+    if (snapshot.clientDeviceDistinctClaudeOfficialAccounts24h >= accountSwitchLimit24h) {
+      triggers.push({ code: 'device_claude_accounts_24h', current: snapshot.clientDeviceDistinctClaudeOfficialAccounts24h, limit: accountSwitchLimit24h, label: 'device distinct Claude official accounts/24h' })
+    }
+    if (triggers.length === 0) return
+
+    const triggerSummary = triggers.map((trigger) => `${trigger.code}=${trigger.current}/${trigger.limit}`).join(';')
+    const hasCriticalCacheRead = triggers.some((trigger) => trigger.code === 'account_cache_read_1m_critical')
+    const cooldownMs = hasCriticalCacheRead
+      ? Math.max(limits.cooldownMs, appConfig.claudeNewAccountCacheGuardCooldownMs)
+      : limits.cooldownMs
+    const reason = [
+      hasCriticalCacheRead ? 'new_account_cache_read_guard' : 'warmup_auto_block',
+      `stage=${warmup.stage.id}`,
+      `stageLabel=${warmup.stage.label}`,
+      `policy=${warmup.policyId}`,
+      `accountSwitchLimit24h=${accountSwitchLimit24h}`,
+      `ageMs=${warmup.effectiveAgeMs ?? 'unknown'}`,
+      `cooldownMs=${cooldownMs}`,
+      `triggered=${triggerSummary}`,
+    ].join('|')
+    await this.oauthService.markAccountRiskGuardrail(record.accountId, reason, cooldownMs)
+    this.safeLog({
+      event: 'claude_new_account_guardrail_applied',
+      requestId: record.requestId,
+      method: 'POST',
+      target: record.target,
+      durationMs: record.durationMs,
+      accountId: record.accountId,
+      userId: record.userId,
+      clientDeviceId: record.clientDeviceId ?? null,
+      reason,
+      warmupStage: warmup.stage.id,
+      warmupStageLabel: warmup.stage.label,
+      warmupPolicyId: warmup.policyId,
+      accountSwitchLimit24h,
+      triggers,
+      accountAgeMs: warmup.effectiveAgeMs,
+      accountRequestCount1m: snapshot.accountRequestCount1m,
+      accountTokens1m: snapshot.accountTokens1m,
+      accountCacheRead1m: snapshot.accountCacheRead1m,
+      userDistinctClaudeOfficialAccounts24h: snapshot.userDistinctClaudeOfficialAccounts24h,
+      clientDeviceDistinctClaudeOfficialAccounts24h: snapshot.clientDeviceDistinctClaudeOfficialAccounts24h,
+      cooldownMs,
+    })
+  }
+
+  private async applyAnthropicOverageDisabledGuardrail(record: UsageRecord): Promise<void> {
+    if (!appConfig.anthropicOverageDisabledGuardEnabled) return
+    if (!record.accountId?.startsWith('claude-official:')) return
+    const headers = record.responseHeaders
+    if (!headers) return
+    const headerValue = (name: string): string | null => {
+      const raw = (headers as Record<string, unknown>)[name] ?? (headers as Record<string, unknown>)[name.toLowerCase()]
+      if (Array.isArray(raw)) return raw.join(',')
+      if (raw == null) return null
+      return String(raw)
+    }
+    const fallbackRaw = headerValue('anthropic-ratelimit-unified-fallback-percentage')
+    const fallbackParsed = fallbackRaw != null ? Number(fallbackRaw) : null
+    const orgUuid = headerValue('anthropic-organization-id') ?? record.organizationId ?? null
+    const action = resolveAnthropicOverageDisabledAction({
+      reasonRaw: headerValue('anthropic-ratelimit-unified-overage-disabled-reason'),
+      overageStatus: headerValue('anthropic-ratelimit-unified-overage-status'),
+      unifiedStatus: headerValue('anthropic-ratelimit-unified-status'),
+      statusCode: record.statusCode,
+      allowedWarningCooldownMs: appConfig.anthropicOverageAllowedWarningCooldownMs,
+      rejectedCooldownMs: appConfig.anthropicOverageRejectedCooldownMs,
+      policyDisabledCooldownMs: appConfig.anthropicOveragePolicyDisabledCooldownMs,
+      representativeClaim: headerValue('anthropic-ratelimit-unified-representative-claim'),
+      fallbackPercentage: fallbackParsed,
+    })
+    if (!action) return
+    const guardReason = [
+      'anthropic_overage_disabled',
+      `headerReason=${action.reason}`,
+      `severity=${action.severity}`,
+      `notes=${action.notes.join(',')}`,
+      `overageStatus=${action.overageStatus ?? '-'}`,
+      `unifiedStatus=${action.unifiedStatus ?? '-'}`,
+      `org=${orgUuid ?? '-'}`,
+      `cooldownMs=${action.cooldownMs ?? 0}`,
+    ].join('|')
+    let appliedAccountIds: string[] = []
+    if (action.cooldownMs && action.cooldownMs > 0) {
+      appliedAccountIds = await this.oauthService.markOrganizationOverageGuardrail({
+        triggeringAccountId: record.accountId,
+        organizationUuid: orgUuid,
+        reason: guardReason,
+        cooldownMs: action.cooldownMs,
+        overageDisabledReason: action.reason,
+      })
+    }
+    this.safeLog({
+      event: 'anthropic_overage_disabled_guardrail',
+      requestId: record.requestId,
+      method: 'POST',
+      target: record.target,
+      durationMs: record.durationMs,
+      accountId: record.accountId,
+      userId: record.userId,
+      organizationId: orgUuid,
+      overageDisabledReason: action.reason,
+      overageStatus: action.overageStatus,
+      unifiedStatus: action.unifiedStatus,
+      severity: action.severity,
+      severityNotes: action.notes,
+      representativeClaim: headerValue('anthropic-ratelimit-unified-representative-claim'),
+      fiveHourStatus: headerValue('anthropic-ratelimit-unified-5h-status'),
+      sevenDayStatus: headerValue('anthropic-ratelimit-unified-7d-status'),
+      fallbackPercentage: fallbackRaw,
+      cooldownMs: action.cooldownMs ?? 0,
+      appliedAccountCount: appliedAccountIds.length,
+      appliedAccountIds: appliedAccountIds.length > 0 ? appliedAccountIds : null,
+    })
+  }
+
+  private logRiskObservation(
+    record: UsageRecord,
+    usageRecordId: number,
+    method: string,
+    normalizedTarget: string,
+  ): void {
+    const requestHeaders = record.requestHeaders ?? {}
+    const headerValue = (name: string): string | null => {
+      const value = requestHeaders[name] ?? requestHeaders[name.toLowerCase()]
+      if (Array.isArray(value)) return value.join(',')
+      if (typeof value === 'string') return value
+      return null
+    }
+    const totalTokens =
+      record.inputTokens +
+      record.outputTokens +
+      record.cacheCreationInputTokens +
+      record.cacheReadInputTokens
+    const riskKeywords = this.detectRiskKeywords([
+      record.requestBodyPreview ?? '',
+      record.responseBodyPreview ?? '',
+    ].join('\n'))
+
+    const responseHeaderValue = (name: string): string | null => {
+      const headers = record.responseHeaders ?? null
+      if (!headers) return null
+      const raw = (headers as Record<string, unknown>)[name] ?? (headers as Record<string, unknown>)[name.toLowerCase()]
+      if (Array.isArray(raw)) return raw.join(',').slice(0, 200)
+      if (raw == null) return null
+      return String(raw).slice(0, 200)
+    }
+
+    this.safeLog({
+      event: 'risk_observation',
+      requestId: record.requestId,
+      method,
+      target: record.target,
+      normalizedTarget,
+      usageRecordId,
+      accountId: record.accountId,
+      userId: record.userId,
+      organizationId: record.organizationId ?? null,
+      relayKeySource: record.relayKeySource ?? null,
+      attemptKind: record.attemptKind ?? 'final',
+      model: record.model,
+      sessionKeyPresent: Boolean(record.sessionKey),
+      sessionKeyHash: record.sessionKey
+        ? crypto.createHash('sha256').update(record.sessionKey).digest('hex').slice(0, 16)
+        : null,
+      clientDeviceId: record.clientDeviceId ?? null,
+      clientIp: headerValue('cf-connecting-ip') ?? headerValue('x-real-ip') ?? null,
+      userAgent: headerValue('user-agent'),
+      xApp: headerValue('x-app'),
+      claudeCodeSessionId: headerValue('x-claude-code-session-id'),
+      anthropicBeta: headerValue('anthropic-beta'),
+      anthropicVersion: headerValue('anthropic-version'),
+      directBrowserAccess: headerValue('anthropic-dangerous-direct-browser-access'),
+      statusCode: record.statusCode,
+      durationMs: record.durationMs,
+      rateLimitStatus: record.rateLimitStatus,
+      rateLimit5hUtilization: record.rateLimit5hUtilization,
+      rateLimit7dUtilization: record.rateLimit7dUtilization,
+      inputTokens: record.inputTokens,
+      outputTokens: record.outputTokens,
+      cacheCreationInputTokens: record.cacheCreationInputTokens,
+      cacheReadInputTokens: record.cacheReadInputTokens,
+      totalTokens,
+      riskKeywords,
+      requestBodyPreviewBytes: record.requestBodyPreview
+        ? Buffer.byteLength(record.requestBodyPreview, 'utf8')
+        : 0,
+      requestBodyPreviewSha256: record.requestBodyPreview
+        ? crypto.createHash('sha256').update(record.requestBodyPreview).digest('hex').slice(0, 16)
+        : null,
+      responseBodyPreviewBytes: record.responseBodyPreview
+        ? Buffer.byteLength(record.responseBodyPreview, 'utf8')
+        : 0,
+      responseBodyPreviewSha256: record.responseBodyPreview
+        ? crypto.createHash('sha256').update(record.responseBodyPreview).digest('hex').slice(0, 16)
+        : null,
+      upstreamOrganizationId: responseHeaderValue('anthropic-organization-id'),
+      unifiedOverageStatus: responseHeaderValue('anthropic-ratelimit-unified-overage-status'),
+      unifiedOverageDisabledReason: responseHeaderValue('anthropic-ratelimit-unified-overage-disabled-reason'),
+      unifiedRepresentativeClaim: responseHeaderValue('anthropic-ratelimit-unified-representative-claim'),
+      unifiedFiveHourStatus: responseHeaderValue('anthropic-ratelimit-unified-5h-status'),
+      unifiedSevenDayStatus: responseHeaderValue('anthropic-ratelimit-unified-7d-status'),
+      unifiedFallbackPercentage: responseHeaderValue('anthropic-ratelimit-unified-fallback-percentage'),
+    })
+  }
+
+  private detectRiskKeywords(text: string): string[] {
+    const patterns: Array<[string, RegExp]> = [
+      ['claude_access_revoked', /does not have access to claude|access to claude|disabled organization|organization is disabled|oauth token has been revoked|authentication_failed/i],
+      ['session_pinning_blocked', /session account pinning blocked migration|pinning blocked migration|predicted_7d_exhaustion/i],
+      ['local_rejection', /routing_guard|unsupported_client|cli_validation_failed|upstream_incident_active|COR_INTERNAL_ERROR/i],
+      ['malware', /malware|trojan|ransomware|virus/i],
+      ['phishing', /phishing|credential|steal(?:ing)? token|cookie theft/i],
+      ['exploit', /exploit|payload|reverse shell|privilege escalation|cve-\d{4}-\d+/i],
+      ['ddos', /ddos|botnet/i],
+      ['jailbreak', /jailbreak|bypass safety|ignore previous instructions/i],
+      ['fraud_cn', /诈骗|赌博|洗钱|盗号|黑产|木马|钓鱼|免杀/i],
+    ]
+    return patterns
+      .filter(([, pattern]) => pattern.test(text))
+      .map(([name]) => name)
+  }
+
   private logCliValidationFailure(
     trace: HttpTraceContext,
     failure: CliValidationFailure,
@@ -6788,15 +7525,44 @@ export class RelayService {
       statusText: string
     },
   ): void {
+    const internalCode = input.internalCode ?? fallbackRelayErrorCode(input.statusCode)
+    const durationMs = Date.now() - trace.startedAt
+    this.recordUsageRecord({
+      requestId: trace.requestId,
+      accountId: input.forceAccountId ?? null,
+      userId: null,
+      organizationId: null,
+      relayKeySource: null,
+      sessionKey: this.extractStickySessionKeyFromHeaders(trace.headers),
+      clientDeviceId: null,
+      attemptKind: 'final',
+      model: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
+      statusCode: input.statusCode,
+      durationMs,
+      target: trace.target,
+      rateLimitStatus: null,
+      rateLimit5hUtilization: null,
+      rateLimit7dUtilization: null,
+      rateLimitReset: null,
+      requestHeaders: RelayService.sanitizeHeaders(trace.headers),
+      requestBodyPreview: null,
+      responseHeaders: null,
+      responseBodyPreview: `${internalCode}: ${input.error}`.slice(0, 2048),
+      upstreamRequestHeaders: null,
+    }, trace.method)
     this.safeLog({
       event: 'http_rejected',
       requestId: trace.requestId,
       method: trace.method,
       target: trace.target,
-      durationMs: Date.now() - trace.startedAt,
+      durationMs,
       error: input.error,
       forceAccountId: input.forceAccountId ?? null,
-      internalCode: input.internalCode ?? fallbackRelayErrorCode(input.statusCode),
+      internalCode,
       routeAuthStrategy: input.routeAuthStrategy ?? undefined,
       statusCode: input.statusCode,
       statusText: input.statusText,
@@ -6806,14 +7572,44 @@ export class RelayService {
   private logHttpFailure(trace: HttpTraceContext, error: unknown): void {
     const clientError = classifyClientFacingRelayError(error)
     const statusCode = clientError?.statusCode ?? 500
+    const internalCode = clientError?.code ?? RELAY_ERROR_CODES.INTERNAL_ERROR
+    const durationMs = Date.now() - trace.startedAt
+    const message = error instanceof Error ? error.message : String(error)
+    this.recordUsageRecord({
+      requestId: trace.requestId,
+      accountId: null,
+      userId: null,
+      organizationId: null,
+      relayKeySource: null,
+      sessionKey: this.extractStickySessionKeyFromHeaders(trace.headers),
+      clientDeviceId: null,
+      attemptKind: 'final',
+      model: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
+      statusCode,
+      durationMs,
+      target: trace.target,
+      rateLimitStatus: null,
+      rateLimit5hUtilization: null,
+      rateLimit7dUtilization: null,
+      rateLimitReset: null,
+      requestHeaders: RelayService.sanitizeHeaders(trace.headers),
+      requestBodyPreview: null,
+      responseHeaders: null,
+      responseBodyPreview: `${internalCode}: ${message}`.slice(0, 2048),
+      upstreamRequestHeaders: null,
+    }, trace.method)
     this.safeLog({
       event: 'http_failed',
       requestId: trace.requestId,
       method: trace.method,
       target: trace.target,
-      durationMs: Date.now() - trace.startedAt,
-      error: error instanceof Error ? error.message : String(error),
-      internalCode: clientError?.code ?? RELAY_ERROR_CODES.INTERNAL_ERROR,
+      durationMs,
+      error: message,
+      internalCode,
       statusCode,
       statusText: STATUS_CODES[statusCode] ?? 'Internal Server Error',
     })
@@ -7038,6 +7834,8 @@ export class RelayService {
       templateVersion: input.template?.ccVersion ?? null,
       originalBodyBytes: originalBytes,
       rewrittenBodyBytes: rewrittenBytes,
+      originalBodySha256: crypto.createHash('sha256').update(input.originalBody).digest('hex').slice(0, 16),
+      rewrittenBodySha256: crypto.createHash('sha256').update(input.rewrittenBody).digest('hex').slice(0, 16),
       deltaBodyBytes: rewrittenBytes - originalBytes,
       systemBlockCount: metrics.systemBlockCount,
       messageCount: metrics.messageCount,

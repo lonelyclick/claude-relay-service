@@ -1,5 +1,7 @@
 export type BillingCurrency = 'USD' | 'CNY'
 
+export type ClaudeWarmupPolicyId = 'a' | 'b' | 'c' | 'd' | 'e'
+
 export interface Account {
   id: string
   emailAddress: string
@@ -18,6 +20,8 @@ export interface Account {
   providerPlanTypeRaw?: string | null
   rateLimitTier?: string | null
   billingType?: string | null
+  warmupEnabled?: boolean
+  warmupPolicyId?: ClaudeWarmupPolicyId
   organizationUuid?: string | null
   lastRateLimitStatus?: string | null
   lastRateLimit5hUtilization?: number | null
@@ -26,6 +30,7 @@ export interface Account {
   lastRateLimitReset?: number | null
   lastProbeAttemptAt?: number | null
   proxyUrl?: string
+  directEgressEnabled?: boolean
   modelName?: string
   modelTierMap?: {
     opus?: string | null
@@ -43,6 +48,42 @@ export interface Account {
   planMultiplier?: number | null
   schedulerState?: string
   healthScore?: number
+  riskScore?: number
+  riskBand?: 'safe' | 'watch' | 'cautious' | 'critical'
+  riskScoreUpdatedAt?: string
+}
+
+export interface AccountRiskFactor {
+  code: string
+  category: string
+  weight: number
+  rawValue: unknown
+  contribution: number
+  description: string
+}
+
+export interface AccountRiskAction {
+  code: string
+  label: string
+  description: string
+  shadowOnly: boolean
+}
+
+export interface AccountRiskScore {
+  accountId: string
+  label?: string | null
+  emailAddress?: string | null
+  scoredAt: string
+  score: number
+  band: 'safe' | 'watch' | 'cautious' | 'critical'
+  floorScore: number
+  factors: AccountRiskFactor[]
+  recommendedActions: AccountRiskAction[]
+  shadow: {
+    wouldAvoidNewSessions: boolean
+    wouldDeprioritize: boolean
+    reason: string | null
+  }
 }
 
 export interface RoutingGroup {
@@ -303,6 +344,189 @@ export interface UsageTrendDay {
   totalOutputTokens: number
   totalCacheCreationTokens?: number
   totalCacheReadTokens?: number
+}
+
+
+export interface RiskDashboardSummary {
+  since: string
+  totalEvents: number
+  distinctUsers: number
+  distinctAccounts: number
+  authFailures: number
+  revoked403: number
+  accountSwitches: number
+  rateLimited: number
+  maxTokensPerRequest: number
+  maxTokensPerUser: number
+  maxRequestsPerUser: number
+  multiAccountUsers: number
+  multiAccountSessions: number
+}
+
+export interface RiskDashboardEvent {
+  usageRecordId: number
+  requestId: string
+  userId?: string | null
+  accountId?: string | null
+  sessionKey?: string | null
+  clientDeviceId?: string | null
+  model?: string | null
+  target: string
+  path: string
+  statusCode?: number | null
+  durationMs?: number | null
+  inputTokens: number
+  outputTokens: number
+  cacheCreationTokens: number
+  cacheReadTokens: number
+  totalTokens: number
+  createdAt: string
+  ip?: string | null
+  userAgent?: string | null
+  xApp?: string | null
+  anthropicBeta?: string | null
+  anthropicVersion?: string | null
+  claudeCodeSessionId?: string | null
+  directBrowserAccess?: string | null
+  upstreamAnthropicBeta?: string | null
+  requestPreview?: string | null
+  responsePreview?: string | null
+  responseHeaders?: unknown
+  previousAccountId?: string | null
+  sessionDistinctAccounts: number
+  userDistinctAccounts?: number
+  deviceDistinctAccounts?: number
+  riskScore: number
+}
+
+
+export interface AccountHealthDistributionRow {
+  accountId: string
+  label?: string | null
+  emailAddress?: string | null
+  activeHours: number
+  quietHours: number
+  peakRequestsHour: number
+  peakTokensHour: number
+  peakCacheReadHour: number
+  totalRequests: number
+  totalTokens: number
+  totalCacheReadTokens: number
+  errors: number
+  firstHour?: string | null
+  lastHour?: string | null
+}
+
+export interface EgressRiskAccountRow {
+  accountId: string
+  label?: string | null
+  emailAddress?: string | null
+  requests30d: number
+  riskErrors30d: number
+  overageDisabled30d: number
+  accountStatus?: string | null
+  autoBlockedReason?: string | null
+}
+
+export interface EgressRiskSummaryRow {
+  egressKey: string
+  accountCount: number
+  disabledAccounts: number
+  requests30d: number
+  riskErrors30d: number
+  overageDisabled30d: number
+  lastUsedAt?: string | null
+  accounts: EgressRiskAccountRow[]
+}
+
+export interface RiskDashboardTrendPoint {
+  minute: string
+  requests: number
+  tokens: number
+  cacheReadTokens: number
+  distinctAccounts: number
+  distinctUsers: number
+  distinctDevices: number
+  errors: number
+  organizationIds: string[]
+  overageDisabledReasons: string[]
+}
+
+export interface AccountLifecycleEvent {
+  id: number
+  accountId: string
+  eventType: string
+  outcome: 'ok' | 'failure' | 'info' | null
+  ingressIp: string | null
+  ingressUserAgent: string | null
+  ingressForwardedFor: string | null
+  egressProxyUrl: string | null
+  egressProvider: string | null
+  upstreamStatus: number | null
+  upstreamRequestId: string | null
+  upstreamOrganizationId: string | null
+  upstreamRateLimitTier: string | null
+  anthropicHeaders: Record<string, unknown> | null
+  notes: Record<string, unknown> | null
+  durationMs: number | null
+  occurredAt: string
+}
+
+export interface ClaudeWarmupStage {
+  id: string
+  label: string
+  rpm: number
+  tokensPerMinute: number
+  cacheReadPerMinute: number
+  singleRequestTokens: number
+  cooldownMs: number
+  description: string
+}
+
+export interface ClaudeWarmupStatus {
+  enabled: boolean
+  policyId?: ClaudeWarmupPolicyId
+  policyLabel?: string
+  disabledReason?: 'manual_disabled' | 'not_claude_official' | null
+  stage: ClaudeWarmupStage
+  effectiveAgeMs: number | null
+  accountAgeMs: number | null
+  connectedAgeMs: number | null
+  firstSeenAgeMs: number | null
+  accountCreatedAt: string | null
+  connectedAt: string | null
+  firstSeenAt: string | null
+  graduated: boolean
+}
+
+export interface AccountLifecycleSummary {
+  accountId: string
+  addedAt: string | null
+  firstProbeStartedAt: string | null
+  firstProbeCompletedAt: string | null
+  firstRealRequestAt: string | null
+  terminalAt: string | null
+  revokedAt: string | null
+  probeCount: number
+  totalEvents: number
+  provider?: string | null
+  emailAddress?: string | null
+  accountCreatedAt?: string | null
+  organizationUuid?: string | null
+  subscriptionType?: string | null
+  rateLimitTier?: string | null
+  schedulerState?: string | null
+  autoBlockedReason?: string | null
+  warmupEnabled?: boolean
+  warmupPolicyId?: ClaudeWarmupPolicyId
+  warmup?: ClaudeWarmupStatus
+  terminalEvent: {
+    event_type: string
+    outcome: string | null
+    upstream_status: number | null
+    occurred_at: string
+    notes: Record<string, unknown> | null
+  } | null
 }
 
 export interface BillingSummary {

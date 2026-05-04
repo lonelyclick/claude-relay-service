@@ -24,7 +24,7 @@ export type SubscriptionType =
   | 'gemini-standard'
   | 'gemini-pro'
   | null
-export type StoredAccountStatus = 'active' | 'temp_error' | 'revoked'
+export type StoredAccountStatus = 'active' | 'temp_error' | 'revoked' | 'banned'
 export type ClaudeModelTier = 'opus' | 'sonnet' | 'haiku'
 export interface ClaudeCompatibleTierMap {
   opus: string | null
@@ -32,6 +32,7 @@ export interface ClaudeCompatibleTierMap {
   haiku: string | null
 }
 export type SchedulerState = 'enabled' | 'paused' | 'draining' | 'auto_blocked'
+export type ClaudeWarmupPolicyId = 'a' | 'b' | 'c' | 'd' | 'e'
 export type RelayUserRoutingMode = 'auto' | 'pinned_account' | 'preferred_group'
 export type RelayUserBillingMode = 'postpaid' | 'prepaid'
 export type RelayUserCustomerTier = 'standard' | 'plus' | 'business' | 'enterprise' | 'internal'
@@ -103,6 +104,8 @@ export interface StoredAccount {
   displayName: string | null
   hasExtraUsageEnabled: boolean | null
   billingType: string | null
+  warmupEnabled?: boolean
+  warmupPolicyId?: ClaudeWarmupPolicyId
   accountCreatedAt: string | null
   subscriptionCreatedAt: string | null
   rawProfile: OAuthProfile | null
@@ -128,6 +131,7 @@ export interface StoredAccount {
 
   // ── Per-account isolation ──
   proxyUrl: string | null
+  directEgressEnabled?: boolean
   bodyTemplatePath: string | null
   vmFingerprintTemplatePath: string | null
   deviceId: string | null

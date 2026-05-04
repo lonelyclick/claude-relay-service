@@ -27,6 +27,7 @@ export async function main(): Promise<void> {
   await listen(server, appConfig.port, appConfig.host)
   runtime.runtimeState.markReady()
   runtime.keepAliveRefresher.start()
+  runtime.accountWarmupTaskScheduler.start()
   process.stdout.write(
     `Claude OAuth Relay (relay) listening on http://${appConfig.host}:${appConfig.port}\n`,
   )
@@ -40,6 +41,7 @@ export async function main(): Promise<void> {
     shuttingDown = true
     process.stdout.write(`[shutdown] signal=${signal} begin\n`)
     runtime.keepAliveRefresher.stop()
+    runtime.accountWarmupTaskScheduler.stop()
     const forcedSocketCount = await drainHttpServer({
       server,
       runtimeState: runtime.runtimeState,

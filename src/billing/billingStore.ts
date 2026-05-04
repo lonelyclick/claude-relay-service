@@ -255,11 +255,25 @@ export interface BillingPreflightInput {
   target: string;
   /** Override the protocol inferred from `target` (e.g. when an adapter rewrites the upstream wire format). */
   protocolOverride?: BillingModelProtocol | null;
+  /** Lower-bound estimate of input tokens for this request. Defaults to 1 if omitted. */
+  estimatedInputTokens?: number;
+  /** Lower-bound estimate of output tokens for this request. Defaults to 0 if omitted. */
+  estimatedOutputTokens?: number;
 }
 
 export interface BillingPreflightResult {
   ok: boolean;
-  status: "billed" | "missing_sku" | "zero_price";
+  status:
+    | "billed"
+    | "missing_sku"
+    | "zero_price"
+    | "insufficient_balance";
+  /** Estimated minimum charge for the request, in micros of `currency`. Only set when status is `billed` or `insufficient_balance`. */
+  estimatedAmountMicros?: string;
+  /** Currently available balance (prepaid balance, or postpaid balance + credit limit), in micros. */
+  availableMicros?: string;
+  /** Currency the amounts are denominated in (matches the resolved SKU). */
+  currency?: BillingCurrency;
 }
 
 export interface ChannelUsageWindowSnapshot {
@@ -2224,68 +2238,136 @@ export class BillingStore {
     );
   }
 
-  async assertUserCurrencyChangeAllowed(
+  /**
+   * Atomically validate and apply a `billing_currency` change for a relay user.
+   *
+   * Wraps SELECT … FOR UPDATE + UPDATE in a single transaction so the balance
+   * and ledger/billed-history checks cannot race against ledger writes.
+   *
+   * Returns whether the row was actually updated. A no-op (currency unchanged
+   * or row missing) returns `{ updated: false }` and does not raise.
+   */
+  async changeUserBillingCurrency(
     userId: string,
     nextCurrency: BillingCurrency,
-  ): Promise<void> {
-    const normalizedCurrency = normalizeBillingCurrency(nextCurrency, {
+  ): Promise<{ updated: boolean }> {
+    return this.changeBillingCurrencyInTx({
+      table: "relay_users",
+      ownerColumn: "user_id",
+      ownerId: userId,
+      nextCurrency,
+    });
+  }
+
+  /**
+   * Atomically validate and apply a `billing_currency` change for a relay
+   * organization. See {@link changeUserBillingCurrency}.
+   */
+  async changeOrganizationBillingCurrency(
+    organizationId: string,
+    nextCurrency: BillingCurrency,
+  ): Promise<{ updated: boolean }> {
+    return this.changeBillingCurrencyInTx({
+      table: "relay_organizations",
+      ownerColumn: "organization_id",
+      ownerId: organizationId,
+      nextCurrency,
+    });
+  }
+
+  private async changeBillingCurrencyInTx(args: {
+    table: "relay_users" | "relay_organizations";
+    ownerColumn: "user_id" | "organization_id";
+    ownerId: string;
+    nextCurrency: BillingCurrency;
+  }): Promise<{ updated: boolean }> {
+    const normalizedCurrency = normalizeBillingCurrency(args.nextCurrency, {
       field: "billingCurrency",
       fallback: DEFAULT_BILLING_CURRENCY,
     });
-    const result = await this.pool.query<{
-      billing_currency: string;
-      balance_micros: string | number | bigint;
-      ledger_count: string;
-      billed_count: string;
-    }>(
-      `SELECT
-         u.billing_currency,
-         u.balance_micros,
-         (
-           SELECT COUNT(*)::int
-           FROM billing_balance_ledger l
-           WHERE l.user_id = u.id
-         ) AS ledger_count,
-         (
-           SELECT COUNT(*)::int
-           FROM billing_line_items b
-           WHERE b.user_id = u.id
-             AND b.status = 'billed'
-         ) AS billed_count
-       FROM relay_users u
-       WHERE u.id = $1`,
-      [userId],
-    );
-    const row = result.rows[0];
-    if (!row) {
-      return;
-    }
-
-    const currentCurrency = normalizeStoredBillingCurrency(
-      row.billing_currency,
-    );
-    if (currentCurrency === normalizedCurrency) {
-      return;
-    }
-
-    if (BigInt(readBigIntString(row.balance_micros)) !== 0n) {
-      throw new InputValidationError(
-        "Cannot change billingCurrency while balance is non-zero",
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query<{
+        billing_currency: string;
+        balance_micros: string | number | bigint;
+      }>(
+        `SELECT billing_currency, balance_micros
+         FROM ${args.table}
+         WHERE id = $1
+         FOR UPDATE`,
+        [args.ownerId],
       );
-    }
-    if (
-      Number(row.ledger_count ?? 0) > 0 ||
-      Number(row.billed_count ?? 0) > 0
-    ) {
-      throw new InputValidationError(
-        "Cannot change billingCurrency after billing history exists",
+      const row = result.rows[0];
+      if (!row) {
+        await client.query("ROLLBACK");
+        return { updated: false };
+      }
+      const currentCurrency = normalizeStoredBillingCurrency(
+        row.billing_currency,
       );
+      if (currentCurrency === normalizedCurrency) {
+        await client.query("ROLLBACK");
+        return { updated: false };
+      }
+      if (BigInt(readBigIntString(row.balance_micros)) !== 0n) {
+        throw new InputValidationError(
+          "Cannot change billingCurrency while balance is non-zero",
+        );
+      }
+      const ledgerProbe = await client.query(
+        `SELECT 1
+         FROM billing_balance_ledger
+         WHERE ${args.ownerColumn} = $1
+         LIMIT 1`,
+        [args.ownerId],
+      );
+      if (ledgerProbe.rows.length > 0) {
+        throw new InputValidationError(
+          "Cannot change billingCurrency after billing history exists",
+        );
+      }
+      const billedProbe = await client.query(
+        `SELECT 1
+         FROM billing_line_items
+         WHERE ${args.ownerColumn} = $1
+           AND status = 'billed'
+         LIMIT 1`,
+        [args.ownerId],
+      );
+      if (billedProbe.rows.length > 0) {
+        throw new InputValidationError(
+          "Cannot change billingCurrency after billing history exists",
+        );
+      }
+      await client.query(
+        `UPDATE ${args.table}
+         SET billing_currency = $2,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [args.ownerId, normalizedCurrency],
+      );
+      await client.query("COMMIT");
+      return { updated: true };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
     }
   }
 
   async preflightBillableRequest(
     input: BillingPreflightInput,
   ): Promise<BillingPreflightResult> {
+    const inputTokens = Math.max(
+      1,
+      Math.floor(input.estimatedInputTokens ?? 1),
+    );
+    const outputTokens = Math.max(
+      0,
+      Math.floor(input.estimatedOutputTokens ?? 0),
+    );
     const candidate: BillingUsageCandidate = {
       usageRecordId: 0,
       requestId: "preflight",
@@ -2300,8 +2382,8 @@ export class BillingStore {
       sessionKey: null,
       clientDeviceId: null,
       target: input.target,
-      inputTokens: 1,
-      outputTokens: 0,
+      inputTokens,
+      outputTokens,
       cacheCreationInputTokens: 0,
       cacheReadInputTokens: 0,
       statusCode: 200,
@@ -2318,7 +2400,85 @@ export class BillingStore {
     if (BigInt(resolved.amountMicros) <= 0n) {
       return { ok: false, status: "zero_price" };
     }
-    return { ok: true, status: "billed" };
+    if (!input.organizationId && !input.userId) {
+      // No owner to charge against. Higher layers should never reach here for
+      // billable paths, but be permissive to avoid blocking unrelated routes.
+      return {
+        ok: true,
+        status: "billed",
+        estimatedAmountMicros: resolved.amountMicros,
+        currency: resolved.currency,
+      };
+    }
+    const availableMicros = input.organizationId
+      ? await this.getOrganizationAvailableMicros(input.organizationId)
+      : await this.getUserAvailableMicros(input.userId as string);
+    if (availableMicros < BigInt(resolved.amountMicros)) {
+      return {
+        ok: false,
+        status: "insufficient_balance",
+        estimatedAmountMicros: resolved.amountMicros,
+        availableMicros: availableMicros.toString(),
+        currency: resolved.currency,
+      };
+    }
+    return {
+      ok: true,
+      status: "billed",
+      estimatedAmountMicros: resolved.amountMicros,
+      availableMicros: availableMicros.toString(),
+      currency: resolved.currency,
+    };
+  }
+
+  /**
+   * Compute available spend for a relay user, in micros.
+   *
+   * Returns 0 (fail-closed) when the row is missing — at this point the API
+   * key has already been resolved to a userId, so a missing row indicates a
+   * deleted user and the request must be rejected, not silently allowed.
+   */
+  private async getUserAvailableMicros(userId: string): Promise<bigint> {
+    const result = await this.pool.query<{
+      billing_mode: string;
+      balance_micros: string | number | bigint;
+      credit_limit_micros: string | number | bigint;
+    }>(
+      `SELECT billing_mode, balance_micros, credit_limit_micros
+       FROM relay_users
+       WHERE id = $1`,
+      [userId],
+    );
+    const row = result.rows[0];
+    if (!row) return 0n;
+    const balanceMicros = BigInt(readBigIntString(row.balance_micros));
+    if (row.billing_mode === "postpaid") {
+      return balanceMicros + BigInt(readBigIntString(row.credit_limit_micros));
+    }
+    return balanceMicros;
+  }
+
+  /** Same as {@link getUserAvailableMicros}, scoped to an organization. */
+  private async getOrganizationAvailableMicros(
+    organizationId: string,
+  ): Promise<bigint> {
+    const result = await this.pool.query<{
+      billing_mode: string;
+      balance_micros: string | number | bigint;
+      credit_limit_micros: string | number | bigint;
+    }>(
+      `SELECT billing_mode, balance_micros, credit_limit_micros
+       FROM relay_organizations
+       WHERE id = $1`,
+      [organizationId],
+    );
+    const row = result.rows[0];
+    if (!row) return 0n;
+    const balanceMicros = BigInt(readBigIntString(row.balance_micros));
+    if (row.billing_mode === "postpaid") {
+      return balanceMicros + BigInt(readBigIntString(row.credit_limit_micros));
+    }
+    return balanceMicros;
   }
 
   async syncLineItems(options?: {

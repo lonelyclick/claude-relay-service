@@ -18,6 +18,7 @@ import { GuardPage } from '~/pages/routing/GuardPage'
 import { HandoffsPage } from '~/pages/routing/HandoffsPage'
 import { UsagePage } from '~/pages/usage/UsagePage'
 import { UsageDetailPage } from '~/pages/usage/UsageDetailPage'
+import { RiskPage } from '~/pages/risk/RiskPage'
 import { BillingPage } from '~/pages/billing/BillingPage'
 import { BillingUserPage } from '~/pages/billing/BillingUserPage'
 import { ModelsPage } from '~/pages/models/ModelsPage'
@@ -29,6 +30,10 @@ import { NetworkPage } from '~/pages/network/NetworkPage'
 import { ProxyDetailPage } from '~/pages/network/ProxyDetailPage'
 import { SupportListPage } from '~/pages/support/SupportListPage'
 import { SupportDetailPage } from '~/pages/support/SupportDetailPage'
+
+const adminUiBasename = window.location.pathname === '/admin-next' || window.location.pathname.startsWith('/admin-next/')
+  ? '/admin-next'
+  : undefined
 
 const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -64,6 +69,7 @@ const router = createBrowserRouter([
           },
           { path: 'usage', element: <UsagePage /> },
           { path: 'usage/:accountId', element: <UsageDetailPage /> },
+          { path: 'risk', element: <RiskPage /> },
           { path: 'billing', element: <BillingPage /> },
           { path: 'billing/users/:id', element: <BillingUserPage /> },
           { path: 'models', element: <ModelsPage /> },
@@ -79,7 +85,7 @@ const router = createBrowserRouter([
       },
     ],
   },
-])
+], { basename: adminUiBasename })
 
 export function App() {
   return (

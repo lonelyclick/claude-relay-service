@@ -7,11 +7,16 @@ import { OAuthService } from './service.js'
 
 const MAX_PROBE_BACKOFF_MS = 60 * 60 * 1000
 const HEALTH_ERROR_PROBE_BACKOFF_THRESHOLD = 3
+const OVERAGE_PROBE_LEAD_MS = 60 * 1000
+const OVERAGE_PROBE_MIN_INTERVAL_MS = 30 * 60 * 1000
+const OVERAGE_PROBE_MAX_BACKOFF_MS = 24 * 60 * 60 * 1000
 
 export class KeepAliveRefresher {
   private timer: NodeJS.Timeout | null = null
   private running = false
   private readonly consecutiveProbeFailures = new Map<string, number>()
+  private readonly overageProbeLastAt = new Map<string, number>()
+  private readonly overageProbeBackoffMs = new Map<string, number>()
 
   constructor(
     private readonly oauthService: OAuthService,
@@ -154,8 +159,89 @@ export class KeepAliveRefresher {
         if (probeSkipped > 0) parts.push(`probe_skipped=${probeSkipped}`)
         process.stdout.write(`${parts.join(' ')}\n`)
       }
+
+      await this.tickOverageGuardProbes(now)
     } finally {
       this.running = false
+    }
+  }
+
+  private async tickOverageGuardProbes(now: number): Promise<void> {
+    const accounts = await this.oauthService.listAccounts()
+    const candidates = accounts.filter((account) => {
+      if (account.provider !== 'claude-official') return false
+      if (account.status === 'revoked' || account.status === 'banned') return false
+      if (!account.accessToken) return false
+      const reason = account.autoBlockedReason ?? ''
+      if (!reason.includes('anthropic_overage_disabled')) return false
+      const cooldownUntil = account.cooldownUntil ?? 0
+      if (cooldownUntil <= 0) return false
+      const lead = cooldownUntil - now
+      if (lead < -60_000) return false
+      if (lead > OVERAGE_PROBE_LEAD_MS) return false
+      const lastAt = this.overageProbeLastAt.get(account.id) ?? 0
+      if (now - lastAt < OVERAGE_PROBE_MIN_INTERVAL_MS) return false
+      return true
+    })
+    if (candidates.length === 0) return
+
+    let probedReasonStillPresent = 0
+    let probedReasonCleared = 0
+    for (const account of candidates) {
+      this.overageProbeLastAt.set(account.id, now)
+      try {
+        const proxyUrl = await this.oauthService.resolveProxyUrl(account.proxyUrl)
+        const proxyDispatcher = proxyUrl && this.proxyPool
+          ? this.proxyPool.getHttpDispatcher(proxyUrl)
+          : undefined
+        const result = await probeRateLimits({
+          accessToken: account.accessToken,
+          proxyDispatcher,
+          apiBaseUrl: appConfig.anthropicApiBaseUrl,
+          anthropicVersion: appConfig.anthropicVersion,
+          anthropicBeta: appConfig.oauthBetaHeader,
+        })
+        const stillDisabled =
+          typeof result.overageDisabledReason === 'string' &&
+          result.overageDisabledReason.trim() !== '' &&
+          result.overageDisabledReason !== 'no_overage_purchased'
+        if (stillDisabled) {
+          probedReasonStillPresent++
+          const previous = this.overageProbeBackoffMs.get(account.id) ?? 30 * 60 * 1000
+          const next = Math.min(previous * 2, OVERAGE_PROBE_MAX_BACKOFF_MS)
+          this.overageProbeBackoffMs.set(account.id, next)
+          const guardReason = [
+            'anthropic_overage_disabled',
+            'phase=cooldown_expiry_probe',
+            `headerReason=${result.overageDisabledReason}`,
+            `overageStatus=${result.overageStatus ?? '-'}`,
+            `unifiedStatus=${result.status ?? '-'}`,
+            `representativeClaim=${result.representativeClaim ?? '-'}`,
+            `fallback=${result.fallbackPercentage ?? '-'}`,
+            `backoffMs=${next}`,
+          ].join('|')
+          await this.oauthService.markAccountRiskGuardrail(account.id, guardReason, next)
+          process.stdout.write(
+            `[overage-probe] still_disabled account=${account.id} reason=${result.overageDisabledReason} backoff=${next}\n`,
+          )
+        } else {
+          probedReasonCleared++
+          this.overageProbeBackoffMs.delete(account.id)
+          process.stdout.write(
+            `[overage-probe] cleared account=${account.id} unifiedStatus=${result.status ?? '-'}\n`,
+          )
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        process.stderr.write(
+          `[overage-probe] probe_failed account=${account.id} error=${message}\n`,
+        )
+      }
+    }
+    if (candidates.length > 0) {
+      process.stdout.write(
+        `[overage-probe] probed=${candidates.length} still_disabled=${probedReasonStillPresent} cleared=${probedReasonCleared}\n`,
+      )
     }
   }
 

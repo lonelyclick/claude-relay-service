@@ -18,6 +18,11 @@ export type RelayLogEvent = {
     | 'http_stream_error_appended'
     | 'long_term_block_detected'
     | 'cli_validation_failed'
+    | 'risk_observation'
+    | 'risk_alert_failed'
+    | 'claude_new_account_guardrail_applied'
+    | 'anthropic_overage_disabled_guardrail'
+    | 'lifecycle_first_real_request_failed'
   requestId: string
   method: string
   target: string
@@ -36,6 +41,8 @@ export type RelayLogEvent = {
   templateVersion?: string | null
   originalBodyBytes?: number
   rewrittenBodyBytes?: number
+  originalBodySha256?: string
+  rewrittenBodySha256?: string
   deltaBodyBytes?: number
   systemBlockCount?: number | null
   messageCount?: number | null
@@ -59,6 +66,7 @@ export type RelayLogEvent = {
   affectedAccountCount?: number
   incidentActiveUntil?: string | null
   error?: string
+  reason?: string
   sourceModel?: string | null
   targetModel?: string | null
   tierHit?: 'opus' | 'sonnet' | 'haiku' | null
@@ -66,6 +74,66 @@ export type RelayLogEvent = {
   validationLayer?: 'L2' | 'L3' | 'L4'
   validationField?: string
   validationReason?: string
+  normalizedTarget?: string
+  usageRecordId?: number
+  userId?: string | null
+  organizationId?: string | null
+  relayKeySource?: string | null
+  attemptKind?: string | null
+  model?: string | null
+  sessionKeyPresent?: boolean
+  sessionKeyHash?: string | null
+  clientDeviceId?: string | null
+  clientIp?: string | null
+  userAgent?: string | null
+  xApp?: string | null
+  claudeCodeSessionId?: string | null
+  anthropicBeta?: string | null
+  anthropicVersion?: string | null
+  directBrowserAccess?: string | null
+  rateLimit5hUtilization?: number | null
+  rateLimit7dUtilization?: number | null
+  inputTokens?: number
+  outputTokens?: number
+  cacheCreationInputTokens?: number
+  cacheReadInputTokens?: number
+  totalTokens?: number
+  riskKeywords?: string[]
+  requestBodyPreviewBytes?: number
+  requestBodyPreviewSha256?: string | null
+  responseBodyPreviewBytes?: number
+  responseBodyPreviewSha256?: string | null
+  upstreamOrganizationId?: string | null
+  unifiedOverageStatus?: string | null
+  unifiedOverageDisabledReason?: string | null
+  unifiedRepresentativeClaim?: string | null
+  unifiedFiveHourStatus?: string | null
+  unifiedSevenDayStatus?: string | null
+  unifiedFallbackPercentage?: string | null
+  overageDisabledReason?: string | null
+  overageStatus?: string | null
+  unifiedStatus?: string | null
+  severity?: 'observe' | 'warn' | 'block'
+  representativeClaim?: string | null
+  fiveHourStatus?: string | null
+  sevenDayStatus?: string | null
+  fallbackPercentage?: string | null
+  severityNotes?: string[]
+  appliedAccountCount?: number
+  appliedAccountIds?: string[] | null
+
+  warmupStage?: string
+  warmupStageLabel?: string
+  warmupPolicyId?: string
+  accountSwitchLimit24h?: number
+  triggers?: Array<{ code: string; current: number; limit: number; label: string }>
+  accountAgeMs?: number | null
+  accountRequestCount1m?: number
+  accountTokens1m?: number
+  accountCacheRead1m?: number
+  userDistinctClaudeOfficialAccounts24h?: number
+  clientDeviceDistinctClaudeOfficialAccounts24h?: number
+  cooldownMs?: number
 }
 
 export type RelayBodyCapture = {

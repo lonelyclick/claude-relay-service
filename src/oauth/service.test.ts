@@ -112,6 +112,20 @@ function hashSessionKey(sessionKey: string): string {
     .digest('hex')
 }
 
+test('OAuthService.markAccountTerminalFailure marks account as banned for retained analysis', async () => {
+  const { oauthService } = createService([buildAccount({ id: 'account-banned' })])
+
+  await oauthService.markAccountTerminalFailure('account-banned', 'account_disabled_organization')
+
+  const stored = await oauthService.getAccount('account-banned')
+  assert.ok(stored)
+  assert.equal(stored?.isActive, false)
+  assert.equal(stored?.status, 'banned')
+  assert.equal(stored?.schedulerState, 'paused')
+  assert.equal(stored?.autoBlockedReason, 'account_disabled_organization')
+  assert.equal(stored?.lastError, 'account_disabled_organization')
+})
+
 test('OAuthService.createOpenAICompatibleAccount stores the requested group', async () => {
   const { oauthService } = createService([])
 
@@ -792,7 +806,7 @@ test('OAuthService.getSchedulerStats exposes routing guard limits and hot users/
   assert.equal(stats.routingGuard.windowMs, appConfig.routingBudgetWindowMs)
   assert.equal(stats.routingGuard.limits.userRecentRequests, appConfig.routingUserMaxRequestsPerWindow)
   assert.equal(stats.routingGuard.users[0]?.userId, 'user-1')
-  assert.equal(stats.routingGuard.users[0]?.requestUtilizationPercent, 50)
+  assert.equal(stats.routingGuard.users[0]?.requestUtilizationPercent, Math.round((30 / appConfig.routingUserMaxRequestsPerWindow) * 100))
   assert.equal(stats.routingGuard.devices[0]?.clientDeviceId, 'device-1')
   assert.equal(stats.routingGuard.devices[0]?.tokenUtilizationPercent, 50)
 })

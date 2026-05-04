@@ -18,10 +18,30 @@ test('closeBaseRuntime closes all DB-backed stores', async () => {
     billingStore: { close: async () => { closed.push('billingStore') } } as never,
     supportStore: { close: async () => { closed.push('supportStore') } } as never,
     oauthService: {} as never,
+    accountLifecycleStore: {} as never,
+    accountRiskStore: { close: async () => { closed.push('accountRiskStore') } } as never,
+    accountRiskService: { close: async () => { closed.push('accountRiskService') } } as never,
+    mailerSendLogStore: {} as never,
+    mailerService: {} as never,
+    recipientResolver: { close: async () => { closed.push('recipientResolver') } } as never,
+    balanceAlertScheduler: { stop: () => undefined } as never,
+    balanceAlertPool: { end: async () => { closed.push('balanceAlertPool') } } as never,
   })
 
   assert.deepEqual(
     closed.sort(),
-    ['apiKeyStore', 'billingStore', 'supportStore', 'tokenStore', 'usageStore', 'userStore'].sort(),
+    [
+      'apiKeyStore',
+      'accountRiskService',
+      'accountRiskStore',
+      'balanceAlertPool',
+      'billingStore',
+      'organizationStore',
+      'recipientResolver',
+      'supportStore',
+      'tokenStore',
+      'usageStore',
+      'userStore',
+    ].sort(),
   )
 })

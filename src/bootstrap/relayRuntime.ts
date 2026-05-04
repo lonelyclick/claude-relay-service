@@ -4,6 +4,7 @@ import { KeepAliveRefresher } from '../oauth/keepAliveRefresher.js'
 import { RelayService } from '../proxy/relayService.js'
 import { ConnectionTracker } from '../runtime/connectionTracker.js'
 import { RuntimeState } from '../runtime/instanceState.js'
+import { AccountWarmupTaskScheduler } from '../scheduler/accountWarmupTaskScheduler.js'
 import { ProxyPool } from '../scheduler/proxyPool.js'
 import { buildBaseRuntime, closeBaseRuntime, type BaseRuntime } from './baseRuntime.js'
 
@@ -14,6 +15,7 @@ export type RelayRuntime = BaseRuntime & {
   proxyPool: ProxyPool
   geminiLoopback: GeminiLoopbackController
   keepAliveRefresher: KeepAliveRefresher
+  accountWarmupTaskScheduler: AccountWarmupTaskScheduler
   relayService: RelayService
 }
 
@@ -28,6 +30,11 @@ export async function buildRelayRuntime(): Promise<RelayRuntime> {
     proxyPool,
     baseRuntime.healthTracker,
   )
+  const accountWarmupTaskScheduler = new AccountWarmupTaskScheduler(
+    baseRuntime.oauthService,
+    proxyPool,
+    baseRuntime.accountLifecycleStore,
+  )
   const relayService = new RelayService(
     baseRuntime.oauthService,
     proxyPool,
@@ -39,6 +46,7 @@ export async function buildRelayRuntime(): Promise<RelayRuntime> {
     baseRuntime.billingStore,
     baseRuntime.apiKeyStore,
     connectionTracker,
+    baseRuntime.accountLifecycleStore,
   )
 
   return {
@@ -49,12 +57,14 @@ export async function buildRelayRuntime(): Promise<RelayRuntime> {
     proxyPool,
     geminiLoopback,
     keepAliveRefresher,
+    accountWarmupTaskScheduler,
     relayService,
   }
 }
 
 export async function closeRelayRuntime(runtime: RelayRuntime): Promise<void> {
   runtime.keepAliveRefresher.stop()
+  runtime.accountWarmupTaskScheduler.stop()
   await Promise.allSettled([
     runtime.proxyPool.close(),
     runtime.geminiLoopback.stop(),

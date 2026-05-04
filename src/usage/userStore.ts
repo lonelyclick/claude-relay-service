@@ -822,7 +822,7 @@ export class UserStore {
            ) FILTER (WHERE user_id = $1 AND client_device_id = $2), 0)::bigint AS client_device_recent_tokens
          FROM usage_records
          WHERE created_at >= $3
-           AND target IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
+           AND split_part(target, '?', 1) IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
            AND COALESCE(attempt_kind, 'final') = 'final'`,
         [userId, clientDeviceId || null, new Date(now - ROUTING_BUDGET_WINDOW_MS).toISOString()],
       ),
@@ -844,6 +844,395 @@ export class UserStore {
         : 0,
     }
   }
+
+  async getRiskWindowSnapshot(input: {
+    userId: string
+    clientDeviceId?: string | null
+    sessionKey?: string | null
+    sinceMs?: number
+  }): Promise<{
+    userRecentRequests: number
+    clientDeviceRecentRequests: number
+    userRecentTokens: number
+    clientDeviceRecentTokens: number
+    userDistinctAccounts: number
+    clientDeviceDistinctAccounts: number
+    sessionDistinctAccounts: number
+    sessionAccountSwitches: number
+    distinctSessions: number
+  }> {
+    const userId = input.userId.trim()
+    const clientDeviceId = input.clientDeviceId?.trim() ?? ''
+    const sessionKey = input.sessionKey?.trim() ?? ''
+    if (!userId) {
+      return {
+        userRecentRequests: 0,
+        clientDeviceRecentRequests: 0,
+        userRecentTokens: 0,
+        clientDeviceRecentTokens: 0,
+        userDistinctAccounts: 0,
+        clientDeviceDistinctAccounts: 0,
+        sessionDistinctAccounts: 0,
+        sessionAccountSwitches: 0,
+        distinctSessions: 0,
+      }
+    }
+
+    const sinceMs = input.sinceMs ?? ROUTING_BUDGET_WINDOW_MS
+    const since = new Date(Date.now() - sinceMs).toISOString()
+    const { rows } = await this.pool.query(
+      `WITH base AS (
+         SELECT
+           user_id,
+           client_device_id,
+           session_key,
+           account_id,
+           created_at,
+           input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens AS tokens,
+           LAG(account_id) OVER (PARTITION BY session_key ORDER BY created_at) AS previous_account_id
+         FROM usage_records
+         WHERE created_at >= $4
+           AND split_part(target, '?', 1) IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
+           AND COALESCE(attempt_kind, 'final') = 'final'
+           AND user_id = $1
+       )
+       SELECT
+         COUNT(*)::int AS user_recent_requests,
+         COUNT(*) FILTER (WHERE client_device_id = $2)::int AS client_device_recent_requests,
+         COALESCE(SUM(tokens), 0)::bigint AS user_recent_tokens,
+         COALESCE(SUM(tokens) FILTER (WHERE client_device_id = $2), 0)::bigint AS client_device_recent_tokens,
+         COUNT(DISTINCT account_id)::int AS user_distinct_accounts,
+         COUNT(DISTINCT account_id) FILTER (WHERE client_device_id = $2)::int AS client_device_distinct_accounts,
+         COUNT(DISTINCT account_id) FILTER (WHERE session_key = $3)::int AS session_distinct_accounts,
+         COUNT(*) FILTER (
+           WHERE session_key = $3
+             AND previous_account_id IS NOT NULL
+             AND previous_account_id <> account_id
+         )::int AS session_account_switches,
+         COUNT(DISTINCT session_key)::int AS distinct_sessions
+       FROM base`,
+      [userId, clientDeviceId || null, sessionKey || null, since],
+    )
+    const row = rows[0] ?? {}
+    return {
+      userRecentRequests: Number(row.user_recent_requests ?? 0),
+      clientDeviceRecentRequests: Number(row.client_device_recent_requests ?? 0),
+      userRecentTokens: Number(row.user_recent_tokens ?? 0),
+      clientDeviceRecentTokens: Number(row.client_device_recent_tokens ?? 0),
+      userDistinctAccounts: Number(row.user_distinct_accounts ?? 0),
+      clientDeviceDistinctAccounts: Number(row.client_device_distinct_accounts ?? 0),
+      sessionDistinctAccounts: Number(row.session_distinct_accounts ?? 0),
+      sessionAccountSwitches: Number(row.session_account_switches ?? 0),
+      distinctSessions: Number(row.distinct_sessions ?? 0),
+    }
+  }
+
+
+  async getClaudeOfficialAccountsUsedByClient(input: {
+    userId?: string | null
+    clientDeviceId?: string | null
+    sinceMs?: number
+  }): Promise<string[]> {
+    const userId = input.userId?.trim() ?? ''
+    if (!userId) return []
+    const clientDeviceId = input.clientDeviceId?.trim() || null
+    const since = new Date(Date.now() - (input.sinceMs ?? 24 * 60 * 60 * 1000)).toISOString()
+    const { rows } = await this.pool.query(
+      `SELECT account_id, MAX(created_at) AS last_seen_at
+       FROM usage_records
+       WHERE user_id = $1
+         AND ($2::text IS NULL OR client_device_id = $2)
+         AND account_id LIKE 'claude-official:%'
+         AND created_at >= $3
+         AND COALESCE(attempt_kind, 'final') = 'final'
+         AND split_part(target, '?', 1) IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
+       GROUP BY account_id
+       ORDER BY last_seen_at DESC`,
+      [userId, clientDeviceId, since],
+    )
+    return rows.map((row) => row.account_id as string).filter(Boolean)
+  }
+
+
+  async getNewClaudeAccountRiskSnapshot(input: {
+    accountId: string
+    userId?: string | null
+    clientDeviceId?: string | null
+    sinceMs?: number
+  }): Promise<{
+    accountRequestCount1m: number
+    accountTokens1m: number
+    accountCacheRead1m: number
+    accountMaxTokens1m: number
+    userDistinctClaudeOfficialAccounts24h: number
+    clientDeviceDistinctClaudeOfficialAccounts24h: number
+    accountFirstSeenAt: string | null
+    accountLastSeenAt: string | null
+    accountAgeMs: number | null
+  }> {
+    const accountId = input.accountId.trim()
+    if (!accountId || !accountId.startsWith('claude-official:')) {
+      return {
+        accountRequestCount1m: 0,
+        accountTokens1m: 0,
+        accountCacheRead1m: 0,
+        accountMaxTokens1m: 0,
+        userDistinctClaudeOfficialAccounts24h: 0,
+        clientDeviceDistinctClaudeOfficialAccounts24h: 0,
+        accountFirstSeenAt: null,
+        accountLastSeenAt: null,
+        accountAgeMs: null,
+      }
+    }
+
+    const now = Date.now()
+    const since1m = new Date(now - 60_000).toISOString()
+    const since24h = new Date(now - (input.sinceMs ?? 24 * 60 * 60 * 1000)).toISOString()
+    const { rows } = await this.pool.query(
+      `WITH account_usage AS (
+         SELECT
+           created_at,
+           input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens AS tokens,
+           cache_read_input_tokens
+         FROM usage_records
+         WHERE account_id = $1
+           AND COALESCE(attempt_kind, 'final') = 'final'
+           AND split_part(target, '?', 1) IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
+       ), recent_account AS (
+         SELECT
+           COUNT(*)::int AS request_count_1m,
+           COALESCE(SUM(tokens), 0)::bigint AS tokens_1m,
+           COALESCE(SUM(cache_read_input_tokens), 0)::bigint AS cache_read_1m,
+           COALESCE(MAX(tokens), 0)::bigint AS max_tokens_1m
+         FROM account_usage
+         WHERE created_at >= $2
+       ), account_seen AS (
+         SELECT MIN(created_at) AS first_seen_at, MAX(created_at) AS last_seen_at
+         FROM account_usage
+       ), user_accounts AS (
+         SELECT COUNT(DISTINCT account_id)::int AS distinct_accounts
+         FROM usage_records
+         WHERE user_id = $3
+           AND account_id LIKE 'claude-official:%'
+           AND created_at >= $4
+           AND COALESCE(attempt_kind, 'final') = 'final'
+           AND split_part(target, '?', 1) IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
+       ), device_accounts AS (
+         SELECT COUNT(DISTINCT account_id)::int AS distinct_accounts
+         FROM usage_records
+         WHERE user_id = $3
+           AND client_device_id = $5
+           AND account_id LIKE 'claude-official:%'
+           AND created_at >= $4
+           AND COALESCE(attempt_kind, 'final') = 'final'
+           AND split_part(target, '?', 1) IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
+       )
+       SELECT
+         recent_account.request_count_1m,
+         recent_account.tokens_1m,
+         recent_account.cache_read_1m,
+         recent_account.max_tokens_1m,
+         account_seen.first_seen_at,
+         account_seen.last_seen_at,
+         COALESCE(user_accounts.distinct_accounts, 0)::int AS user_distinct_accounts_24h,
+         COALESCE(device_accounts.distinct_accounts, 0)::int AS device_distinct_accounts_24h
+       FROM recent_account, account_seen, user_accounts, device_accounts`,
+      [accountId, since1m, input.userId ?? null, since24h, input.clientDeviceId ?? null],
+    )
+    const row = rows[0] ?? {}
+    const firstSeenAt = row.first_seen_at instanceof Date ? row.first_seen_at.toISOString() : null
+    return {
+      accountRequestCount1m: Number(row.request_count_1m ?? 0),
+      accountTokens1m: Number(row.tokens_1m ?? 0),
+      accountCacheRead1m: Number(row.cache_read_1m ?? 0),
+      accountMaxTokens1m: Number(row.max_tokens_1m ?? 0),
+      userDistinctClaudeOfficialAccounts24h: Number(row.user_distinct_accounts_24h ?? 0),
+      clientDeviceDistinctClaudeOfficialAccounts24h: Number(row.device_distinct_accounts_24h ?? 0),
+      accountFirstSeenAt: firstSeenAt,
+      accountLastSeenAt: row.last_seen_at instanceof Date ? row.last_seen_at.toISOString() : null,
+      accountAgeMs: firstSeenAt ? Math.max(0, now - new Date(firstSeenAt).getTime()) : null,
+    }
+  }
+
+  async getClaudeAccountRecentLoad(accountIds: string[], sinceMs: number = 60_000): Promise<Map<string, {
+    requests: number
+    tokens: number
+    cacheReadTokens: number
+    lastSeenAt: string | null
+    firstSeenAt: string | null
+  }>> {
+    const ids = accountIds.map((id) => id.trim()).filter((id) => id.startsWith('claude-official:'))
+    if (ids.length === 0) return new Map()
+    const now = Date.now()
+    const since = new Date(now - Math.max(1, sinceMs)).toISOString()
+    const { rows } = await this.pool.query(
+      `WITH all_usage AS (
+         SELECT account_id, MIN(created_at) AS first_seen_at, MAX(created_at) AS last_seen_at
+         FROM usage_records
+         WHERE account_id = ANY($1::text[])
+           AND COALESCE(attempt_kind, 'final') = 'final'
+           AND split_part(target, '?', 1) IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
+         GROUP BY account_id
+       ), recent AS (
+         SELECT account_id,
+                COUNT(*)::int AS requests,
+                COALESCE(SUM(input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens), 0)::bigint AS tokens,
+                COALESCE(SUM(cache_read_input_tokens), 0)::bigint AS cache_read_tokens
+         FROM usage_records
+         WHERE account_id = ANY($1::text[])
+           AND created_at >= $2
+           AND COALESCE(attempt_kind, 'final') = 'final'
+           AND split_part(target, '?', 1) IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
+         GROUP BY account_id
+       )
+       SELECT all_usage.account_id,
+              COALESCE(recent.requests, 0)::int AS requests,
+              COALESCE(recent.tokens, 0)::bigint AS tokens,
+              COALESCE(recent.cache_read_tokens, 0)::bigint AS cache_read_tokens,
+              all_usage.first_seen_at,
+              all_usage.last_seen_at
+       FROM all_usage
+       LEFT JOIN recent ON recent.account_id = all_usage.account_id`,
+      [ids, since],
+    )
+    const result = new Map<string, {
+      requests: number
+      tokens: number
+      cacheReadTokens: number
+      lastSeenAt: string | null
+      firstSeenAt: string | null
+    }>()
+    for (const row of rows) {
+      result.set(String(row.account_id), {
+        requests: Number(row.requests ?? 0),
+        tokens: Number(row.tokens ?? 0),
+        cacheReadTokens: Number(row.cache_read_tokens ?? 0),
+        firstSeenAt: row.first_seen_at instanceof Date ? row.first_seen_at.toISOString() : null,
+        lastSeenAt: row.last_seen_at instanceof Date ? row.last_seen_at.toISOString() : null,
+      })
+    }
+    return result
+  }
+
+  async getAccountHealthDistribution(input: { since?: string | null } = {}): Promise<{ accounts: Array<Record<string, unknown>> }> {
+    const since = input.since || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+    const { rows } = await this.pool.query(
+      `WITH hourly AS (
+         SELECT account_id,
+                date_trunc('hour', created_at) AS hour,
+                COUNT(*)::int AS requests,
+                COALESCE(SUM(input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens), 0)::bigint AS tokens,
+                COALESCE(SUM(cache_read_input_tokens), 0)::bigint AS cache_read_tokens,
+                COUNT(*) FILTER (WHERE status_code >= 400)::int AS errors
+         FROM usage_records
+         WHERE created_at >= $1
+           AND account_id LIKE 'claude-official:%'
+           AND COALESCE(attempt_kind, 'final') = 'final'
+           AND split_part(target, '?', 1) IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
+         GROUP BY account_id, date_trunc('hour', created_at)
+       ), rollup AS (
+         SELECT account_id,
+                COUNT(*)::int AS active_hours,
+                COALESCE(MAX(requests), 0)::int AS peak_requests_hour,
+                COALESCE(MAX(tokens), 0)::bigint AS peak_tokens_hour,
+                COALESCE(MAX(cache_read_tokens), 0)::bigint AS peak_cache_read_hour,
+                COALESCE(SUM(requests), 0)::int AS total_requests,
+                COALESCE(SUM(tokens), 0)::bigint AS total_tokens,
+                COALESCE(SUM(cache_read_tokens), 0)::bigint AS total_cache_read_tokens,
+                COALESCE(SUM(errors), 0)::int AS errors,
+                MIN(hour) AS first_hour,
+                MAX(hour) AS last_hour
+         FROM hourly
+         GROUP BY account_id
+       )
+       SELECT rollup.*, accounts.data->>'label' AS label, accounts.data->>'emailAddress' AS email_address
+       FROM rollup
+       LEFT JOIN accounts ON accounts.id = rollup.account_id
+       ORDER BY peak_cache_read_hour DESC, total_cache_read_tokens DESC
+       LIMIT 200`,
+      [since],
+    )
+    return {
+      accounts: rows.map((row) => ({
+        accountId: row.account_id,
+        label: row.label ?? null,
+        emailAddress: row.email_address ?? null,
+        activeHours: Number(row.active_hours ?? 0),
+        quietHours: Math.max(0, 24 - Number(row.active_hours ?? 0)),
+        peakRequestsHour: Number(row.peak_requests_hour ?? 0),
+        peakTokensHour: Number(row.peak_tokens_hour ?? 0),
+        peakCacheReadHour: Number(row.peak_cache_read_hour ?? 0),
+        totalRequests: Number(row.total_requests ?? 0),
+        totalTokens: Number(row.total_tokens ?? 0),
+        totalCacheReadTokens: Number(row.total_cache_read_tokens ?? 0),
+        errors: Number(row.errors ?? 0),
+        firstHour: row.first_hour instanceof Date ? row.first_hour.toISOString() : null,
+        lastHour: row.last_hour instanceof Date ? row.last_hour.toISOString() : null,
+      })),
+    }
+  }
+
+  async getEgressRiskSummary(): Promise<{ egress: Array<Record<string, unknown>> }> {
+    const { rows } = await this.pool.query(
+      `WITH account_proxy AS (
+         SELECT id AS account_id,
+                data->>'label' AS label,
+                data->>'emailAddress' AS email_address,
+                NULLIF(data->>'proxyUrl', '') AS proxy_url,
+                data->>'status' AS account_status,
+                data->>'autoBlockedReason' AS auto_blocked_reason
+         FROM accounts
+         WHERE data->>'provider' = 'claude-official'
+       ), usage_30d AS (
+         SELECT account_id,
+                COUNT(*)::int AS requests_30d,
+                COUNT(*) FILTER (WHERE status_code IN (401,403,429))::int AS risk_errors_30d,
+                COUNT(*) FILTER (WHERE response_headers->>'anthropic-ratelimit-unified-overage-disabled-reason' IS NOT NULL AND response_headers->>'anthropic-ratelimit-unified-overage-disabled-reason' <> '')::int AS overage_disabled_30d,
+                MAX(created_at) AS last_used_at
+         FROM usage_records
+         WHERE created_at >= NOW() - INTERVAL '30 days'
+           AND account_id LIKE 'claude-official:%'
+           AND COALESCE(attempt_kind, 'final') = 'final'
+         GROUP BY account_id
+       ), grouped AS (
+         SELECT COALESCE(account_proxy.proxy_url, 'direct') AS egress_key,
+                COUNT(*)::int AS account_count,
+                COUNT(*) FILTER (WHERE account_proxy.account_status IN ('revoked','banned') OR lower(coalesce(account_proxy.auto_blocked_reason, '')) LIKE '%disabled%')::int AS disabled_accounts,
+                COALESCE(SUM(usage_30d.requests_30d), 0)::int AS requests_30d,
+                COALESCE(SUM(usage_30d.risk_errors_30d), 0)::int AS risk_errors_30d,
+                COALESCE(SUM(usage_30d.overage_disabled_30d), 0)::int AS overage_disabled_30d,
+                MAX(usage_30d.last_used_at) AS last_used_at,
+                JSONB_AGG(JSONB_BUILD_OBJECT(
+                  'accountId', account_proxy.account_id,
+                  'label', account_proxy.label,
+                  'emailAddress', account_proxy.email_address,
+                  'requests30d', COALESCE(usage_30d.requests_30d, 0),
+                  'riskErrors30d', COALESCE(usage_30d.risk_errors_30d, 0),
+                  'overageDisabled30d', COALESCE(usage_30d.overage_disabled_30d, 0),
+                  'accountStatus', account_proxy.account_status,
+                  'autoBlockedReason', account_proxy.auto_blocked_reason
+                ) ORDER BY COALESCE(usage_30d.risk_errors_30d, 0) DESC) AS accounts
+         FROM account_proxy
+         LEFT JOIN usage_30d ON usage_30d.account_id = account_proxy.account_id
+         GROUP BY COALESCE(account_proxy.proxy_url, 'direct')
+       )
+       SELECT * FROM grouped
+       ORDER BY disabled_accounts DESC, risk_errors_30d DESC, account_count DESC`,
+    )
+    return {
+      egress: rows.map((row) => ({
+        egressKey: row.egress_key,
+        accountCount: Number(row.account_count ?? 0),
+        disabledAccounts: Number(row.disabled_accounts ?? 0),
+        requests30d: Number(row.requests_30d ?? 0),
+        riskErrors30d: Number(row.risk_errors_30d ?? 0),
+        overageDisabled30d: Number(row.overage_disabled_30d ?? 0),
+        lastUsedAt: row.last_used_at instanceof Date ? row.last_used_at.toISOString() : null,
+        accounts: Array.isArray(row.accounts) ? row.accounts : [],
+      })),
+    }
+  }
+
 
   async getPreferredAccountIdsForClientDevice(input: {
     userId: string
@@ -867,7 +1256,7 @@ export class UserStore {
          FROM usage_records
          WHERE user_id = $1
            AND client_device_id = $2
-           AND target = '/v1/messages'
+          AND split_part(target, '?', 1) = '/v1/messages'
            AND account_id IS NOT NULL
            AND status_code >= 200
            AND status_code < 300
@@ -883,7 +1272,7 @@ export class UserStore {
          WHERE penalty.user_id = $1
            AND penalty.client_device_id = $2
            AND penalty.account_id = successful_accounts.account_id
-           AND penalty.target IN ('/v1/messages', '/v1/sessions/ws')
+          AND split_part(penalty.target, '?', 1) IN ('/v1/messages', '/v1/sessions/ws')
            AND penalty.created_at >= $5
            AND (
              penalty.status_code IN (401, 403, 429)
@@ -1265,7 +1654,7 @@ export class UserStore {
          FROM usage_records
          WHERE user_id IS NOT NULL
            AND created_at >= $2
-           AND target IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
+          AND split_part(target, '?', 1) IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
            AND COALESCE(attempt_kind, 'final') = 'final'
          GROUP BY user_id
        )
@@ -1320,7 +1709,7 @@ export class UserStore {
          WHERE user_id IS NOT NULL
            AND client_device_id IS NOT NULL
            AND created_at >= $2
-           AND target IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
+          AND split_part(target, '?', 1) IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
            AND COALESCE(attempt_kind, 'final') = 'final'
          GROUP BY user_id, client_device_id
        )
@@ -1646,6 +2035,302 @@ export class UserStore {
         createdAt: (r.created_at as Date).toISOString(),
       })),
       total: Number(countResult.rows[0].total),
+    }
+  }
+
+  async getRiskDashboardSummary(input: {
+    since?: string | null
+  } = {}): Promise<Record<string, unknown>> {
+    const since = input.since || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const { rows } = await this.pool.query(`
+      WITH base AS (
+        SELECT
+          id,
+          user_id,
+          account_id,
+          session_key,
+          client_device_id,
+          target,
+          split_part(target, '?', 1) AS path,
+          status_code,
+          input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens AS tokens,
+          created_at,
+          request_headers,
+          response_body_preview,
+          LAG(account_id) OVER (PARTITION BY session_key ORDER BY created_at) AS previous_account_id
+        FROM usage_records
+        WHERE created_at >= $1
+          AND COALESCE(attempt_kind, 'final') = 'final'
+          AND split_part(target, '?', 1) IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
+      ), session_rollup AS (
+        SELECT
+          session_key,
+          COUNT(DISTINCT account_id)::int AS distinct_accounts
+        FROM base
+        WHERE session_key IS NOT NULL
+        GROUP BY session_key
+      ), user_rollup AS (
+        SELECT
+          user_id,
+          COUNT(*)::int AS request_count,
+          COALESCE(SUM(tokens), 0)::bigint AS token_count,
+          COUNT(DISTINCT account_id)::int AS distinct_accounts,
+          COUNT(DISTINCT client_device_id)::int AS distinct_devices,
+          COUNT(DISTINCT request_headers->>'cf-connecting-ip')::int AS distinct_ips
+        FROM base
+        WHERE user_id IS NOT NULL
+        GROUP BY user_id
+      )
+      SELECT
+        COUNT(*)::int AS total_events,
+        COUNT(DISTINCT user_id)::int AS distinct_users,
+        COUNT(DISTINCT account_id)::int AS distinct_accounts,
+        COUNT(*) FILTER (WHERE status_code IN (401, 403))::int AS auth_failures,
+        COUNT(*) FILTER (WHERE status_code = 403 AND lower(coalesce(response_body_preview, '')) LIKE '%access to claude%')::int AS revoked_403,
+        COUNT(*) FILTER (WHERE previous_account_id IS NOT NULL AND previous_account_id <> account_id)::int AS account_switches,
+        COUNT(*) FILTER (WHERE status_code = 429 OR lower(coalesce(request_headers->>'anthropic-ratelimit-unified-status', '')) IN ('rejected', 'throttled', 'blocked'))::int AS rate_limited,
+        COALESCE(MAX(tokens), 0)::bigint AS max_tokens_per_request,
+        COALESCE((SELECT MAX(token_count) FROM user_rollup), 0)::bigint AS max_tokens_per_user,
+        COALESCE((SELECT MAX(request_count) FROM user_rollup), 0)::int AS max_requests_per_user,
+        COALESCE((SELECT COUNT(*) FROM user_rollup WHERE distinct_accounts >= 3), 0)::int AS multi_account_users,
+        COALESCE((SELECT COUNT(*) FROM session_rollup WHERE distinct_accounts >= 2), 0)::int AS multi_account_sessions
+      FROM base
+    `, [since])
+    const row = rows[0] ?? {}
+    return {
+      since,
+      totalEvents: Number(row.total_events ?? 0),
+      distinctUsers: Number(row.distinct_users ?? 0),
+      distinctAccounts: Number(row.distinct_accounts ?? 0),
+      authFailures: Number(row.auth_failures ?? 0),
+      revoked403: Number(row.revoked_403 ?? 0),
+      accountSwitches: Number(row.account_switches ?? 0),
+      rateLimited: Number(row.rate_limited ?? 0),
+      maxTokensPerRequest: Number(row.max_tokens_per_request ?? 0),
+      maxTokensPerUser: Number(row.max_tokens_per_user ?? 0),
+      maxRequestsPerUser: Number(row.max_requests_per_user ?? 0),
+      multiAccountUsers: Number(row.multi_account_users ?? 0),
+      multiAccountSessions: Number(row.multi_account_sessions ?? 0),
+    }
+  }
+
+  async getRiskDashboardEvents(input: {
+    since?: string | null
+    limit?: number
+    offset?: number
+    userId?: string | null
+    accountId?: string | null
+    sessionKey?: string | null
+    clientDeviceId?: string | null
+    ip?: string | null
+    path?: string | null
+    statusCode?: number | null
+    minTokens?: number | null
+    riskOnly?: boolean
+    multiAccountOnly?: boolean
+    revokedOnly?: boolean
+  } = {}): Promise<{ events: Array<Record<string, unknown>>; total: number }> {
+    const params: unknown[] = [input.since || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()]
+    const whereClauses = [
+      `created_at >= $1`,
+      `COALESCE(attempt_kind, 'final') = 'final'`,
+      `split_part(target, '?', 1) IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')`,
+    ]
+    const addParam = (value: unknown) => `$${params.push(value)}`
+    if (input.userId) whereClauses.push(`user_id = ${addParam(input.userId)}`)
+    if (input.accountId) whereClauses.push(`account_id = ${addParam(input.accountId)}`)
+    if (input.sessionKey) whereClauses.push(`session_key = ${addParam(input.sessionKey)}`)
+    if (input.clientDeviceId) whereClauses.push(`client_device_id = ${addParam(input.clientDeviceId)}`)
+    if (input.ip) whereClauses.push(`request_headers->>'cf-connecting-ip' = ${addParam(input.ip)}`)
+    if (input.path) whereClauses.push(`split_part(target, '?', 1) = ${addParam(input.path)}`)
+    if (Number.isFinite(input.statusCode)) whereClauses.push(`status_code = ${addParam(Math.floor(Number(input.statusCode)))}`)
+    if (Number.isFinite(input.minTokens)) {
+      whereClauses.push(`input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens >= ${addParam(Math.floor(Number(input.minTokens)))}`)
+    }
+    if (input.revokedOnly) {
+      whereClauses.push(`status_code IN (401, 403) AND (lower(coalesce(response_body_preview, '')) LIKE '%access to claude%' OR lower(coalesce(response_body_preview, '')) LIKE '%disabled organization%' OR lower(coalesce(response_body_preview, '')) LIKE '%organization is disabled%' OR lower(coalesce(response_body_preview, '')) LIKE '%authentication_failed%' OR lower(coalesce(response_body_preview, '')) LIKE '%oauth token has been revoked%')`)
+    }
+    const baseWhere = whereClauses.join('\n          AND ')
+    const riskClause = input.riskOnly
+      ? `WHERE risk_score > 0`
+      : ''
+    const multiAccountClause = input.multiAccountOnly
+      ? `${riskClause ? 'AND' : 'WHERE'} session_distinct_accounts >= 2`
+      : ''
+    const limit = Math.max(1, Math.min(input.limit ?? 100, 500))
+    const offset = Math.max(0, input.offset ?? 0)
+    const listParams = [...params, limit, offset]
+    const query = `
+      WITH base AS (
+        SELECT
+          id AS usage_record_id,
+          request_id,
+          user_id,
+          account_id,
+          session_key,
+          client_device_id,
+          model,
+          target,
+          split_part(target, '?', 1) AS path,
+          status_code,
+          duration_ms,
+          input_tokens,
+          output_tokens,
+          cache_creation_input_tokens,
+          cache_read_input_tokens,
+          input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens AS total_tokens,
+          created_at,
+          request_headers,
+          request_body_preview,
+          response_headers,
+          response_body_preview,
+          upstream_request_headers,
+          LAG(account_id) OVER (PARTITION BY session_key ORDER BY created_at) AS previous_account_id
+        FROM usage_records
+        WHERE ${baseWhere}
+      ), session_counts AS (
+        SELECT session_key, COUNT(DISTINCT account_id)::int AS session_distinct_accounts
+        FROM base
+        WHERE session_key IS NOT NULL
+        GROUP BY session_key
+      ), user_counts AS (
+        SELECT user_id, COUNT(DISTINCT account_id)::int AS user_distinct_accounts
+        FROM base
+        WHERE user_id IS NOT NULL
+        GROUP BY user_id
+      ), device_counts AS (
+        SELECT user_id, client_device_id, COUNT(DISTINCT account_id)::int AS device_distinct_accounts
+        FROM base
+        WHERE user_id IS NOT NULL AND client_device_id IS NOT NULL
+        GROUP BY user_id, client_device_id
+      ), scored AS (
+        SELECT
+          base.*,
+          COALESCE(session_counts.session_distinct_accounts, 0) AS session_distinct_accounts,
+          COALESCE(user_counts.user_distinct_accounts, 0) AS user_distinct_accounts,
+          COALESCE(device_counts.device_distinct_accounts, 0) AS device_distinct_accounts,
+          (
+            CASE WHEN status_code IN (401, 403) THEN 40 ELSE 0 END +
+            CASE WHEN status_code IN (401, 403) AND (lower(coalesce(response_body_preview, '')) LIKE '%access to claude%' OR lower(coalesce(response_body_preview, '')) LIKE '%disabled organization%' OR lower(coalesce(response_body_preview, '')) LIKE '%organization is disabled%' OR lower(coalesce(response_body_preview, '')) LIKE '%authentication_failed%' OR lower(coalesce(response_body_preview, '')) LIKE '%oauth token has been revoked%') THEN 80 ELSE 0 END +
+            CASE WHEN status_code = 429 THEN 25 ELSE 0 END +
+            CASE WHEN lower(coalesce(response_body_preview, '')) LIKE '%unsupported_client%' OR lower(coalesce(response_body_preview, '')) LIKE '%cli_validation_failed%' THEN 20 ELSE 0 END +
+            CASE WHEN lower(coalesce(response_body_preview, '')) LIKE '%session account pinning blocked migration%' OR lower(coalesce(response_body_preview, '')) LIKE '%pinning blocked migration%' OR lower(coalesce(response_body_preview, '')) LIKE '%predicted_7d_exhaustion%' THEN 70 ELSE 0 END +
+            CASE WHEN total_tokens >= 400000 THEN 25 ELSE 0 END +
+            CASE WHEN COALESCE(session_counts.session_distinct_accounts, 0) >= 2 THEN 35 ELSE 0 END +
+            CASE WHEN COALESCE(user_counts.user_distinct_accounts, 0) >= 2 THEN 35 ELSE 0 END +
+            CASE WHEN COALESCE(device_counts.device_distinct_accounts, 0) >= 2 THEN 35 ELSE 0 END +
+            CASE WHEN previous_account_id IS NOT NULL AND previous_account_id <> account_id THEN 45 ELSE 0 END
+          )::int AS risk_score
+        FROM base
+        LEFT JOIN session_counts ON session_counts.session_key = base.session_key
+        LEFT JOIN user_counts ON user_counts.user_id = base.user_id
+        LEFT JOIN device_counts ON device_counts.user_id = base.user_id AND device_counts.client_device_id = base.client_device_id
+      ), filtered AS (
+        SELECT * FROM scored
+        ${riskClause}
+        ${multiAccountClause}
+      )
+      SELECT *, COUNT(*) OVER() AS total_count
+      FROM filtered
+      ORDER BY created_at DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `
+    const { rows } = await this.pool.query(query, listParams)
+    return {
+      events: rows.map((r) => ({
+        usageRecordId: Number(r.usage_record_id),
+        requestId: r.request_id,
+        userId: r.user_id ?? null,
+        accountId: r.account_id ?? null,
+        sessionKey: r.session_key ?? null,
+        clientDeviceId: r.client_device_id ?? null,
+        model: r.model ?? null,
+        target: r.target,
+        path: r.path,
+        statusCode: r.status_code,
+        durationMs: r.duration_ms,
+        inputTokens: Number(r.input_tokens ?? 0),
+        outputTokens: Number(r.output_tokens ?? 0),
+        cacheCreationTokens: Number(r.cache_creation_input_tokens ?? 0),
+        cacheReadTokens: Number(r.cache_read_input_tokens ?? 0),
+        totalTokens: Number(r.total_tokens ?? 0),
+        createdAt: (r.created_at as Date).toISOString(),
+        ip: r.request_headers?.['cf-connecting-ip'] ?? null,
+        userAgent: r.request_headers?.['user-agent'] ?? null,
+        xApp: r.request_headers?.['x-app'] ?? null,
+        anthropicBeta: r.request_headers?.['anthropic-beta'] ?? null,
+        anthropicVersion: r.request_headers?.['anthropic-version'] ?? null,
+        claudeCodeSessionId: r.request_headers?.['x-claude-code-session-id'] ?? null,
+        directBrowserAccess: r.request_headers?.['anthropic-dangerous-direct-browser-access'] ?? null,
+        upstreamAnthropicBeta: r.upstream_request_headers?.['anthropic-beta'] ?? null,
+        requestPreview: r.request_body_preview ?? null,
+        responsePreview: r.response_body_preview ?? null,
+        responseHeaders: r.response_headers ?? null,
+        previousAccountId: r.previous_account_id ?? null,
+        sessionDistinctAccounts: Number(r.session_distinct_accounts ?? 0),
+        userDistinctAccounts: Number(r.user_distinct_accounts ?? 0),
+        deviceDistinctAccounts: Number(r.device_distinct_accounts ?? 0),
+        riskScore: Number(r.risk_score ?? 0),
+      })),
+      total: rows.length ? Number(rows[0].total_count ?? 0) : 0,
+    }
+  }
+
+
+  async getRiskDashboardTrends(input: {
+    since?: string | null
+    accountId?: string | null
+  } = {}): Promise<{ points: Array<Record<string, unknown>> }> {
+    const since = input.since || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const params: unknown[] = [since]
+    const accountFilter = input.accountId ? `AND account_id = $${params.push(input.accountId)}` : ''
+    const { rows } = await this.pool.query(
+      `WITH base AS (
+         SELECT
+           date_trunc('minute', created_at) AS minute,
+           account_id,
+           user_id,
+           client_device_id,
+           input_tokens + output_tokens + cache_creation_input_tokens + cache_read_input_tokens AS tokens,
+           cache_read_input_tokens,
+           status_code,
+           COALESCE(organization_id, response_headers->>'anthropic-organization-id') AS organization_id,
+           response_headers->>'anthropic-ratelimit-unified-overage-disabled-reason' AS overage_disabled_reason
+         FROM usage_records
+         WHERE created_at >= $1
+           ${accountFilter}
+           AND COALESCE(attempt_kind, 'final') = 'final'
+           AND split_part(target, '?', 1) IN ('/v1/messages', '/v1/sessions/ws', '/v1/chat/completions')
+       )
+       SELECT
+         minute,
+         COUNT(*)::int AS requests,
+         COALESCE(SUM(tokens), 0)::bigint AS tokens,
+         COALESCE(SUM(cache_read_input_tokens), 0)::bigint AS cache_read_tokens,
+         COUNT(DISTINCT account_id)::int AS distinct_accounts,
+         COUNT(DISTINCT user_id)::int AS distinct_users,
+         COUNT(DISTINCT client_device_id)::int AS distinct_devices,
+         COUNT(*) FILTER (WHERE status_code >= 400)::int AS errors,
+         ARRAY_REMOVE(ARRAY_AGG(DISTINCT organization_id), NULL) AS organization_ids,
+         ARRAY_REMOVE(ARRAY_AGG(DISTINCT overage_disabled_reason), NULL) AS overage_disabled_reasons
+       FROM base
+       GROUP BY minute
+       ORDER BY minute ASC`,
+      params,
+    )
+    return {
+      points: rows.map((row) => ({
+        minute: (row.minute as Date).toISOString(),
+        requests: Number(row.requests ?? 0),
+        tokens: Number(row.tokens ?? 0),
+        cacheReadTokens: Number(row.cache_read_tokens ?? 0),
+        distinctAccounts: Number(row.distinct_accounts ?? 0),
+        distinctUsers: Number(row.distinct_users ?? 0),
+        distinctDevices: Number(row.distinct_devices ?? 0),
+        errors: Number(row.errors ?? 0),
+        organizationIds: Array.isArray(row.organization_ids) ? row.organization_ids : [],
+        overageDisabledReasons: Array.isArray(row.overage_disabled_reasons) ? row.overage_disabled_reasons : [],
+      })),
     }
   }
 

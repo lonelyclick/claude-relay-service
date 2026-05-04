@@ -437,13 +437,16 @@ export class AccountScheduler {
     if (!account.isActive) {
       return 'inactive'
     }
+    if (account.status === 'banned') {
+      return 'banned'
+    }
     if (account.status === 'revoked') {
       return 'revoked'
     }
     if (account.cooldownUntil !== null && account.cooldownUntil > now) {
       return 'cooldown'
     }
-    if (providerRequiresProxy(account.provider) && !account.proxyUrl) {
+    if (providerRequiresProxy(account.provider) && !account.proxyUrl && account.directEgressEnabled !== true) {
       return 'no_proxy'
     }
     if (!account.schedulerEnabled) {
@@ -562,7 +565,7 @@ export class AccountScheduler {
     const healthScore = clamp01(this.healthTracker.getHealthScore(account.id))
     const capacityScore = groupTotalActive > 0 ? clamp01(1 - activeSessions / groupTotalActive) : 1
     const proxyScore = providerRequiresProxy(account.provider)
-      ? (account.proxyUrl ? 1 : 0)
+      ? (account.proxyUrl ? 1 : account.directEgressEnabled === true ? 0.35 : 0)
       : 1
     const manualWeightScore = normalizeWeight(account.weight)
     const planMultiplierScore = normalizeWeight(
@@ -641,10 +644,10 @@ export class AccountScheduler {
       if (!account.isActive) {
         return false
       }
-      if (account.status === 'revoked') {
+      if (account.status === 'revoked' || account.status === 'banned') {
         return false
       }
-      if (providerRequiresProxy(account.provider) && !account.proxyUrl) {
+      if (providerRequiresProxy(account.provider) && !account.proxyUrl && account.directEgressEnabled !== true) {
         return false
       }
       if (!account.schedulerEnabled) {

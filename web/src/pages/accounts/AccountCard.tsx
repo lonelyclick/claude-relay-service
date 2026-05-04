@@ -16,6 +16,7 @@ function getAutoBlockedUntilLabel(a: Account): string | null {
 function getSignals(a: Account): Signal[] {
   const signals: Signal[] = []
   const autoBlockedUntil = getAutoBlockedUntilLabel(a)
+  if (a.status === 'banned') signals.push({ label: '被封禁 / Banned', tone: 'red' })
   if (a.schedulerState === 'auto_blocked') {
     const unblockText = autoBlockedUntil ? ` - 解封时间 ${autoBlockedUntil}` : ''
     signals.push({ label: `Auto-blocked: ${a.autoBlockedReason ?? 'unknown'}${unblockText}`, tone: 'red' })
@@ -50,7 +51,7 @@ function schedulerTone(state?: string): BadgeTone {
 }
 
 function resolveProxyLabel(account: Account, proxies: Proxy[]): string {
-  if (!account.proxyUrl) return 'None'
+  if (!account.proxyUrl) return account.directEgressEnabled ? 'Direct server' : 'None'
   const proxy = proxies.find((p) => p.localUrl === account.proxyUrl || p.url === account.proxyUrl)
   return proxy?.label ?? 'Unknown network'
 }
@@ -83,6 +84,7 @@ export function AccountCard({ account, proxies = [] }: { account: Account; proxi
         <Badge tone={providerTone(account.provider)}>{account.provider}</Badge>
         <Badge tone="blue">{account.protocol}</Badge>
         <Badge tone="gray">{account.authMode}</Badge>
+        {account.status === 'banned' && <Badge tone="red">banned</Badge>}
         {account.schedulerState && (
           <Badge tone={schedulerTone(account.schedulerState)}>{account.schedulerState}</Badge>
         )}

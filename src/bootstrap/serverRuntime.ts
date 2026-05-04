@@ -1,6 +1,7 @@
 import { appConfig } from '../config.js'
 import { ConnectionTracker } from '../runtime/connectionTracker.js'
 import { RuntimeState } from '../runtime/instanceState.js'
+import { AccountRiskScoreScheduler } from '../scheduler/accountRiskScoreScheduler.js'
 import { buildBaseRuntime, closeBaseRuntime, type BaseRuntime } from './baseRuntime.js'
 
 export type ServerRuntime = BaseRuntime & {
@@ -9,6 +10,7 @@ export type ServerRuntime = BaseRuntime & {
   connectionTracker: ConnectionTracker
   proxyPool: null
   geminiLoopback: null
+  accountRiskScoreScheduler: AccountRiskScoreScheduler
 }
 
 export async function buildServerRuntime(): Promise<ServerRuntime> {
@@ -32,9 +34,15 @@ export async function buildServerRuntime(): Promise<ServerRuntime> {
     connectionTracker: new ConnectionTracker(),
     proxyPool: null,
     geminiLoopback: null,
+    accountRiskScoreScheduler: new AccountRiskScoreScheduler(
+      baseRuntime.oauthService,
+      baseRuntime.accountRiskService,
+      appConfig.accountRiskScoreRefreshEnabled ? appConfig.accountRiskScoreRefreshIntervalMs : 0,
+    ),
   }
 }
 
 export async function closeServerRuntime(runtime: ServerRuntime): Promise<void> {
+  runtime.accountRiskScoreScheduler.stop()
   await closeBaseRuntime(runtime)
 }

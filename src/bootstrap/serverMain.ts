@@ -14,6 +14,8 @@ export async function main(): Promise<void> {
 
   await listen(server, appConfig.port, appConfig.host)
   runtime.runtimeState.markReady()
+  runtime.balanceAlertScheduler.start()
+  runtime.accountRiskScoreScheduler.start()
   process.stdout.write(
     `Claude OAuth Relay (server) listening on http://${appConfig.host}:${appConfig.port}\n`,
   )

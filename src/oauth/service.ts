@@ -23,6 +23,12 @@ import type {
 import { AccountScheduler } from '../scheduler/accountScheduler.js'
 import { FingerprintCache } from '../scheduler/fingerprintCache.js'
 import type { UserStore } from '../usage/userStore.js'
+import { resolveClaudeWarmupStatus } from '../usage/claudeWarmupPolicy.js'
+import type {
+  AccountLifecycleStore,
+  AccountLifecycleEventInput,
+  AccountLifecycleEventType,
+} from '../usage/accountLifecycleStore.js'
 import { InputValidationError } from '../security/inputValidation.js'
 import {
   buildAuthorizeUrl,
@@ -43,6 +49,7 @@ import {
 } from '../providers/catalog.js'
 import {
   buildOpenAICodexAuthorizeUrl,
+  buildOpenAICodexResponsesUrl,
   isOpenAICodexAccount,
   normalizeOpenAICodexApiBaseUrl,
   OPENAI_CODEX_OAUTH_SCOPES,
@@ -67,10 +74,33 @@ import {
 
 const SESSION_TTL_MS = 10 * 60 * 1000
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000
+const HANDOFF_OPENAI_MODELS = ['gpt-5.4-nano', 'gpt-5.4-mini'] as const
+const HANDOFF_SUMMARY_MAX_CHARS = 2400
 
 function trimToNull(value: string | null | undefined): string | null {
   const trimmed = value?.trim()
   return trimmed ? trimmed : null
+}
+
+function extractEmailDomain(email: string | null | undefined): string | null {
+  if (!email) return null
+  const idx = email.lastIndexOf('@')
+  if (idx < 0 || idx === email.length - 1) return null
+  return email.slice(idx + 1).toLowerCase()
+}
+
+const CLAUDE_ORG_REVOCATION_PATTERNS = [
+  'organization does not have access to claude',
+  'access to claude has been revoked',
+  'organization has been disabled',
+  'disabled organization',
+  'usage policy',
+  'oauth token has been revoked',
+]
+
+function isClaudeOrgRevocationReason(reason: string): boolean {
+  const lower = reason.toLowerCase()
+  return CLAUDE_ORG_REVOCATION_PATTERNS.some((pattern) => lower.includes(pattern))
 }
 
 function normalizeClaudeCompatibleTierMap(
@@ -105,6 +135,18 @@ function normalizeOpenAICompatibleModelMapInput(
   }
   return count > 0 ? next : null
 }
+
+function resolveAccountEffectiveAgeMs(account: StoredAccount, firstSeenAt: string | null, now: number): number | null {
+  const ages = [account.accountCreatedAt, account.createdAt, firstSeenAt]
+    .map((value) => {
+      if (!value) return null
+      const parsed = Date.parse(value)
+      return Number.isFinite(parsed) && parsed > 0 && parsed <= now ? now - parsed : null
+    })
+    .filter((value): value is number => value != null)
+  return ages.length > 0 ? Math.min(...ages) : null
+}
+
 
 function normalizeMaxSessions(value: number | null): number | null {
   if (value == null) {
@@ -341,6 +383,8 @@ type PersistTokenOptions = {
   apiBaseUrl?: string | null
   routingGroupId?: string | null
   group?: string | null
+  warmupEnabled?: boolean
+  warmupPolicyId?: StoredAccount['warmupPolicyId']
 }
 
 type StoredSelectionResult = {
@@ -400,8 +444,19 @@ export class RoutingGuardError extends Error {
   }
 }
 
+export interface OnboardingContext {
+  ingressIp?: string | null
+  ingressUserAgent?: string | null
+  ingressForwardedFor?: string | null
+  source?: string | null
+  notes?: Record<string, unknown> | null
+}
+
 export class OAuthService {
   private readonly sessions = new Map<string, OAuthSession>()
+  private lifecycleStore: AccountLifecycleStore | null = null
+  private currentOnboardingContext: OnboardingContext | null = null
+  private deprioritizedAccountIdsProvider: () => ReadonlySet<string> = () => new Set<string>()
 
   constructor(
     private readonly store: ITokenStore,
@@ -409,6 +464,52 @@ export class OAuthService {
     private readonly fingerprintCache: FingerprintCache,
     private readonly userStore: UserStore | null = null,
   ) {}
+
+  setLifecycleStore(store: AccountLifecycleStore | null): void {
+    this.lifecycleStore = store
+  }
+
+  setDeprioritizedAccountIdsProvider(provider: () => ReadonlySet<string>): void {
+    this.deprioritizedAccountIdsProvider = provider
+  }
+
+  async runWithOnboardingContext<T>(
+    context: OnboardingContext,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.currentOnboardingContext
+    this.currentOnboardingContext = context
+    try {
+      return await fn()
+    } finally {
+      this.currentOnboardingContext = previous
+    }
+  }
+
+  private async recordLifecycleEvent(
+    input: Omit<AccountLifecycleEventInput, 'ingressIp' | 'ingressUserAgent' | 'ingressForwardedFor'> & {
+      ingressIp?: string | null
+      ingressUserAgent?: string | null
+      ingressForwardedFor?: string | null
+    },
+  ): Promise<void> {
+    const store = this.lifecycleStore
+    if (!store) return
+    const ctx = this.currentOnboardingContext
+    const merged: AccountLifecycleEventInput = {
+      ...input,
+      ingressIp: input.ingressIp ?? ctx?.ingressIp ?? null,
+      ingressUserAgent: input.ingressUserAgent ?? ctx?.ingressUserAgent ?? null,
+      ingressForwardedFor: input.ingressForwardedFor ?? ctx?.ingressForwardedFor ?? null,
+      notes: { ...(ctx?.notes ?? {}), ...(input.notes ?? {}), source: ctx?.source ?? input.notes?.source ?? null },
+    }
+    try {
+      await store.recordEvent(merged)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn(`[lifecycle] record ${input.eventType} failed for ${input.accountId}: ${message}`)
+    }
+  }
 
   createAuthSession(
     input?:
@@ -498,6 +599,8 @@ export class OAuthService {
     apiBaseUrl?: string | null
     routingGroupId?: string | null
     group?: string | null
+    warmupEnabled?: boolean
+    warmupPolicyId?: StoredAccount['warmupPolicyId']
   }): Promise<StoredAccount> {
     const session = this.peekSession(input.sessionId)
     const { code, state } = parseAuthorizationInput(input.authorizationInput)
@@ -590,9 +693,34 @@ export class OAuthService {
       proxyUrl,
       routingGroupId: input.routingGroupId,
       group: input.group,
+      warmupEnabled: input.warmupEnabled,
+      warmupPolicyId: input.warmupPolicyId,
     })
     this.scheduler.clearAccountHealth(stored.id)
     void this.store.updateAccountRateLimitedUntil?.(stored.id, 0)
+    void this.recordLifecycleEvent({
+      accountId: stored.id,
+      eventType: 'oauth_exchanged',
+      outcome: 'ok',
+      egressProxyUrl: proxyUrl ?? null,
+      egressProvider: stored.provider,
+      notes: {
+        provider: stored.provider,
+        sessionId: input.sessionId,
+        emailAddress: stored.emailAddress,
+        organizationUuid: stored.organizationUuid,
+        accountUuid: stored.accountUuid,
+        subscriptionType: stored.subscriptionType,
+        rateLimitTier: stored.rateLimitTier,
+        billingType: stored.billingType,
+        warmupEnabled: stored.warmupEnabled ?? true,
+        warmupPolicyId: stored.warmupPolicyId ?? 'a',
+        accountCreatedAt: stored.accountCreatedAt,
+        subscriptionCreatedAt: stored.subscriptionCreatedAt,
+        scopes: stored.scopes,
+        routingGroupId: stored.routingGroupId,
+      },
+    })
     return stored
   }
 
@@ -601,6 +729,8 @@ export class OAuthService {
     label?: string,
     routingGroupId?: string | null,
     group?: string | null,
+    warmupEnabled?: boolean,
+    warmupPolicyId?: StoredAccount['warmupPolicyId'],
   ): Promise<StoredAccount> {
     const trimmed = sessionKey.trim()
     if (!trimmed) {
@@ -668,9 +798,32 @@ export class OAuthService {
       source: 'login',
       routingGroupId,
       group,
+      warmupEnabled,
+      warmupPolicyId,
     })
     this.scheduler.clearAccountHealth(stored.id)
     void this.store.updateAccountRateLimitedUntil?.(stored.id, 0)
+    void this.recordLifecycleEvent({
+      accountId: stored.id,
+      eventType: 'session_key_login',
+      outcome: 'ok',
+      egressProvider: stored.provider,
+      notes: {
+        provider: stored.provider,
+        emailAddress: stored.emailAddress,
+        organizationUuid: stored.organizationUuid,
+        accountUuid: stored.accountUuid,
+        subscriptionType: stored.subscriptionType,
+        rateLimitTier: stored.rateLimitTier,
+        billingType: stored.billingType,
+        warmupEnabled: stored.warmupEnabled ?? true,
+        warmupPolicyId: stored.warmupPolicyId ?? 'a',
+        accountCreatedAt: stored.accountCreatedAt,
+        subscriptionCreatedAt: stored.subscriptionCreatedAt,
+        scopes: stored.scopes,
+        routingGroupId: stored.routingGroupId,
+      },
+    })
     return stored
   }
 
@@ -935,6 +1088,7 @@ export class OAuthService {
     label?: string
     routingGroupId?: string | null
     group?: string | null
+    warmupEnabled?: boolean
   }): Promise<StoredAccount> {
     const now = new Date().toISOString()
     const routingGroupId = resolveRoutingGroupId(input.routingGroupId, input.group)
@@ -1029,6 +1183,20 @@ export class OAuthService {
         result: account,
       }
     })
+    void this.recordLifecycleEvent({
+      accountId: account.id,
+      eventType: 'account_added',
+      outcome: 'ok',
+      egressProvider: account.provider,
+      notes: {
+        provider: account.provider,
+        authMode: account.authMode,
+        emailAddress: account.emailAddress,
+        emailDomain: extractEmailDomain(account.emailAddress),
+        routingGroupId: account.routingGroupId,
+        hasPassword: Boolean(account.loginPassword),
+      },
+    })
     return account
   }
 
@@ -1078,6 +1246,7 @@ export class OAuthService {
     proxyUrl?: string | null
     routingGroupId?: string | null
     group?: string | null
+    warmupEnabled?: boolean
   }): Promise<StoredAccount> {
     const apiKey = input.apiKey.trim()
     const apiBaseUrl = normalizeApiBaseUrl(input.apiBaseUrl)
@@ -1153,7 +1322,7 @@ export class OAuthService {
       loginPassword: null,
     }
 
-    return this.store.updateData((current) => {
+    const stored = await this.store.updateData((current) => {
       const data = this.pruneExpiredStickySessions(current)
       const routingGroups = ensureRoutingGroupStub(data.routingGroups ?? [], routingGroupId, OPENAI_COMPATIBLE_PROVIDER.id, now)
       requireRoutingGroupForProvider(routingGroups, routingGroupId, OPENAI_COMPATIBLE_PROVIDER.id)
@@ -1166,6 +1335,20 @@ export class OAuthService {
         result: account,
       }
     })
+    void this.recordLifecycleEvent({
+      accountId: stored.id,
+      eventType: 'compatible_account_added',
+      outcome: 'ok',
+      egressProxyUrl: stored.proxyUrl,
+      egressProvider: stored.provider,
+      notes: {
+        provider: stored.provider,
+        apiBaseUrl: stored.apiBaseUrl,
+        modelName: stored.modelName,
+        routingGroupId: stored.routingGroupId,
+      },
+    })
+    return stored
   }
 
   async createClaudeCompatibleAccount(input: {
@@ -1177,6 +1360,7 @@ export class OAuthService {
     proxyUrl?: string | null
     routingGroupId?: string | null
     group?: string | null
+    warmupEnabled?: boolean
   }): Promise<StoredAccount> {
     const apiKey = input.apiKey.trim()
     const apiBaseUrl = normalizeApiBaseUrl(input.apiBaseUrl)
@@ -1255,7 +1439,7 @@ export class OAuthService {
       loginPassword: null,
     }
 
-    return this.store.updateData((current) => {
+    const stored = await this.store.updateData((current) => {
       const data = this.pruneExpiredStickySessions(current)
       const routingGroups = ensureRoutingGroupStub(data.routingGroups ?? [], routingGroupId, CLAUDE_COMPATIBLE_PROVIDER.id, now)
       requireRoutingGroupForProvider(routingGroups, routingGroupId, CLAUDE_COMPATIBLE_PROVIDER.id)
@@ -1268,6 +1452,20 @@ export class OAuthService {
         result: account,
       }
     })
+    void this.recordLifecycleEvent({
+      accountId: stored.id,
+      eventType: 'compatible_account_added',
+      outcome: 'ok',
+      egressProxyUrl: stored.proxyUrl,
+      egressProvider: stored.provider,
+      notes: {
+        provider: stored.provider,
+        apiBaseUrl: stored.apiBaseUrl,
+        modelName: stored.modelName,
+        routingGroupId: stored.routingGroupId,
+      },
+    })
+    return stored
   }
 
   async refreshAccount(accountId: string): Promise<StoredAccount> {
@@ -1379,7 +1577,7 @@ export class OAuthService {
       : (await this.pruneExpiredStickySessions(await this.store.getData(), now)).accounts
     const probeIntervalMs = appConfig.rateLimitProbeIntervalMs
     const eligible = accounts.filter((account) => {
-      if (!account.isActive || account.status === 'revoked') return false
+      if (!account.isActive || account.status === 'revoked' || account.status === 'banned') return false
       if (!account.accessToken) return false
       if (account.authMode !== 'oauth') return false
       const lastRateLimitMs = account.lastRateLimitAt
@@ -1486,18 +1684,45 @@ export class OAuthService {
     label?: string | null
     routingGroupId?: string | null
     group?: string | null
+    warmupEnabled?: boolean
+    warmupPolicyId?: StoredAccount['warmupPolicyId']
   }): Promise<StoredAccount> {
     const fakeTokenResponse: OAuthTokenResponse = {
       access_token: input.accessToken,
       refresh_token: input.refreshToken ?? undefined,
       expires_in: 0,
     }
-    return this.persistTokenResponse(fakeTokenResponse, {
+    const stored = await this.persistTokenResponse(fakeTokenResponse, {
       label: input.label ?? null,
       source: 'login',
       routingGroupId: input.routingGroupId ?? null,
       group: input.group ?? null,
+      warmupEnabled: input.warmupEnabled,
+      warmupPolicyId: input.warmupPolicyId,
     })
+    void this.recordLifecycleEvent({
+      accountId: stored.id,
+      eventType: 'token_imported',
+      outcome: 'ok',
+      egressProvider: stored.provider,
+      notes: {
+        provider: stored.provider,
+        emailAddress: stored.emailAddress,
+        organizationUuid: stored.organizationUuid,
+        accountUuid: stored.accountUuid,
+        subscriptionType: stored.subscriptionType,
+        rateLimitTier: stored.rateLimitTier,
+        billingType: stored.billingType,
+        warmupEnabled: stored.warmupEnabled ?? true,
+        warmupPolicyId: stored.warmupPolicyId ?? 'a',
+        accountCreatedAt: stored.accountCreatedAt,
+        subscriptionCreatedAt: stored.subscriptionCreatedAt,
+        scopes: stored.scopes,
+        routingGroupId: stored.routingGroupId,
+        hasRefreshToken: Boolean(input.refreshToken),
+      },
+    })
+    return stored
   }
 
   async getSchedulerStats(): Promise<{
@@ -1652,11 +1877,14 @@ export class OAuthService {
       schedulerEnabled?: boolean
       schedulerState?: StoredAccount['schedulerState']
       proxyUrl?: string | null
+      directEgressEnabled?: boolean
       bodyTemplatePath?: string | null
       vmFingerprintTemplatePath?: string | null
       label?: string | null
       apiBaseUrl?: string | null
       modelName?: string | null
+      warmupEnabled?: boolean
+      warmupPolicyId?: StoredAccount['warmupPolicyId']
       modelTierMap?: Partial<ClaudeCompatibleTierMap> | ClaudeCompatibleTierMap | null
       modelMap?: Record<string, string> | null
     },
@@ -1713,6 +1941,7 @@ export class OAuthService {
         }
       }
       if (settings.proxyUrl !== undefined) updated.proxyUrl = settings.proxyUrl
+      if (settings.directEgressEnabled !== undefined) updated.directEgressEnabled = settings.directEgressEnabled
       if (settings.bodyTemplatePath !== undefined) updated.bodyTemplatePath = settings.bodyTemplatePath
       if (settings.vmFingerprintTemplatePath !== undefined) updated.vmFingerprintTemplatePath = settings.vmFingerprintTemplatePath
       if (settings.label !== undefined) updated.label = settings.label
@@ -1722,6 +1951,12 @@ export class OAuthService {
       }
       if (settings.modelName !== undefined) {
         updated.modelName = trimToNull(settings.modelName)
+      }
+      if (settings.warmupEnabled !== undefined) {
+        updated.warmupEnabled = settings.warmupEnabled
+      }
+      if (settings.warmupPolicyId !== undefined) {
+        updated.warmupPolicyId = settings.warmupPolicyId
       }
       if (settings.modelTierMap !== undefined) {
         updated.modelTierMap = normalizeClaudeCompatibleTierMap(settings.modelTierMap)
@@ -2030,6 +2265,61 @@ export class OAuthService {
     })
   }
 
+
+  async markAccountRiskGuardrail(accountId: string, reason: string, cooldownMs: number): Promise<void> {
+    const normalizedReason = reason.trim() || 'risk_guardrail'
+    await this.updateAccountRecord(accountId, (account, now) => {
+      const nowIso = new Date(now).toISOString()
+      const nextBlockedUntil = Math.max(account.autoBlockedUntil ?? 0, now + cooldownMs)
+      const nextCooldownUntil = Math.max(account.cooldownUntil ?? 0, now + cooldownMs)
+      return {
+        ...account,
+        cooldownUntil: nextCooldownUntil,
+        schedulerState: account.schedulerEnabled ? 'auto_blocked' : account.schedulerState,
+        autoBlockedReason: `risk_guardrail:${normalizedReason}`.slice(0, 500),
+        autoBlockedUntil: nextBlockedUntil,
+        lastFailureAt: nowIso,
+        lastError: `risk_guardrail:${normalizedReason}`.slice(0, 500),
+        updatedAt: nowIso,
+      }
+    })
+  }
+
+  async markOrganizationOverageGuardrail(input: {
+    triggeringAccountId: string
+    organizationUuid: string | null
+    reason: string
+    cooldownMs: number
+    overageDisabledReason: string
+  }): Promise<string[]> {
+    const applied: string[] = []
+    await this.markAccountRiskGuardrail(input.triggeringAccountId, input.reason, input.cooldownMs)
+    applied.push(input.triggeringAccountId)
+    if (!input.organizationUuid) return applied
+    const accounts = await this.listAccounts()
+    const siblings = accounts.filter(
+      (account) =>
+        account.id !== input.triggeringAccountId &&
+        account.provider === 'claude-official' &&
+        account.organizationUuid === input.organizationUuid &&
+        account.status !== 'revoked' &&
+        account.status !== 'banned',
+    )
+    for (const sibling of siblings) {
+      const siblingReason = `${input.reason}|orgSibling=${input.triggeringAccountId}`.slice(0, 500)
+      try {
+        await this.markAccountRiskGuardrail(sibling.id, siblingReason, input.cooldownMs)
+        applied.push(sibling.id)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        process.stderr.write(
+          `[overage-guard] mark_sibling_failed account=${sibling.id} org=${input.organizationUuid} error=${message}\n`,
+        )
+      }
+    }
+    return applied
+  }
+
   async markAccountLongTermBlock(accountId: string, blockUntilMs: number): Promise<void> {
     await this.updateAccountRecord(accountId, (account, now) => {
       if (
@@ -2057,7 +2347,7 @@ export class OAuthService {
       const lastError = normalizedReason.slice(0, 500)
       if (
         !account.isActive &&
-        account.status === 'revoked' &&
+        (account.status === 'revoked' || account.status === 'banned') &&
         account.schedulerState === 'paused' &&
         account.lastError === lastError
       ) {
@@ -2067,7 +2357,7 @@ export class OAuthService {
       return {
         ...account,
         isActive: false,
-        status: 'revoked',
+        status: 'banned',
         cooldownUntil: null,
         schedulerState: 'paused',
         autoBlockedReason: normalizedReason,
@@ -2082,6 +2372,203 @@ export class OAuthService {
       this.prepareSessionRoutesForBlockedAccount(accountId, normalizedReason),
       this.clearStickySessionsForBlockedAccount(accountId),
     ])
+
+    const eventType: AccountLifecycleEventType = isClaudeOrgRevocationReason(normalizedReason)
+      ? 'claude_org_revoked'
+      : 'terminal_failure'
+    void this.recordLifecycleEvent({
+      accountId,
+      eventType,
+      outcome: 'failure',
+      notes: {
+        reason: normalizedReason.slice(0, 500),
+      },
+    })
+  }
+
+  private async buildNeutralHandoffSummaryWithOpenAI(input: {
+    accounts: StoredAccount[]
+    localSummary: string
+    currentRequestBodyPreview?: string | null
+  }): Promise<string> {
+    const sourceText = input.localSummary.trim()
+    if (!sourceText) {
+      return input.localSummary
+    }
+    const sanitizedFallback = this.sanitizeNeutralHandoffSummary(input.localSummary) ?? input.localSummary
+
+    const account = this.selectOpenAICodexHandoffAccount(input.accounts)
+    if (!account) {
+      return sanitizedFallback
+    }
+
+    const prompt = [
+      'Rewrite the prior conversation notes into a neutral continuity brief for another assistant.',
+      'Do not mention handoff, migration, accounts, providers, Claude, OpenAI, TokenQiao, sessions, routing, or infrastructure.',
+      'Preserve only user goals, decisions, constraints, relevant facts, and immediate next steps.',
+      'Do not invent facts. Keep it concise and directly useful.',
+      '',
+      'Prior notes:',
+      sourceText.slice(0, 8000),
+      input.currentRequestBodyPreview?.trim()
+        ? `\nCurrent request preview:\n${input.currentRequestBodyPreview.trim().slice(0, 4000)}`
+        : '',
+    ].join('\n')
+
+    for (const model of HANDOFF_OPENAI_MODELS) {
+      try {
+        const summary = await this.requestOpenAICodexHandoffSummary(account, model, prompt)
+        const sanitized = this.sanitizeNeutralHandoffSummary(summary)
+        if (sanitized) {
+          return sanitized
+        }
+      } catch {
+        // Fall back to the local summary when OpenAI summarization is unavailable.
+      }
+    }
+
+    return sanitizedFallback
+  }
+
+  private selectOpenAICodexHandoffAccount(accounts: StoredAccount[]): StoredAccount | null {
+    return accounts
+      .filter((account) =>
+        account.provider === OPENAI_CODEX_PROVIDER.id &&
+        account.isActive &&
+        account.status === 'active' &&
+        account.schedulerEnabled &&
+        account.schedulerState === 'enabled' &&
+        Boolean(account.accessToken) &&
+        Boolean(account.organizationUuid),
+      )
+      .sort((left, right) => {
+        const leftAt = left.lastSelectedAt ? Date.parse(left.lastSelectedAt) : 0
+        const rightAt = right.lastSelectedAt ? Date.parse(right.lastSelectedAt) : 0
+        return leftAt - rightAt || left.id.localeCompare(right.id)
+      })[0] ?? null
+  }
+
+  private async requestOpenAICodexHandoffSummary(
+    account: StoredAccount,
+    model: string,
+    prompt: string,
+  ): Promise<string> {
+    const url = buildOpenAICodexResponsesUrl({
+      ...account,
+      modelName: model,
+    })
+    const body = JSON.stringify({
+      model,
+      stream: true,
+      store: false,
+      instructions: 'Return only the neutral continuity brief. No metadata, no source attribution.',
+      input: [
+        {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: prompt }],
+        },
+      ],
+    })
+
+    return this.withOptionalProxyDispatcher(account.proxyUrl, async (dispatcher) => {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${account.accessToken}`,
+          'chatgpt-account-id': account.organizationUuid ?? '',
+          accept: 'application/json',
+          'content-type': 'application/json',
+          'openai-beta': 'responses=experimental',
+          originator: 'tokenqiao_handoff_summary',
+        },
+        body,
+        signal: AbortSignal.timeout(Math.min(appConfig.requestTimeoutMs, 30_000)),
+        dispatcher,
+      } as RequestInit & { dispatcher?: Dispatcher })
+
+      const text = await response.text()
+      if (!response.ok) {
+        throw new Error(`OpenAI handoff summary failed: ${response.status} ${text.slice(0, 300)}`)
+      }
+      return this.extractOpenAIResponsesText(text)
+    })
+  }
+
+  private extractOpenAIResponsesText(raw: string): string {
+    if (raw.includes('event:')) {
+      const chunks: string[] = []
+      for (const eventChunk of raw.split('\n\n')) {
+        const eventName = eventChunk
+          .split('\n')
+          .find((line) => line.startsWith('event:'))
+          ?.slice('event:'.length)
+          .trim()
+        if (eventName !== 'response.output_text.done' && eventName !== 'response.output_text.delta') {
+          continue
+        }
+        const data = eventChunk
+          .split('\n')
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice('data:'.length).trim())
+          .join('\n')
+          .trim()
+        if (!data || data === '[DONE]') {
+          continue
+        }
+        try {
+          const parsed = JSON.parse(data) as { text?: unknown; delta?: unknown }
+          const text = typeof parsed.text === 'string'
+            ? parsed.text
+            : typeof parsed.delta === 'string'
+              ? parsed.delta
+              : ''
+          if (text) {
+            if (eventName === 'response.output_text.done') {
+              return text.trim()
+            }
+            chunks.push(text)
+          }
+        } catch {
+          // Ignore malformed SSE data chunks.
+        }
+      }
+      return chunks.join('').trim()
+    }
+
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const outputText = parsed.output_text
+    if (typeof outputText === 'string' && outputText.trim()) {
+      return outputText
+    }
+
+    const chunks: string[] = []
+    const output = Array.isArray(parsed.output) ? parsed.output : []
+    for (const item of output) {
+      if (!item || typeof item !== 'object') continue
+      const content = (item as { content?: unknown }).content
+      if (!Array.isArray(content)) continue
+      for (const part of content) {
+        if (!part || typeof part !== 'object') continue
+        const text = (part as { text?: unknown }).text
+        if (typeof text === 'string' && text.trim()) {
+          chunks.push(text)
+        }
+      }
+    }
+    return chunks.join('\n').trim()
+  }
+
+  private sanitizeNeutralHandoffSummary(summary: string): string | null {
+    const trimmed = summary.trim()
+    if (!trimmed) {
+      return null
+    }
+    const sanitized = trimmed
+      .replace(/\b(?:handoff|migration|migrated|account|provider|claude|openai|tokenqiao|session|upstream)[\w-]*\b/gi, 'context')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+    return sanitized.slice(0, HANDOFF_SUMMARY_MAX_CHARS)
   }
 
   private getSessionMigrationReason(
@@ -2164,9 +2651,11 @@ export class OAuthService {
     return candidates.find((account) =>
       account.isActive &&
       account.status !== 'revoked' &&
+      account.status !== 'banned' &&
       (account.cooldownUntil === null || account.cooldownUntil <= now) &&
       providerRequiresProxy(account.provider) &&
-      !account.proxyUrl,
+      !account.proxyUrl &&
+      account.directEgressEnabled !== true,
     ) ?? null
   }
 
@@ -2403,6 +2892,14 @@ export class OAuthService {
         modelTierMap: existing?.modelTierMap ?? null,
         modelMap: existing?.modelMap ?? null,
         loginPassword: existing?.loginPassword ?? null,
+        warmupEnabled:
+          options.source === 'refresh'
+            ? existing?.warmupEnabled ?? true
+            : options.warmupEnabled ?? existing?.warmupEnabled ?? true,
+        warmupPolicyId:
+          options.source === 'refresh'
+            ? existing?.warmupPolicyId ?? 'a'
+            : options.warmupPolicyId ?? existing?.warmupPolicyId ?? 'a',
       }
 
       const routingGroups = routingGroupId
@@ -2829,6 +3326,113 @@ export class OAuthService {
     return this.refreshAccount(account.id)
   }
 
+
+  private getClaudeOfficialEffectiveAccountAgeMs(account: StoredAccount, now: number): number | null {
+    const ages = [account.accountCreatedAt, account.createdAt]
+      .map((value) => {
+        if (!value) return null
+        const parsed = Date.parse(value)
+        return Number.isFinite(parsed) && parsed > 0 && parsed <= now ? now - parsed : null
+      })
+      .filter((value): value is number => value != null)
+    return ages.length > 0 ? Math.min(...ages) : null
+  }
+
+  private estimateRequestWeightFromPreview(preview?: string | null): { heavy: boolean; reason: string | null } {
+    const text = preview ?? ''
+    const cacheReadMatch = text.match(/"cache_read_input_tokens"\s*:\s*(\d+)/)
+    const totalMatch = text.match(/"(?:input_tokens|cache_creation_input_tokens|cache_read_input_tokens|output_tokens)"\s*:\s*(\d+)/g)
+    const cacheRead = cacheReadMatch ? Number(cacheReadMatch[1]) : 0
+    const estimatedTokens = totalMatch?.reduce((sum, item) => {
+      const match = item.match(/(\d+)/)
+      return sum + (match ? Number(match[1]) : 0)
+    }, 0) ?? 0
+    if (cacheRead >= appConfig.claudeOfficialHeavySessionCacheReadTokens) {
+      return { heavy: true, reason: `cache_read_preview_${cacheRead}` }
+    }
+    if (estimatedTokens >= appConfig.claudeOfficialHeavySessionTokens) {
+      return { heavy: true, reason: `tokens_preview_${estimatedTokens}` }
+    }
+    if (text.length >= appConfig.bufferedRequestBodyMaxBytes * 0.5) {
+      return { heavy: true, reason: `body_preview_large_${text.length}` }
+    }
+    return { heavy: false, reason: null }
+  }
+
+  private async buildClaudeNaturalCapacityDisallowedAccountIds(input: {
+    accounts: StoredAccount[]
+    currentRoute: SessionRoute | null
+    options: SelectAccountOptions
+    now: number
+  }): Promise<Set<string>> {
+    const disallowed = new Set<string>()
+    if (!appConfig.claudeOfficialNaturalCapacityEnabled) return disallowed
+    if (input.options.forceAccountId) return disallowed
+    if (input.options.provider && input.options.provider !== CLAUDE_OFFICIAL_PROVIDER.id) return disallowed
+
+    const newOnlyAgeMs = appConfig.claudeOfficialNewAccountNewSessionOnlyHours * 60 * 60 * 1000
+    const matureHeavyAgeMs = appConfig.claudeOfficialHeavySessionAccountMinAgeHours * 60 * 60 * 1000
+    const isExistingSession = Boolean(input.currentRoute)
+    const requestWeight = this.estimateRequestWeightFromPreview(input.options.currentRequestBodyPreview ?? null)
+
+    for (const account of input.accounts) {
+      if (account.provider !== CLAUDE_OFFICIAL_PROVIDER.id) continue
+      const warmup = resolveClaudeWarmupStatus({ account, now: input.now })
+      const ageMs = warmup.effectiveAgeMs ?? this.getClaudeOfficialEffectiveAccountAgeMs(account, input.now)
+      const isYoung = ageMs == null || ageMs < newOnlyAgeMs
+      if (isExistingSession && isYoung && account.id !== input.currentRoute?.accountId) {
+        disallowed.add(account.id)
+      }
+      if (requestWeight.heavy && (ageMs == null || ageMs < matureHeavyAgeMs) && account.id !== input.currentRoute?.accountId) {
+        disallowed.add(account.id)
+      }
+    }
+
+    if (input.options.userId && this.userStore) {
+      const usedAccounts = await this.userStore.getClaudeOfficialAccountsUsedByClient({
+        userId: input.options.userId,
+        clientDeviceId: input.options.clientDeviceId ?? null,
+      })
+      const usedSet = new Set(usedAccounts)
+      if (usedSet.size >= appConfig.claudeOfficialUserDeviceMaxAccounts24h) {
+        for (const account of input.accounts) {
+          if (account.provider !== CLAUDE_OFFICIAL_PROVIDER.id) continue
+          if (!usedSet.has(account.id) && account.id !== input.currentRoute?.accountId) {
+            disallowed.add(account.id)
+          }
+        }
+      }
+    }
+    return disallowed
+  }
+
+  private async buildClaudeCacheGuardDisallowedAccountIds(input: {
+    accounts: StoredAccount[]
+    currentRoute: SessionRoute | null
+    options: SelectAccountOptions
+    now: number
+  }): Promise<Set<string>> {
+    const disallowed = new Set<string>()
+    if (!appConfig.claudeNewAccountCacheGuardEnabled || !this.userStore) return disallowed
+    if (input.options.forceAccountId || input.currentRoute) return disallowed
+    if (input.options.provider && input.options.provider !== CLAUDE_OFFICIAL_PROVIDER.id) return disallowed
+    const candidates = input.accounts.filter((account) => account.provider === CLAUDE_OFFICIAL_PROVIDER.id)
+    if (candidates.length === 0) return disallowed
+    const loadByAccount = await this.userStore.getClaudeAccountRecentLoad(candidates.map((account) => account.id), 60_000)
+    const maxAgeMs = appConfig.claudeNewAccountCacheGuardAgeHours * 60 * 60 * 1000
+    for (const account of candidates) {
+      const load = loadByAccount.get(account.id)
+      const accountAgeMs = resolveAccountEffectiveAgeMs(account, load?.firstSeenAt ?? null, input.now)
+      if (accountAgeMs != null && accountAgeMs > maxAgeMs) continue
+      const cacheRead1m = load?.cacheReadTokens ?? 0
+      if (cacheRead1m >= appConfig.claudeNewAccountCacheGuardCautionCacheRead1m) {
+        disallowed.add(account.id)
+      }
+    }
+    return disallowed
+  }
+
+
   private async selectStoredAccountCandidate(options: SelectAccountOptions): Promise<StoredSelectionResult> {
     const sessionHash = options.sessionKey ? this.hashSessionKey(options.sessionKey) : null
     const routingGroupId = resolveRoutingGroupId(options.routingGroupId, options.group)
@@ -2869,7 +3473,17 @@ export class OAuthService {
           explicitlyDisallowedAccountIds.add(id)
         }
       }
-
+      // Risk-score deprioritization: when enabled, exclude high-risk accounts from new
+      // session allocation (currentRoute reuse and forceAccountId still bypass this).
+      if (
+        appConfig.accountRiskDeprioritizeEnabled &&
+        !options.forceAccountId &&
+        !currentRoute
+      ) {
+        for (const id of this.deprioritizedAccountIdsProvider()) {
+          explicitlyDisallowedAccountIds.add(id)
+        }
+      }
       const now = Date.now()
       const nowIso = new Date(now).toISOString()
       const data = this.pruneExpiredStickySessions(current, now)
@@ -2881,6 +3495,24 @@ export class OAuthService {
       const availableAccounts = data.accounts.filter((account) =>
         isRoutingGroupEnabled(routingGroupMap, resolveAccountRoutingGroupId(account)),
       )
+      const naturalCapacityDisallowedAccountIds = await this.buildClaudeNaturalCapacityDisallowedAccountIds({
+        accounts: availableAccounts,
+        currentRoute,
+        options,
+        now,
+      })
+      for (const accountId of naturalCapacityDisallowedAccountIds) {
+        explicitlyDisallowedAccountIds.add(accountId)
+      }
+      const cacheGuardDisallowedAccountIds = await this.buildClaudeCacheGuardDisallowedAccountIds({
+        accounts: availableAccounts,
+        currentRoute,
+        options,
+        now,
+      })
+      for (const accountId of cacheGuardDisallowedAccountIds) {
+        explicitlyDisallowedAccountIds.add(accountId)
+      }
       if (options.forceAccountId) {
         const forcedAccount = data.accounts.find((account) => account.id === options.forceAccountId) ?? null
         if (
@@ -2934,7 +3566,13 @@ export class OAuthService {
             ? 'route_account_missing'
             : null
       const migrationReason =
-        canRecoverToPrimary && !baseMigrationReason ? 'primary_recovered' : baseMigrationReason
+        appConfig.claudeSessionAccountAffinityStrict &&
+          currentRouteAccount?.provider === CLAUDE_OFFICIAL_PROVIDER.id &&
+          this.isSoftSessionMigrationReason(baseMigrationReason)
+          ? null
+          : canRecoverToPrimary && !baseMigrationReason
+            ? 'primary_recovered'
+            : baseMigrationReason
 
       const canReuseCurrentRoute =
         Boolean(
@@ -3128,6 +3766,11 @@ export class OAuthService {
                     fromAccountId: currentRoute.accountId,
                     currentRequestBodyPreview: options.currentRequestBodyPreview ?? null,
                   })
+            handoffSummary = await this.buildNeutralHandoffSummaryWithOpenAI({
+              accounts: data.accounts,
+              localSummary: handoffSummary,
+              currentRequestBodyPreview: options.currentRequestBodyPreview ?? null,
+            })
             const preservedPrimary =
               currentRoute.primaryAccountId ?? currentRoute.accountId
             sessionRoute = await this.userStore.migrateSessionRoute({
@@ -3456,7 +4099,7 @@ export class OAuthService {
     handoffReason: string | null,
     isCooldownFallback: boolean = false,
   ): Promise<ResolvedAccount> {
-    if (providerRequiresProxy(account.provider) && !account.proxyUrl) {
+    if (providerRequiresProxy(account.provider) && !account.proxyUrl && account.directEgressEnabled !== true) {
       throw new Error(`Account ${account.label ?? account.id} has no proxy configured — refusing to connect`)
     }
 
@@ -3801,7 +4444,8 @@ function compareStatus(left: StoredAccount['status'], right: StoredAccount['stat
   const rank: Record<StoredAccount['status'], number> = {
     active: 0,
     temp_error: 1,
-    revoked: 2,
+    banned: 2,
+    revoked: 3,
   }
   return rank[left] - rank[right]
 }

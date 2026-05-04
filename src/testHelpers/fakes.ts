@@ -419,6 +419,25 @@ export class MemoryUserStore {
     ].join('\n')
   }
 
+  async getClaudeOfficialAccountsUsedByClient(_input: {
+    userId?: string | null
+    clientDeviceId?: string | null
+    sinceMs?: number
+  }): Promise<string[]> {
+    return []
+  }
+
+  async getClaudeAccountRecentLoad(_accountIds: string[], _sinceMs: number = 60_000): Promise<Map<string, {
+    requests: number
+    tokens: number
+    cacheReadTokens: number
+    lastSeenAt: string | null
+    firstSeenAt: string | null
+  }>> {
+    return new Map()
+  }
+
+
   async getPreferredAccountIdsForClientDevice(input: {
     userId: string
     clientDeviceId: string

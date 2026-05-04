@@ -39,6 +39,7 @@ export interface RateLimitProbeResult {
     remainingFraction: number | null
     reset: number | null
   }>
+  anthropicHeaders?: Record<string, string> | null
 }
 
 const HEADER_MAP: ReadonlyArray<[keyof RateLimitProbeResult, string, 'string' | 'number']> = [
@@ -123,6 +124,7 @@ export async function probeRateLimits(options: {
 
   // Parse rate limit headers
   const headers = response.headers as Record<string, string | string[] | undefined>
+  base.anthropicHeaders = collectAnthropicForensicHeaders(headers)
   for (const [key, headerName, type] of HEADER_MAP) {
     const raw = headers[headerName]
     const value = Array.isArray(raw) ? raw[0] : raw
@@ -148,6 +150,43 @@ export async function probeRateLimits(options: {
   }
 
   return base
+}
+
+const FORENSIC_HEADER_KEYS = [
+  'anthropic-organization-id',
+  'anthropic-account-id',
+  'anthropic-ratelimit-tier',
+  'anthropic-ratelimit-organization-id',
+  'anthropic-ratelimit-requests-limit',
+  'anthropic-ratelimit-requests-remaining',
+  'anthropic-ratelimit-tokens-limit',
+  'anthropic-ratelimit-tokens-remaining',
+  'anthropic-ratelimit-input-tokens-limit',
+  'anthropic-ratelimit-input-tokens-remaining',
+  'anthropic-ratelimit-output-tokens-limit',
+  'anthropic-ratelimit-output-tokens-remaining',
+  'anthropic-version',
+  'request-id',
+  'x-request-id',
+  'x-served-by',
+  'cf-ray',
+  'cf-cache-status',
+  'server',
+  'x-anthropic-organization-uuid',
+]
+
+function collectAnthropicForensicHeaders(
+  headers: Record<string, string | string[] | undefined>,
+): Record<string, string> | null {
+  const out: Record<string, string> = {}
+  for (const key of FORENSIC_HEADER_KEYS) {
+    const raw = headers[key] ?? headers[key.toLowerCase()]
+    const value = Array.isArray(raw) ? raw[0] : raw
+    if (typeof value === 'string' && value.length > 0) {
+      out[key] = value.slice(0, 256)
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null
 }
 
 function appendUpstreamDetail(prefix: string, bodyText: string): string {

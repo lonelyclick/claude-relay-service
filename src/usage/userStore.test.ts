@@ -984,7 +984,7 @@ test('UserStore routing guard counts /v1/chat/completions usage alongside Claude
       })
     }
 
-    await insertUsage(`${prefix}-claude-1`, '/v1/messages', { input: 10, output: 5 })
+    await insertUsage(`${prefix}-claude-1`, '/v1/messages?beta=true', { input: 10, output: 5 })
     await insertUsage(`${prefix}-openai-1`, '/v1/chat/completions', { input: 20, output: 8 })
     await insertUsage(`${prefix}-openai-2`, '/v1/chat/completions', { input: 12, output: 4 })
     await insertUsage(`${prefix}-count`, '/v1/messages/count_tokens', { input: 1, output: 0 })
@@ -998,6 +998,19 @@ test('UserStore routing guard counts /v1/chat/completions usage alongside Claude
     assert.equal(snapshot.clientDeviceRecentRequests, expectedRequests)
     assert.equal(snapshot.userRecentTokens, expectedTokens)
     assert.equal(snapshot.clientDeviceRecentTokens, expectedTokens)
+
+    const riskSnapshot = await userStore.getRiskWindowSnapshot({
+      userId,
+      clientDeviceId,
+      sessionKey,
+    })
+    assert.equal(riskSnapshot.userRecentRequests, expectedRequests)
+    assert.equal(riskSnapshot.clientDeviceRecentRequests, expectedRequests)
+    assert.equal(riskSnapshot.userRecentTokens, expectedTokens)
+    assert.equal(riskSnapshot.clientDeviceRecentTokens, expectedTokens)
+    assert.equal(riskSnapshot.userDistinctAccounts, 1)
+    assert.equal(riskSnapshot.clientDeviceDistinctAccounts, 1)
+    assert.equal(riskSnapshot.sessionDistinctAccounts, 1)
 
     const userGuard = (await userStore.listRoutingGuardUserStats(50)).find((row) => row.userId === userId)
     assert.ok(userGuard, 'expected user routing guard stats row')

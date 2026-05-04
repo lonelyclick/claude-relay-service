@@ -21,7 +21,7 @@ function inferProxyKind(url: string | null | undefined, localUrl: string | null 
 }
 
 function normalizeStatus(status: StoredAccount['status'] | undefined): StoredAccount['status'] {
-  if (status === 'active' || status === 'temp_error' || status === 'revoked') {
+  if (status === 'active' || status === 'temp_error' || status === 'revoked' || status === 'banned') {
     return status
   }
   return 'active'
@@ -130,6 +130,8 @@ export function normalizeStoredAccount(account: StoredAccount): StoredAccount {
     displayName: account.displayName?.trim() || null,
     hasExtraUsageEnabled: account.hasExtraUsageEnabled ?? null,
     billingType: account.billingType ?? null,
+    warmupEnabled: account.warmupEnabled ?? true,
+    warmupPolicyId: account.warmupPolicyId === 'b' || account.warmupPolicyId === 'c' || account.warmupPolicyId === 'd' || account.warmupPolicyId === 'e' ? account.warmupPolicyId : 'a',
     accountCreatedAt: account.accountCreatedAt ?? null,
     subscriptionCreatedAt: account.subscriptionCreatedAt ?? null,
     rawProfile: account.rawProfile ?? null,
@@ -185,6 +187,7 @@ export function normalizeStoredAccount(account: StoredAccount): StoredAccount {
         ? account.lastProbeAttemptAt
         : null,
     proxyUrl: typeof account.proxyUrl === 'string' && account.proxyUrl.trim() ? account.proxyUrl.trim() : null,
+    directEgressEnabled: account.directEgressEnabled === true,
     bodyTemplatePath:
       typeof account.bodyTemplatePath === 'string' && account.bodyTemplatePath.trim()
         ? account.bodyTemplatePath.trim()

@@ -10,6 +10,7 @@ export type RelayControlRequest = {
   path: string
   body?: unknown
   query?: Record<string, string | null | undefined>
+  headers?: Record<string, string | null | undefined>
 }
 
 export type RelayControlResponse = {
@@ -42,12 +43,18 @@ export function createRelayControlClient(
         }
       }
 
+      const extraHeaders: Record<string, string> = {}
+      for (const [key, value] of Object.entries(input.headers ?? {})) {
+        if (value === undefined || value === null) continue
+        extraHeaders[key.toLowerCase()] = String(value).slice(0, 1024)
+      }
       const response = await fetch(url, {
         method: input.method,
         headers: {
           authorization: `Bearer ${token}`,
           accept: 'application/json',
           ...(input.body === undefined ? {} : { 'content-type': 'application/json' }),
+          ...extraHeaders,
         },
         body: input.body === undefined ? undefined : JSON.stringify(input.body),
         signal: AbortSignal.timeout(timeoutMs),

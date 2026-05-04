@@ -185,11 +185,14 @@ function Row({ account }: { account: Account }) {
         <div className="text-[11px] text-slate-500 truncate max-w-[160px]">{plan ?? '—'}</div>
       </td>
       <td className="px-3 py-2 align-middle">
-        {account.schedulerState ? (
-          <Badge tone={schedulerTone(account.schedulerState)}>{account.schedulerState}</Badge>
-        ) : (
-          <span className="text-slate-500 text-xs">—</span>
-        )}
+        <div className="flex gap-1 flex-wrap">
+          {account.status === 'banned' && <Badge tone="red">banned</Badge>}
+          {account.schedulerState ? (
+            <Badge tone={schedulerTone(account.schedulerState)}>{account.schedulerState}</Badge>
+          ) : (
+            <span className="text-slate-500 text-xs">—</span>
+          )}
+        </div>
       </td>
       <td className="px-3 py-2 align-middle">
         <UtilCell util={account.lastRateLimit5hUtilization} status={account.lastRateLimitStatus} window="5h" />

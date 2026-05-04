@@ -35,6 +35,7 @@ import {
   retrieveGeminiUserQuota,
 } from "./providers/googleGeminiOauth.js";
 import { notifyCcwebappAgentReply } from "./support/ccwebappNotify.js";
+import { sendEmail } from "./emailService.js";
 import { projectRoot } from "./projectRoot.js";
 import {
   createRelayControlClient,
@@ -1369,13 +1370,25 @@ function shouldServeAdminUi(req) {
   if (isStaticAssetRequest(req.path)) {
     return false;
   }
-  // Only serve SPA at the root or /admin/* paths. Other unknown paths fall through to 404
+  // Only serve known SPA entry routes. Other unknown paths fall through to 404
   // so misrouted relay traffic does not silently get HTML back.
-  if (
-    req.path !== "/" &&
-    req.path !== "/admin" &&
-    !req.path.startsWith("/admin/")
-  ) {
+  const adminUiRoutes = [
+    "/",
+    "/dashboard",
+    "/accounts",
+    "/routing",
+    "/usage",
+    "/risk",
+    "/billing",
+    "/models",
+    "/users",
+    "/network",
+    "/support",
+    "/login",
+    "/auth",
+    "/admin",
+  ];
+  if (!adminUiRoutes.some((route) => req.path === route || req.path.startsWith(`${route}/`))) {
     return false;
   }
   return fs.existsSync(ADMIN_UI_INDEX_PATH);
@@ -1517,11 +1530,85 @@ function sanitizeAccount(account) {
 function sanitizeAccounts(accounts) {
   return accounts.map(sanitizeAccount);
 }
+
+function attachAccountRiskLabels(scores, accounts) {
+  const accountMap = new Map(accounts.map((account) => [account.id, account]));
+  return scores.map((score) => {
+    const account = accountMap.get(score.accountId);
+    return {
+      ...score,
+      label: account?.label ?? account?.displayName ?? account?.emailAddress ?? null,
+      emailAddress: account?.emailAddress ?? null,
+    };
+  });
+}
+
+
+function getWarmupPolicyId(value) {
+  return value === "b" || value === "c" || value === "d" || value === "e" ? value : value === "a" ? "a" : undefined;
+}
+function getOptionalBoolean(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) return true;
+    if (["false", "0", "no", "off"].includes(normalized)) return false;
+  }
+  return undefined;
+}
 function jsonResult(status, body) {
   return { status, body };
 }
-async function respondWithRelayControl(res, relayControlClient, input) {
-  const result = await requestRelayControlResult(relayControlClient, input);
+function readSingleHeader(req, name) {
+  const value = req?.headers?.[name];
+  if (Array.isArray(value)) return value[0] ?? null;
+  return typeof value === "string" ? value : null;
+}
+async function runWithOnboardingFromHeaders(services, req, defaultSource, fn) {
+  const ingressIp = readSingleHeader(req, "x-ingress-ip") ?? readSingleHeader(req, "x-ingress-real-ip");
+  const ingressUserAgent = readSingleHeader(req, "x-ingress-user-agent");
+  const ingressForwardedFor = readSingleHeader(req, "x-ingress-forwarded-for");
+  const source = readSingleHeader(req, "x-ingress-source") ?? defaultSource;
+  const oauthService = services?.oauthService;
+  if (!oauthService || typeof oauthService.runWithOnboardingContext !== "function") {
+    return await fn();
+  }
+  return await oauthService.runWithOnboardingContext(
+    {
+      ingressIp,
+      ingressUserAgent,
+      ingressForwardedFor,
+      source,
+    },
+    fn,
+  );
+}
+function buildIngressHeaders(req) {
+  if (!req) return {};
+  const ipHeader =
+    typeof req.ip === "string"
+      ? req.ip
+      : Array.isArray(req.ips) && req.ips.length > 0
+        ? req.ips[0]
+        : null;
+  const ua = req.headers?.["user-agent"];
+  const xff = req.headers?.["x-forwarded-for"];
+  const realIp = req.headers?.["x-real-ip"];
+  const headers = {};
+  if (ipHeader) headers["x-ingress-ip"] = String(ipHeader).slice(0, 256);
+  if (ua) headers["x-ingress-user-agent"] = String(ua).slice(0, 1024);
+  const forwardedRaw = Array.isArray(xff) ? xff.join(",") : xff;
+  if (forwardedRaw) headers["x-ingress-forwarded-for"] = String(forwardedRaw).slice(0, 1024);
+  if (realIp) headers["x-ingress-real-ip"] = String(realIp).slice(0, 256);
+  headers["x-ingress-source"] = "admin-ui";
+  return headers;
+}
+async function respondWithRelayControl(res, relayControlClient, input, req) {
+  const headers = { ...(input.headers ?? {}), ...buildIngressHeaders(req) };
+  const result = await requestRelayControlResult(relayControlClient, {
+    ...input,
+    headers,
+  });
   res.status(result.status).json(result.data);
 }
 async function requestRelayControlResult(relayControlClient, input) {
@@ -1785,6 +1872,8 @@ async function exchangeCodeControl(services, body) {
       "routingGroupId",
       "group",
     ]),
+    warmupEnabled: getOptionalBoolean(body?.warmupEnabled),
+    warmupPolicyId: getWarmupPolicyId(body?.warmupPolicyId),
   });
   return jsonResult(200, { ok: true, account: sanitizeAccount(account) });
 }
@@ -1799,6 +1888,9 @@ async function loginWithSessionKeyControl(services, body) {
     sessionKey,
     label,
     routingGroupId,
+    null,
+    getOptionalBoolean(body?.warmupEnabled),
+    getWarmupPolicyId(body?.warmupPolicyId),
   );
   return jsonResult(200, { ok: true, account: sanitizeAccount(account) });
 }
@@ -1820,6 +1912,8 @@ async function importTokensControl(services, body) {
       "routingGroupId",
       "group",
     ]),
+    warmupEnabled: getOptionalBoolean(body?.warmupEnabled),
+    warmupPolicyId: getWarmupPolicyId(body?.warmupPolicyId),
   });
   return jsonResult(200, { ok: true, account: sanitizeAccount(account) });
 }
@@ -1934,6 +2028,8 @@ async function updateAccountSettingsControl(services, accountId, body) {
   if (body?.schedulerState !== undefined)
     settings.schedulerState = String(body.schedulerState);
   if (body?.proxyUrl !== undefined) settings.proxyUrl = body.proxyUrl;
+  if (body?.directEgressEnabled !== undefined)
+    settings.directEgressEnabled = getOptionalBoolean(body.directEgressEnabled);
   if (body?.bodyTemplatePath !== undefined)
     settings.bodyTemplatePath = body.bodyTemplatePath;
   if (body?.vmFingerprintTemplatePath !== undefined)
@@ -1941,6 +2037,10 @@ async function updateAccountSettingsControl(services, accountId, body) {
   if (body?.label !== undefined) settings.label = body.label;
   if (body?.apiBaseUrl !== undefined) settings.apiBaseUrl = body.apiBaseUrl;
   if (body?.modelName !== undefined) settings.modelName = body.modelName;
+  if (body?.warmupEnabled !== undefined)
+    settings.warmupEnabled = getOptionalBoolean(body.warmupEnabled);
+  if (body?.warmupPolicyId !== undefined)
+    settings.warmupPolicyId = getWarmupPolicyId(body.warmupPolicyId);
   if (body?.modelTierMap !== undefined)
     settings.modelTierMap = parseIncomingTierMap(body.modelTierMap);
   if (body?.modelMap !== undefined)
@@ -1959,6 +2059,55 @@ async function clearSessionRoutesControl(services) {
   await services.oauthService.clearSessionRoutes();
   return jsonResult(200, { ok: true });
 }
+async function recordRateLimitProbeLifecycle(services, accountId, account, result, startedAt) {
+  const lifecycleStore = services?.accountLifecycleStore;
+  if (!lifecycleStore || typeof lifecycleStore.recordEvent !== "function") return;
+  try {
+    const httpStatus =
+      typeof result?.httpStatus === "number" ? result.httpStatus : null;
+    const isFailure =
+      result?.error != null ||
+      (typeof httpStatus === "number" && httpStatus >= 400);
+    await lifecycleStore.recordEvent({
+      accountId,
+      eventType: "rate_limit_probe",
+      outcome: isFailure ? "failure" : "ok",
+      egressProxyUrl: account?.proxyUrl ?? null,
+      egressProvider: account?.provider ?? null,
+      upstreamStatus: httpStatus,
+      upstreamRequestId:
+        result?.anthropicHeaders?.["request-id"] ??
+        result?.anthropicHeaders?.["x-request-id"] ??
+        null,
+      upstreamOrganizationId:
+        result?.anthropicHeaders?.["anthropic-organization-id"] ??
+        result?.anthropicHeaders?.["anthropic-ratelimit-organization-id"] ??
+        null,
+      upstreamRateLimitTier:
+        result?.anthropicHeaders?.["anthropic-ratelimit-tier"] ?? null,
+      anthropicHeaders: result?.anthropicHeaders ?? null,
+      durationMs: Date.now() - startedAt,
+      notes: {
+        status: result?.status ?? null,
+        fiveHourUtilization: result?.fiveHourUtilization ?? null,
+        sevenDayUtilization: result?.sevenDayUtilization ?? null,
+        tokenStatus: result?.tokenStatus ?? null,
+        refreshAttempted: result?.refreshAttempted ?? null,
+        refreshSucceeded: result?.refreshSucceeded ?? null,
+        refreshError: result?.refreshError ?? null,
+        error: result?.error ?? null,
+        accountUuid: account?.accountUuid ?? null,
+        organizationUuid: account?.organizationUuid ?? null,
+        emailAddress: account?.emailAddress ?? null,
+        subscriptionType: account?.subscriptionType ?? null,
+      },
+    });
+  } catch (error) {
+    console.warn(
+      `[lifecycle] rate_limit_probe failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
 async function probeAccountRateLimitControl(services, accountId) {
   const account = await services.oauthService.getAccount(accountId);
   if (!account) {
@@ -1967,6 +2116,7 @@ async function probeAccountRateLimitControl(services, accountId) {
       message: `账号不存在: ${accountId}`,
     });
   }
+  const probeStartedAt = Date.now();
   if (account.provider === "openai-codex") {
     const proxyUrl = await services.oauthService.resolveProxyUrl(
       account.proxyUrl,
@@ -2029,10 +2179,10 @@ async function probeAccountRateLimitControl(services, accountId) {
     });
     return jsonResult(200, result);
   }
-  if (providerRequiresProxy(account.provider) && !account.proxyUrl) {
+  if (providerRequiresProxy(account.provider) && !account.proxyUrl && account.directEgressEnabled !== true) {
     return jsonResult(400, {
       error: "no_proxy",
-      message: `账号未绑定代理: ${accountId}`,
+      message: `账号未绑定代理且未开启直连: ${accountId}`,
     });
   }
   const result = await probeAccountRateLimitsWithRecovery({
@@ -2047,6 +2197,7 @@ async function probeAccountRateLimitControl(services, accountId) {
     sevenDayUtilization: result.sevenDayUtilization ?? null,
     resetTimestamp: result.reset ?? null,
   });
+  void recordRateLimitProbeLifecycle(services, accountId, account, result, probeStartedAt);
   return jsonResult(200, result);
 }
 async function createProxyControl(services, body) {
@@ -2233,12 +2384,13 @@ async function updateRelayUserControl(services, userId, body) {
       field: "billingCurrency",
     });
     if (services.billingStore) {
-      await services.billingStore.assertUserCurrencyChangeAllowed(
+      await services.billingStore.changeUserBillingCurrency(
         userId,
         billingCurrency,
       );
+    } else {
+      updates.billingCurrency = billingCurrency;
     }
-    updates.billingCurrency = billingCurrency;
   }
   if (body?.customerTier !== undefined)
     updates.customerTier = String(body.customerTier);
@@ -2345,11 +2497,10 @@ async function topupRelayUserControl(services, relayUserId, body) {
   }
   if (billingCurrency && user.billingCurrency !== billingCurrency) {
     try {
-      await services.billingStore.assertUserCurrencyChangeAllowed(
+      await services.billingStore.changeUserBillingCurrency(
         relayUserId,
         billingCurrency,
       );
-      userUpdates.billingCurrency = billingCurrency;
     } catch (error) {
       return jsonResult(400, {
         error: "billing_currency_mismatch",
@@ -3262,7 +3413,12 @@ export function createServer(services): express.Express {
     app.post(
       "/internal/control/accounts/create",
       asyncRoute(async (req, res) => {
-        const result = await createAccountControl(services, req.body);
+        const result = await runWithOnboardingFromHeaders(
+          services,
+          req,
+          "internal-control",
+          () => createAccountControl(services, req.body),
+        );
         res.status(result.status).json(result.body);
       }),
     );
@@ -3304,21 +3460,36 @@ export function createServer(services): express.Express {
     app.post(
       "/internal/control/oauth/exchange-code",
       asyncRoute(async (req, res) => {
-        const result = await exchangeCodeControl(services, req.body);
+        const result = await runWithOnboardingFromHeaders(
+          services,
+          req,
+          "internal-control",
+          () => exchangeCodeControl(services, req.body),
+        );
         res.status(result.status).json(result.body);
       }),
     );
     app.post(
       "/internal/control/oauth/login-with-session-key",
       asyncRoute(async (req, res) => {
-        const result = await loginWithSessionKeyControl(services, req.body);
+        const result = await runWithOnboardingFromHeaders(
+          services,
+          req,
+          "internal-control",
+          () => loginWithSessionKeyControl(services, req.body),
+        );
         res.status(result.status).json(result.body);
       }),
     );
     app.post(
       "/internal/control/oauth/import-tokens",
       asyncRoute(async (req, res) => {
-        const result = await importTokensControl(services, req.body);
+        const result = await runWithOnboardingFromHeaders(
+          services,
+          req,
+          "internal-control",
+          () => importTokensControl(services, req.body),
+        );
         res.status(result.status).json(result.body);
       }),
     );
@@ -3346,7 +3517,12 @@ export function createServer(services): express.Express {
     app.post(
       "/internal/control/oauth/gemini/manual-exchange",
       asyncRoute(async (req, res) => {
-        const result = await manualGeminiExchangeControl(services, req.body);
+        const result = await runWithOnboardingFromHeaders(
+          services,
+          req,
+          "internal-control",
+          () => manualGeminiExchangeControl(services, req.body),
+        );
         res.status(result.status).json(result.body);
       }),
     );
@@ -3957,9 +4133,18 @@ export function createServer(services): express.Express {
           billingCurrency &&
           organization.billingCurrency !== billingCurrency
         ) {
-          await services.organizationStore.updateOrganization(relayOrgId, {
-            billingCurrency,
-          });
+          try {
+            await services.billingStore.changeOrganizationBillingCurrency(
+              relayOrgId,
+              billingCurrency,
+            );
+          } catch (error) {
+            res.status(400).json({
+              error: "billing_currency_mismatch",
+              message: sanitizeErrorMessage(error),
+            });
+            return;
+          }
         }
         try {
           const result =
@@ -5441,11 +5626,16 @@ export function createServer(services): express.Express {
     app.post(
       "/admin/accounts/create",
       asyncRoute(async (req, res) => {
-        await respondWithRelayControl(res, relayControlClient, {
-          method: "POST",
-          path: "/internal/control/accounts/create",
-          body: req.body,
-        });
+        await respondWithRelayControl(
+          res,
+          relayControlClient,
+          {
+            method: "POST",
+            path: "/internal/control/accounts/create",
+            body: req.body,
+          },
+          req,
+        );
       }),
     );
     app.get(
@@ -5499,31 +5689,46 @@ export function createServer(services): express.Express {
     app.post(
       "/admin/oauth/exchange-code",
       asyncRoute(async (req, res) => {
-        await respondWithRelayControl(res, relayControlClient, {
-          method: "POST",
-          path: "/internal/control/oauth/exchange-code",
-          body: req.body,
-        });
+        await respondWithRelayControl(
+          res,
+          relayControlClient,
+          {
+            method: "POST",
+            path: "/internal/control/oauth/exchange-code",
+            body: req.body,
+          },
+          req,
+        );
       }),
     );
     app.post(
       "/admin/oauth/login-with-session-key",
       asyncRoute(async (req, res) => {
-        await respondWithRelayControl(res, relayControlClient, {
-          method: "POST",
-          path: "/internal/control/oauth/login-with-session-key",
-          body: req.body,
-        });
+        await respondWithRelayControl(
+          res,
+          relayControlClient,
+          {
+            method: "POST",
+            path: "/internal/control/oauth/login-with-session-key",
+            body: req.body,
+          },
+          req,
+        );
       }),
     );
     app.post(
       "/admin/oauth/import-tokens",
       asyncRoute(async (req, res) => {
-        await respondWithRelayControl(res, relayControlClient, {
-          method: "POST",
-          path: "/internal/control/oauth/import-tokens",
-          body: req.body,
-        });
+        await respondWithRelayControl(
+          res,
+          relayControlClient,
+          {
+            method: "POST",
+            path: "/internal/control/oauth/import-tokens",
+            body: req.body,
+          },
+          req,
+        );
       }),
     );
     app.post(
@@ -5561,11 +5766,16 @@ export function createServer(services): express.Express {
     app.post(
       "/admin/oauth/gemini/manual-exchange",
       asyncRoute(async (req, res) => {
-        await respondWithRelayControl(res, relayControlClient, {
-          method: "POST",
-          path: "/internal/control/oauth/gemini/manual-exchange",
-          body: req.body,
-        });
+        await respondWithRelayControl(
+          res,
+          relayControlClient,
+          {
+            method: "POST",
+            path: "/internal/control/oauth/gemini/manual-exchange",
+            body: req.body,
+          },
+          req,
+        );
       }),
     );
     app.post(
@@ -6119,6 +6329,197 @@ export function createServer(services): express.Express {
         res.json({ trend });
       }),
     );
+
+    app.get(
+      "/admin/risk/natural-capacity-config",
+      asyncRoute(async (_req, res) => {
+        res.json({
+          enabled: appConfig.claudeOfficialNaturalCapacityEnabled,
+          userDeviceMaxAccounts24h: appConfig.claudeOfficialUserDeviceMaxAccounts24h,
+          newAccountNewSessionOnlyHours: appConfig.claudeOfficialNewAccountNewSessionOnlyHours,
+          heavySessionAccountMinAgeHours: appConfig.claudeOfficialHeavySessionAccountMinAgeHours,
+          heavySessionTokens: appConfig.claudeOfficialHeavySessionTokens,
+          heavySessionCacheReadTokens: appConfig.claudeOfficialHeavySessionCacheReadTokens,
+        });
+      }),
+    );
+    app.get(
+      "/admin/risk/summary",
+      asyncRoute(async (req, res) => {
+        if (!services.userStore) {
+          res.status(404).json({ error: "user_store_disabled" });
+          return;
+        }
+        const since = typeof req.query.since === "string" ? req.query.since : null;
+        const summary = await services.userStore.getRiskDashboardSummary({ since });
+        res.json(summary);
+      }),
+    );
+    app.get(
+      "/admin/risk/trends",
+      asyncRoute(async (req, res) => {
+        if (!services.userStore) {
+          res.status(404).json({ error: "user_store_disabled" });
+          return;
+        }
+        const result = await services.userStore.getRiskDashboardTrends({
+          since: typeof req.query.since === "string" ? req.query.since : null,
+          accountId: typeof req.query.accountId === "string" ? req.query.accountId : null,
+        });
+        res.json(result);
+      }),
+    );
+    app.get(
+      "/admin/risk/lifecycle/summary",
+      asyncRoute(async (req, res) => {
+        if (!services.accountLifecycleStore) {
+          res.status(404).json({ error: "lifecycle_store_disabled" });
+          return;
+        }
+        const limit = (() => {
+          if (typeof req.query.limit !== "string") return 100;
+          const value = Number(req.query.limit);
+          return Number.isFinite(value) ? value : 100;
+        })();
+        const accounts = await services.accountLifecycleStore.listAccountSummaries(limit);
+        res.json({ accounts });
+      }),
+    );
+    app.get(
+      "/admin/risk/lifecycle/events",
+      asyncRoute(async (req, res) => {
+        if (!services.accountLifecycleStore) {
+          res.status(404).json({ error: "lifecycle_store_disabled" });
+          return;
+        }
+        const eventTypesRaw = req.query.eventTypes;
+        const eventTypes = (() => {
+          if (!eventTypesRaw) return null;
+          if (Array.isArray(eventTypesRaw)) return eventTypesRaw.map((x) => String(x));
+          return String(eventTypesRaw)
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean);
+        })();
+        const events = await services.accountLifecycleStore.listEvents({
+          accountId:
+            typeof req.query.accountId === "string" ? req.query.accountId : null,
+          eventTypes,
+          since: typeof req.query.since === "string" ? new Date(req.query.since) : null,
+          until: typeof req.query.until === "string" ? new Date(req.query.until) : null,
+          limit: (() => {
+            if (typeof req.query.limit !== "string") return 200;
+            const value = Number(req.query.limit);
+            return Number.isFinite(value) ? value : 200;
+          })(),
+        });
+        res.json({ events });
+      }),
+    );
+    app.get(
+      "/admin/risk/account-scores",
+      asyncRoute(async (req, res) => {
+        if (!services.accountRiskService || !services.accountRiskStore) {
+          res.status(404).json({ error: "account_risk_disabled" });
+          return;
+        }
+        const parseNumber = (value) => {
+          if (typeof value !== "string" || value.trim() === "") return null;
+          const parsed = Number(value);
+          return Number.isFinite(parsed) ? parsed : null;
+        };
+        const refresh = req.query.refresh === "1" || req.query.refresh === "true";
+        const limit = parseNumber(req.query.limit) ?? 200;
+        const allAccounts = await services.oauthService.listAccounts();
+        const accounts = refresh
+          ? await services.accountRiskService.scoreAccounts(allAccounts, { persist: true, limit })
+          : await services.accountRiskStore.listLatest({ limit });
+        res.json({ accounts: attachAccountRiskLabels(accounts, allAccounts) });
+      }),
+    );
+    app.get(
+      "/admin/risk/account-scores/:accountId/history",
+      asyncRoute(async (req, res) => {
+        if (!services.accountRiskStore) {
+          res.status(404).json({ error: "account_risk_disabled" });
+          return;
+        }
+        const accountId = getRouteParam(req.params.accountId);
+        const limit = typeof req.query.limit === "string" && Number.isFinite(Number(req.query.limit))
+          ? Number(req.query.limit)
+          : 96;
+        const points = await services.accountRiskStore.getHistory(accountId, limit);
+        res.json({ points });
+      }),
+    );
+    app.post(
+      "/admin/risk/account-scores/refresh",
+      asyncRoute(async (_req, res) => {
+        if (!services.accountRiskService) {
+          res.status(404).json({ error: "account_risk_disabled" });
+          return;
+        }
+        const allAccounts = await services.oauthService.listAccounts();
+        const accounts = await services.accountRiskService.scoreAccounts(allAccounts, { persist: true });
+        res.json({ ok: true, accounts: attachAccountRiskLabels(accounts, allAccounts) });
+      }),
+    );
+    app.get(
+      "/admin/risk/account-health-distribution",
+      asyncRoute(async (req, res) => {
+        if (!services.userStore) {
+          res.status(404).json({ error: "user_store_disabled" });
+          return;
+        }
+        const result = await services.userStore.getAccountHealthDistribution({
+          since: typeof req.query.since === "string" ? req.query.since : null,
+        });
+        res.json(result);
+      }),
+    );
+    app.get(
+      "/admin/risk/egress-summary",
+      asyncRoute(async (_req, res) => {
+        if (!services.userStore) {
+          res.status(404).json({ error: "user_store_disabled" });
+          return;
+        }
+        const result = await services.userStore.getEgressRiskSummary();
+        res.json(result);
+      }),
+    );
+    app.get(
+      "/admin/risk/events",
+      asyncRoute(async (req, res) => {
+        if (!services.userStore) {
+          res.status(404).json({ error: "user_store_disabled" });
+          return;
+        }
+        const parseNumber = (value) => {
+          if (typeof value !== "string" || value.trim() === "") return null;
+          const parsed = Number(value);
+          return Number.isFinite(parsed) ? parsed : null;
+        };
+        const parseBool = (value) => value === "1" || value === "true";
+        const result = await services.userStore.getRiskDashboardEvents({
+          since: typeof req.query.since === "string" ? req.query.since : null,
+          limit: parseNumber(req.query.limit) ?? 100,
+          offset: parseNumber(req.query.offset) ?? 0,
+          userId: typeof req.query.userId === "string" ? req.query.userId : null,
+          accountId: typeof req.query.accountId === "string" ? req.query.accountId : null,
+          sessionKey: typeof req.query.sessionKey === "string" ? req.query.sessionKey : null,
+          clientDeviceId: typeof req.query.clientDeviceId === "string" ? req.query.clientDeviceId : null,
+          ip: typeof req.query.ip === "string" ? req.query.ip : null,
+          path: typeof req.query.path === "string" ? req.query.path : null,
+          statusCode: parseNumber(req.query.statusCode),
+          minTokens: parseNumber(req.query.minTokens),
+          riskOnly: parseBool(req.query.riskOnly),
+          multiAccountOnly: parseBool(req.query.multiAccountOnly),
+          revokedOnly: parseBool(req.query.revokedOnly),
+        });
+        res.json(result);
+      }),
+    );
     // ── Billing endpoints ──
     app.get(
       "/admin/billing/summary",
@@ -6486,6 +6887,35 @@ export function createServer(services): express.Express {
           method: "POST",
           path: "/internal/control/billing/rebuild",
         });
+      }),
+    );
+    app.post(
+      "/admin/email/test",
+      asyncRoute(async (req, res) => {
+        const to = getOptionalString(req.body?.to);
+        if (!to) {
+          res.status(400).json({ error: "missing_to", message: "to is required" });
+          return;
+        }
+        const result = await sendEmail({
+          to,
+          subject: "TokenQiao email test",
+          text: "TokenQiao email service test.",
+          html: "<p>TokenQiao email service test.</p>",
+          tags: { app: "tokenqiao", type: "admin-test" },
+        });
+        res.json({ ok: true, result });
+      }),
+    );
+    app.post(
+      "/admin/billing/balance-alerts/run-now",
+      asyncRoute(async (_req, res) => {
+        if (!services.balanceAlertScheduler) {
+          res.status(503).json({ error: "balance_alerts_disabled" });
+          return;
+        }
+        const result = await services.balanceAlertScheduler.runOnce();
+        res.json({ ok: true, result });
       }),
     );
     if (fs.existsSync(ADMIN_UI_DIST_DIR)) {

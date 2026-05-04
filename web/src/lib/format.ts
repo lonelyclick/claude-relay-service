@@ -1,11 +1,16 @@
-export function fmtTokens(value: number): string {
-  if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + 'M'
-  if (value >= 1_000) return (value / 1_000).toFixed(1) + 'K'
-  return String(value)
+function toFiniteNumber(value: number | null | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
-export function fmtNum(value: number): string {
-  return value.toLocaleString()
+export function fmtTokens(value: number | null | undefined): string {
+  const safeValue = toFiniteNumber(value)
+  if (safeValue >= 1_000_000) return (safeValue / 1_000_000).toFixed(1) + 'M'
+  if (safeValue >= 1_000) return (safeValue / 1_000).toFixed(1) + 'K'
+  return String(safeValue)
+}
+
+export function fmtNum(value: number | null | undefined): string {
+  return toFiniteNumber(value).toLocaleString()
 }
 
 function formatGroupedInteger(value: string): string {

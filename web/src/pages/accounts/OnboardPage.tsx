@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { generateAuthUrl, exchangeCode, loginWithSessionKey, importTokens, createOpenAICompatibleAccount, createClaudeCompatibleAccount, startGeminiLogin, getGeminiLoginStatus, manualExchangeGemini } from '~/api/accounts'
 import { listRoutingGroups } from '~/api/routing'
 import { listProxies } from '~/api/proxies'
-import type { Proxy, RoutingGroup } from '~/api/types'
+import type { ClaudeWarmupPolicyId, Proxy, RoutingGroup } from '~/api/types'
 import { useToast } from '~/components/Toast'
 import { cn } from '~/lib/cn'
 
@@ -180,6 +180,44 @@ function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   )
 }
 
+
+function WarmupToggle({ checked, policyId, onChange, onPolicyChange }: { checked: boolean; policyId: ClaudeWarmupPolicyId; onChange: (checked: boolean) => void; onPolicyChange: (policyId: ClaudeWarmupPolicyId) => void }) {
+  return (
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 space-y-3">
+      <label className="flex items-start gap-3 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          className="mt-1 h-4 w-4 rounded border-amber-400/50 bg-bg-input text-amber-500 focus:ring-amber-500"
+        />
+        <div className="space-y-1">
+          <div className="text-sm font-medium text-amber-100">启用 warmup 防风控（推荐）</div>
+          <div className="text-xs leading-5 text-amber-100/70">
+            新接入 Claude 官方账号会按账号年龄逐步放量，默认 A 策略。B/C 更宽松，关闭后不执行新号阶段限速。
+          </div>
+        </div>
+      </label>
+      {checked && (
+        <label className="block text-xs text-amber-100/80">
+          Warmup 策略
+          <select
+            value={policyId}
+            onChange={(e) => onPolicyChange(e.target.value as ClaudeWarmupPolicyId)}
+            className="mt-1 w-full bg-bg-input border border-amber-500/30 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+          >
+            <option value="a">A 默认均衡</option>
+            <option value="b">B 宽松</option>
+            <option value="c">C 最宽松</option>
+            <option value="d">D 超宽松</option>
+            <option value="e">E 灾难保护</option>
+          </select>
+        </label>
+      )}
+    </div>
+  )
+}
+
 function SubmitButton({ loading, children }: { loading: boolean; children: React.ReactNode }) {
   return (
     <button
@@ -202,6 +240,8 @@ function OAuthForm() {
   const [label, setLabel] = useState('')
   const [group, setGroup] = useState('')
   const [proxyUrl, setProxyUrl] = useState('')
+  const [warmupEnabled, setWarmupEnabled] = useState(true)
+  const [warmupPolicyId, setWarmupPolicyId] = useState<ClaudeWarmupPolicyId>('a')
   const [expiresIn, setExpiresIn] = useState('')
 
   const genMut = useMutation({
@@ -219,6 +259,8 @@ function OAuthForm() {
       exchangeCode(sessionId, code, label, undefined, {
         ...(group ? { routingGroupId: group } : {}),
         ...(proxyUrl ? { proxyUrl } : {}),
+        warmupEnabled,
+        warmupPolicyId,
       }),
     onSuccess: () => {
       toast.success('Account created via OAuth')
@@ -264,6 +306,7 @@ function OAuthForm() {
             <Field label="Routing Group">
               <GroupSelect value={group} onChange={setGroup} type="anthropic" />
             </Field>
+            <WarmupToggle checked={warmupEnabled} policyId={warmupPolicyId} onChange={setWarmupEnabled} onPolicyChange={setWarmupPolicyId} />
             <div className="flex gap-2">
               <SubmitButton loading={exMut.isPending}>Exchange Code</SubmitButton>
               <button type="button" onClick={() => setStep('generate')} className="px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-slate-200">Back</button>
@@ -365,9 +408,11 @@ function SessionKeyForm() {
   const [sessionKey, setSessionKey] = useState('')
   const [label, setLabel] = useState('')
   const [group, setGroup] = useState('')
+  const [warmupEnabled, setWarmupEnabled] = useState(true)
+  const [warmupPolicyId, setWarmupPolicyId] = useState<ClaudeWarmupPolicyId>('a')
 
   const mut = useMutation({
-    mutationFn: () => loginWithSessionKey(sessionKey, label, group ? { routingGroupId: group } : undefined),
+    mutationFn: () => loginWithSessionKey(sessionKey, label, { ...(group ? { routingGroupId: group } : {}), warmupEnabled, warmupPolicyId }),
     onSuccess: () => {
       toast.success('Account created via session key')
       qc.invalidateQueries({ queryKey: ['accounts'] })
@@ -390,6 +435,7 @@ function SessionKeyForm() {
         <Field label="Routing Group">
           <GroupSelect value={group} onChange={setGroup} type="anthropic" />
         </Field>
+        <WarmupToggle checked={warmupEnabled} policyId={warmupPolicyId} onChange={setWarmupEnabled} onPolicyChange={setWarmupPolicyId} />
         <SubmitButton loading={mut.isPending}>Create Account</SubmitButton>
       </form>
     </div>
@@ -403,9 +449,11 @@ function ImportTokensForm() {
   const [refreshToken, setRefreshToken] = useState('')
   const [label, setLabel] = useState('')
   const [group, setGroup] = useState('')
+  const [warmupEnabled, setWarmupEnabled] = useState(true)
+  const [warmupPolicyId, setWarmupPolicyId] = useState<ClaudeWarmupPolicyId>('a')
 
   const mut = useMutation({
-    mutationFn: () => importTokens(accessToken, refreshToken || undefined, label, group ? { routingGroupId: group } : undefined),
+    mutationFn: () => importTokens(accessToken, refreshToken || undefined, label, { ...(group ? { routingGroupId: group } : {}), warmupEnabled, warmupPolicyId }),
     onSuccess: () => {
       toast.success('Account created via token import')
       qc.invalidateQueries({ queryKey: ['accounts'] })
@@ -432,6 +480,7 @@ function ImportTokensForm() {
         <Field label="Routing Group">
           <GroupSelect value={group} onChange={setGroup} type="anthropic" />
         </Field>
+        <WarmupToggle checked={warmupEnabled} policyId={warmupPolicyId} onChange={setWarmupEnabled} onPolicyChange={setWarmupPolicyId} />
         <SubmitButton loading={mut.isPending}>Import</SubmitButton>
       </form>
     </div>
