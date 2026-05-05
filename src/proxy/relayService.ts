@@ -5897,7 +5897,12 @@ export class RelayService {
 
   private static truncateBody(body: Buffer | undefined, maxBytes = 2048): string | null {
     if (!body || body.length === 0) return null
-    return body.subarray(0, maxBytes).toString('utf8')
+    const preview = body.subarray(0, maxBytes)
+    if (preview.includes(0)) {
+      const sha256 = crypto.createHash('sha256').update(body).digest('hex')
+      return `[binary body bytes=${body.length} sha256=${sha256} preview_base64=${preview.toString('base64').slice(0, 512)}]`
+    }
+    return preview.toString('utf8')
   }
 
   private static decodeResponseBodyPreview(
