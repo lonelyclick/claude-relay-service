@@ -35,6 +35,8 @@ export type RelayLogEvent = {
   hasStickySessionKey?: boolean
   durationMs: number
   timeoutMs?: number
+  phase?: string
+  phaseDurationMs?: number
   statusCode?: number
   statusText?: string
   upstreamRequestId?: string | null

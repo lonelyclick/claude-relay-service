@@ -211,6 +211,8 @@ type HttpMethod = 'DELETE' | 'GET' | 'PATCH' | 'POST' | 'PUT'
 type HttpTraceContext = {
   headers: IncomingHttpHeaders
   method: string
+  phase: string
+  phaseStartedAt: number
   requestId: string
   signal: AbortSignal
   startedAt: number
@@ -1335,6 +1337,7 @@ export class RelayService {
     const requestUrl = this.buildUpstreamUrlFromRawUrl(req.originalUrl)
 
     try {
+      this.setHttpTracePhase(trace, 'match_route')
       const route = this.matchHttpRoute(req.path)
       if (!route) {
         res.status(404).json(localHttpErrorBody(req.path, 404, `Not Found`, RELAY_ERROR_CODES.ROUTE_NOT_FOUND))
@@ -1370,6 +1373,7 @@ export class RelayService {
 
       let forceAccountId: string | null = null
       try {
+        this.setHttpTracePhase(trace, 'parse_force_account')
         forceAccountId = this.parseForceAccountIdFromIncoming(
           req.headers,
           requestUrl.searchParams,
@@ -1392,6 +1396,7 @@ export class RelayService {
       const explicitForceAccountId = forceAccountId
 
       // ── Relay user resolution ──
+      this.setHttpTracePhase(trace, 'resolve_relay_user')
       const relayUser = await this.resolveRelayUser(req.headers)
       if (relayUser.rejected) {
         res.status(401).json(
@@ -1430,6 +1435,7 @@ export class RelayService {
         return
       }
 
+      this.setHttpTracePhase(trace, 'prepare_request_body')
       const sessionKey = this.extractStickySessionKeyFromHeaders(req.headers)
       let preparedRequestBody: PreparedRequestBody
       try {
@@ -1458,6 +1464,7 @@ export class RelayService {
         req.headers,
         requestUrl.searchParams,
       )
+      this.setHttpTracePhase(trace, 'resolve_routing_group')
       let routingGroupId = this.extractAccountGroup(req.headers)
       try {
         await this.assertRoutingGroupEnabled(routingGroupId)
@@ -1480,6 +1487,7 @@ export class RelayService {
         }
         throw error
       }
+      this.setHttpTracePhase(trace, 'resolve_requested_provider')
       let requestedProvider = await this.resolveRequestedProvider(
         forceAccountId,
         req.path,
@@ -1526,6 +1534,7 @@ export class RelayService {
       }
 
       if (requestedProvider === 'openai-codex') {
+        this.setHttpTracePhase(trace, 'dispatch_openai_codex')
         await this.handleOpenAICodexHttp({
           req,
           res,
@@ -1544,6 +1553,7 @@ export class RelayService {
       }
 
       if (requestedProvider === 'openai-compatible') {
+        this.setHttpTracePhase(trace, 'dispatch_openai_compatible')
         await this.handleOpenAICompatibleHttp({
           req,
           res,
@@ -1561,6 +1571,7 @@ export class RelayService {
       }
 
       if (requestedProvider === 'claude-compatible') {
+        this.setHttpTracePhase(trace, 'dispatch_claude_compatible')
         await this.handleClaudeCompatibleHttp({
           req,
           res,
@@ -1578,6 +1589,7 @@ export class RelayService {
       }
 
       if (requestedProvider === 'google-gemini-oauth') {
+        this.setHttpTracePhase(trace, 'dispatch_google_gemini')
         await this.handleGoogleGeminiHttp({
           req,
           res,
@@ -1600,6 +1612,7 @@ export class RelayService {
         MIN_CLAUDE_CLI_VERSION[1],
         MIN_CLAUDE_CLI_VERSION[2],
       ]
+      this.setHttpTracePhase(trace, 'validate_claude_cli')
       if (this.requiresClaudeCliVersionCheck(req.path)) {
         if (!clientVersion) {
           res.status(400).json(anthropicErrorBody(400, `Unsupported client. Please use Claude Code ${MIN_CLAUDE_CLI_VERSION.join('.')} or later.`, RELAY_ERROR_CODES.UNSUPPORTED_CLIENT))
@@ -1659,6 +1672,7 @@ export class RelayService {
       if (authMode !== 'oauth') {
         let resolvedForProxy: ResolvedAccount
         try {
+          this.setHttpTracePhase(trace, 'select_claude_proxy_account')
           resolvedForProxy = await this.oauthService.selectAccount({
             provider: CLAUDE_OFFICIAL_PROVIDER.id,
             forceAccountId,
@@ -1729,6 +1743,7 @@ export class RelayService {
           originalBody: requestBody,
           rewrittenBody: forwardedBody,
         })
+        this.setHttpTracePhase(trace, 'billing_preflight')
         if (await this.rejectIfMissingBillingRule({
           res,
           trace,
@@ -1745,6 +1760,7 @@ export class RelayService {
         })) {
           return
         }
+        this.setHttpTracePhase(trace, 'upstream_request_headers')
         const upstream = await this.forward(req, null, forwardedBody, authMode, {
           routeAuthStrategy: route.authStrategy,
           trace,
@@ -1763,6 +1779,7 @@ export class RelayService {
           upstream.headers,
           upstream.rawHeaders,
         )
+        this.setHttpTracePhase(trace, 'upstream_streaming')
         const observation = await this.pipelineWithUsageTracking(upstream, res, {
           requestId: trace.requestId,
           accountId: resolvedForProxy.account.id,
@@ -1805,6 +1822,7 @@ export class RelayService {
       const sameRequestDisallowed: string[] = []
       let resolved: ResolvedAccount
       try {
+        this.setHttpTracePhase(trace, 'select_claude_account')
         resolved = await this.oauthService.selectAccount({
           provider: CLAUDE_OFFICIAL_PROVIDER.id,
           sessionKey,
@@ -1878,6 +1896,7 @@ export class RelayService {
       }
 
       const effectiveTemplate = this.applyAccountOverrides(this.selectBodyTemplate(normalizedClientVersion, resolved.bodyTemplate), resolved.account)
+      this.setHttpTracePhase(trace, 'rewrite_request_body')
       const baseRequestBody = this.maybeRewriteBufferedRequestBody(
         requestBody,
         req.method,
@@ -1900,6 +1919,7 @@ export class RelayService {
 
       while (true) {
         let requestBody = baseRequestBody
+        this.setHttpTracePhase(trace, 'apply_session_route')
         const routedRequest = this.applySessionRouteToHttpRequest(req, requestBody, resolved)
         requestBody = routedRequest.body
         this.logBodyRewriteMetrics({
@@ -1912,6 +1932,7 @@ export class RelayService {
           rewrittenBody: requestBody,
           handoffInjected: routedRequest.handoffInjected,
         })
+        this.setHttpTracePhase(trace, 'billing_preflight')
         if (await this.rejectIfMissingBillingRule({
           res,
           trace,
@@ -1930,6 +1951,7 @@ export class RelayService {
         }
         let upstream: Awaited<ReturnType<typeof this.forward>>
         try {
+          this.setHttpTracePhase(trace, 'upstream_request_headers')
           upstream = await this.forward(req, resolved.account.accessToken, requestBody, 'oauth', {
             routeAuthStrategy: route.authStrategy,
             trace,
@@ -1966,6 +1988,7 @@ export class RelayService {
           upstream.statusCode === 403 ||
           upstream.statusCode === 429
         ) {
+          this.setHttpTracePhase(trace, 'buffer_upstream_failure_body')
           bufferedFailureBody = Buffer.from(
             await upstream.body.arrayBuffer().catch(() => new ArrayBuffer(0)),
           )
@@ -2092,6 +2115,7 @@ export class RelayService {
           try {
             sameRequestDisallowed.push(resolved.account.id)
             const backoffMs = Math.random() * (appConfig.sameRequestRetryBackoffMaxMs - appConfig.sameRequestRetryBackoffMinMs) + appConfig.sameRequestRetryBackoffMinMs
+            this.setHttpTracePhase(trace, 'same_request_retry_backoff')
             this.safeLog({
               event: 'retry_attempt',
               requestId: trace.requestId,
@@ -2104,6 +2128,7 @@ export class RelayService {
               retryMigrationReason: sameRequestMigrationReason,
             })
             await this.sleepMs(backoffMs)
+            this.setHttpTracePhase(trace, 'same_request_retry_select_account')
             resolved = await this.oauthService.selectAccount({
               provider: CLAUDE_OFFICIAL_PROVIDER.id,
               sessionKey,
@@ -2212,6 +2237,7 @@ export class RelayService {
             upstream.rawHeaders,
           )
           await this.oauthService.markAccountUsed(resolved.account.id)
+          this.setHttpTracePhase(trace, 'upstream_streaming')
           // Auto-bind user to account on first successful request
           if (relayUser.userId && !relayUser.userAccountId && this.userStore) {
             this.userStore.bindAccountIfNeeded(relayUser.userId, resolved.account.id).catch(() => {})
@@ -2335,6 +2361,7 @@ export class RelayService {
         }
 
         try {
+          this.setHttpTracePhase(trace, 'recover_claude_account_after_auth_failure')
           const recovery = await this.oauthService.recoverAccountAfterAuthFailure({
             failedAccountId: resolved.account.id,
             failedAccessToken: resolved.account.accessToken,
@@ -4845,6 +4872,8 @@ export class RelayService {
                 headers: {},
                 requestId: input.usage.requestId,
                 method: 'GET',
+                phase: 'websocket_usage',
+                phaseStartedAt: input.usage.startedAt,
                 signal: new AbortController().signal,
                 startedAt: input.usage.startedAt,
                 target: input.usage.target,
@@ -5454,6 +5483,8 @@ export class RelayService {
         target: trace.target,
         durationMs: Date.now() - trace.startedAt,
         timeoutMs,
+        phase: trace.phase,
+        phaseDurationMs: Date.now() - trace.phaseStartedAt,
       })
       if (res.writableEnded || res.destroyed) {
         return
@@ -5485,6 +5516,8 @@ export class RelayService {
         method: trace.method,
         target: trace.target,
         durationMs: Date.now() - trace.startedAt,
+        phase: trace.phase,
+        phaseDurationMs: Date.now() - trace.phaseStartedAt,
       })
     }
 
@@ -5529,6 +5562,8 @@ export class RelayService {
     return {
       headers,
       method: method.toUpperCase(),
+      phase: 'received',
+      phaseStartedAt: Date.now(),
       requestId:
         this.normalizeHeaderValue(headers['x-request-id']) ??
         this.normalizeHeaderValue(headers['request-id']) ??
@@ -5545,6 +5580,14 @@ export class RelayService {
       return true
     }
     return methods.includes(normalizedMethod as HttpMethod)
+  }
+
+  private setHttpTracePhase(trace: HttpTraceContext, phase: string): void {
+    if (trace.phase === phase) {
+      return
+    }
+    trace.phase = phase
+    trace.phaseStartedAt = Date.now()
   }
 
   private buildAllowHeader(methods: readonly HttpMethod[]): string {
@@ -7367,6 +7410,8 @@ export class RelayService {
       statusText: input.statusText,
       upstreamRequestId: this.extractUpstreamRequestId(input.upstreamHeaders),
       upstreamRay: this.normalizeHeaderValue(input.upstreamHeaders['cf-ray']),
+      phase: trace.phase,
+      phaseDurationMs: Date.now() - trace.phaseStartedAt,
     })
   }
 
@@ -7744,6 +7789,8 @@ export class RelayService {
       routeAuthStrategy: input.routeAuthStrategy ?? undefined,
       statusCode: input.statusCode,
       statusText: input.statusText,
+      phase: trace.phase,
+      phaseDurationMs: Date.now() - trace.phaseStartedAt,
     })
   }
 
@@ -7790,6 +7837,8 @@ export class RelayService {
       internalCode,
       statusCode,
       statusText: STATUS_CODES[statusCode] ?? 'Internal Server Error',
+      phase: trace.phase,
+      phaseDurationMs: Date.now() - trace.phaseStartedAt,
     })
   }
 
