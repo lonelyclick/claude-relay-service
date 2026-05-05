@@ -5943,42 +5943,24 @@ export class RelayService {
   }
 
   private recordUsageRecord(record: UsageRecord, method: string = 'POST'): void {
+    const normalizedTarget = RelayService.normalizeStoredTarget(record.target)
     if (!this.usageStore) {
+      void this.applyUsageSideEffects(record, method, normalizedTarget, 0)
       return
     }
     const usageStore = this.usageStore
     void (async () => {
       try {
         const usageRecordId = await usageStore.insertRecord(record)
-        const normalizedTarget = RelayService.normalizeStoredTarget(record.target)
         this.logRiskObservation(record, usageRecordId, method, normalizedTarget)
         this.recordFirstRealRequestLifecycle(record, normalizedTarget)
-        try {
-          await this.riskAlertService.evaluate({
-            usageRecordId,
-            record,
-            method,
-            normalizedPath: normalizedTarget,
-          })
-          await this.applyClaudeNewAccountGuardrail(record, normalizedTarget)
-          await this.applyAnthropicOverageDisabledGuardrail(record)
-        } catch (error) {
-          this.safeLog({
-            event: 'risk_alert_failed',
-            requestId: record.requestId,
-            method,
-            target: record.target,
-            accountId: record.accountId,
-            durationMs: record.durationMs,
-            statusCode: record.statusCode,
-            error: error instanceof Error ? error.message : String(error),
-          })
-        }
+        await this.applyUsageSideEffects(record, method, normalizedTarget, usageRecordId)
         const billingStore = this.billingStore
         if (billingStore && usageRecordId > 0) {
           await billingStore.syncUsageRecordById(usageRecordId)
         }
       } catch (error) {
+        await this.applyUsageSideEffects(record, method, normalizedTarget, 0)
         this.safeLog({
           event: 'usage_record_failed',
           requestId: record.requestId,
@@ -5991,6 +5973,38 @@ export class RelayService {
         })
       }
     })()
+  }
+
+  private async applyUsageSideEffects(
+    record: UsageRecord,
+    method: string,
+    normalizedTarget: string,
+    usageRecordId: number,
+  ): Promise<void> {
+    try {
+      if (usageRecordId > 0) {
+        await this.riskAlertService.evaluate({
+          usageRecordId,
+          record,
+          method,
+          normalizedPath: normalizedTarget,
+        })
+      }
+      await this.applyClaudeNewAccountGuardrail(record, normalizedTarget)
+      await this.applyAnthropicOverageDisabledGuardrail(record)
+    } catch (error) {
+      this.safeLog({
+        event: 'risk_alert_failed',
+        requestId: record.requestId,
+        method,
+        target: record.target,
+        accountId: record.accountId,
+        durationMs: record.durationMs,
+        statusCode: record.statusCode,
+        usageRecordId: usageRecordId > 0 ? usageRecordId : undefined,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   private recordFirstRealRequestLifecycle(record: UsageRecord, normalizedTarget: string): void {
@@ -7195,7 +7209,6 @@ export class RelayService {
 
 
   private async applyClaudeNewAccountGuardrail(record: UsageRecord, normalizedTarget: string): Promise<void> {
-    if (!appConfig.claudeNewAccountGuardEnabled) return
     if (!this.userStore) return
     if (!record.accountId?.startsWith('claude-official:')) return
     if (!record.userId) return
@@ -7203,6 +7216,8 @@ export class RelayService {
 
     const account = await this.oauthService.getAccount(record.accountId)
     if (!account || account.provider !== 'claude-official') return
+    const hasWarmupPolicy = account.warmupEnabled !== false && account.warmupPolicyId != null
+    if (!appConfig.claudeNewAccountGuardEnabled && !hasWarmupPolicy) return
 
     const snapshot = await this.userStore.getNewClaudeAccountRiskSnapshot({
       accountId: record.accountId,

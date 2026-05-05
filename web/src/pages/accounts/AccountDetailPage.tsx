@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getAccount, deleteAccount, refreshAccount, updateAccountSettings, probeRateLimit, generateAuthUrl, exchangeCode } from '~/api/accounts'
+import { getAccount, deleteAccount, refreshAccount, banAccount, updateAccountSettings, probeRateLimit, generateAuthUrl, exchangeCode } from '~/api/accounts'
 import { getLifecycleEvents } from '~/api/risk'
 import { listRoutingGroups } from '~/api/routing'
 import { listProxies } from '~/api/proxies'
@@ -1183,12 +1183,25 @@ function ActionsSection({ account: a, toast, qc, navigate }: {
   navigate: ReturnType<typeof useNavigate>
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmBan, setConfirmBan] = useState(false)
+  const isBanned = a.status === 'banned'
 
   const refreshMut = useMutation({
     mutationFn: () => refreshAccount(a.id),
     onSuccess: () => {
       toast.success('Account refreshed')
       qc.invalidateQueries({ queryKey: ['account', a.id] })
+    },
+    onError: (e) => toast.error(e.message),
+  })
+
+  const banMut = useMutation({
+    mutationFn: () => banAccount(a.id),
+    onSuccess: () => {
+      toast.success('账号已标记为 Banned，已解绑 Network 并移出调度池')
+      setConfirmBan(false)
+      qc.invalidateQueries({ queryKey: ['account', a.id] })
+      qc.invalidateQueries({ queryKey: ['accounts'] })
     },
     onError: (e) => toast.error(e.message),
   })
@@ -1214,6 +1227,28 @@ function ActionsSection({ account: a, toast, qc, navigate }: {
         >
           Refresh Token
         </button>
+        {!isBanned && (
+          !confirmBan ? (
+            <button
+              onClick={() => setConfirmBan(true)}
+              className="px-3 py-1.5 rounded-lg text-sm bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20"
+            >
+              标记为 Banned
+            </button>
+          ) : (
+            <div className="flex gap-2 items-center">
+              <span className="text-xs text-red-400">确认 Ban？将解绑 Network 并移出调度池，且无法撤销。</span>
+              <button
+                onClick={() => banMut.mutate()}
+                disabled={banMut.isPending}
+                className="px-3 py-1.5 rounded-lg text-sm bg-red-600 text-white hover:bg-red-500"
+              >
+                Confirm Ban
+              </button>
+              <button onClick={() => setConfirmBan(false)} className="text-xs text-slate-400 hover:text-slate-200">Cancel</button>
+            </div>
+          )
+        )}
         {!confirmDelete ? (
           <button
             onClick={() => setConfirmDelete(true)}

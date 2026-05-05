@@ -23,7 +23,7 @@ import type {
 import { AccountScheduler } from '../scheduler/accountScheduler.js'
 import { FingerprintCache } from '../scheduler/fingerprintCache.js'
 import type { UserStore } from '../usage/userStore.js'
-import { resolveClaudeWarmupStatus } from '../usage/claudeWarmupPolicy.js'
+import { resolveClaudeWarmupAccountSwitchLimit, resolveClaudeWarmupStatus } from '../usage/claudeWarmupPolicy.js'
 import type {
   AccountLifecycleStore,
   AccountLifecycleEventInput,
@@ -80,6 +80,14 @@ const HANDOFF_SUMMARY_MAX_CHARS = 2400
 function trimToNull(value: string | null | undefined): string | null {
   const trimmed = value?.trim()
   return trimmed ? trimmed : null
+}
+
+function hasExplicitClaudeWarmupPolicy(account: StoredAccount): boolean {
+  return account.provider === CLAUDE_OFFICIAL_PROVIDER.id && account.warmupEnabled !== false && account.warmupPolicyId != null
+}
+
+function isMissingProxyDisabledError(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.startsWith('missing_proxy_disabled')
 }
 
 function extractEmailDomain(email: string | null | undefined): string | null {
@@ -1942,6 +1950,17 @@ export class OAuthService {
       }
       if (settings.proxyUrl !== undefined) updated.proxyUrl = settings.proxyUrl
       if (settings.directEgressEnabled !== undefined) updated.directEgressEnabled = settings.directEgressEnabled
+      if (
+        updated.directEgressEnabled === true &&
+        !updated.isActive &&
+        updated.status === 'active' &&
+        isMissingProxyDisabledError(updated.lastError)
+      ) {
+        updated.isActive = true
+        updated.lastError = null
+        updated.lastFailureAt = null
+        updated.cooldownUntil = null
+      }
       if (settings.bodyTemplatePath !== undefined) updated.bodyTemplatePath = settings.bodyTemplatePath
       if (settings.vmFingerprintTemplatePath !== undefined) updated.vmFingerprintTemplatePath = settings.vmFingerprintTemplatePath
       if (settings.label !== undefined) updated.label = settings.label
@@ -2218,6 +2237,29 @@ export class OAuthService {
       },
       result: undefined,
     }))
+  }
+
+  async banAccount(accountId: string): Promise<StoredAccount> {
+    return this.store.updateData((current) => {
+      const account = current.accounts.find((a) => a.id === accountId)
+      if (!account) {
+        throw new Error(`Account not found: ${accountId}`)
+      }
+      const nowIso = new Date().toISOString()
+      const updated: StoredAccount = {
+        ...account,
+        status: 'banned',
+        proxyUrl: null,
+        updatedAt: nowIso,
+      }
+      return {
+        data: {
+          ...current,
+          accounts: current.accounts.map((a) => (a.id === accountId ? updated : a)),
+        },
+        result: updated,
+      }
+    })
   }
 
   async markAccountUsed(accountId: string): Promise<void> {
@@ -3359,6 +3401,50 @@ export class OAuthService {
     return { heavy: false, reason: null }
   }
 
+  private async assertClaudeWarmupPreflight(input: {
+    account: StoredAccount
+    options: SelectAccountOptions
+    now: number
+  }): Promise<void> {
+    if (!hasExplicitClaudeWarmupPolicy(input.account)) return
+    const warmup = resolveClaudeWarmupStatus({ account: input.account, now: input.now })
+    if (!warmup.enabled) return
+
+    const requestWeight = this.estimateRequestWeightFromPreview(input.options.currentRequestBodyPreview ?? null)
+    const triggers: string[] = []
+    if (requestWeight.heavy) {
+      triggers.push(`heavy_request=${requestWeight.reason}`)
+    }
+
+    if (input.options.userId && this.userStore) {
+      const usedAccounts = await this.userStore.getClaudeOfficialAccountsUsedByClient({
+        userId: input.options.userId,
+        clientDeviceId: input.options.clientDeviceId ?? null,
+      })
+      const accountSwitchLimit24h = resolveClaudeWarmupAccountSwitchLimit(
+        appConfig.claudeNewAccountGuardBlockAccounts24h,
+        warmup.policyId,
+      )
+      const usedSet = new Set(usedAccounts)
+      if (!usedSet.has(input.account.id) && usedSet.size >= accountSwitchLimit24h) {
+        triggers.push(`client_accounts_24h=${usedSet.size}/${accountSwitchLimit24h}`)
+      }
+    }
+
+    if (triggers.length === 0) return
+
+    const reason = [
+      'warmup_preflight_block',
+      `stage=${warmup.stage.id}`,
+      `stageLabel=${warmup.stage.label}`,
+      `policy=${warmup.policyId}`,
+      `ageMs=${warmup.effectiveAgeMs ?? 'unknown'}`,
+      `triggered=${triggers.join(';')}`,
+    ].join('|')
+    await this.markAccountRiskGuardrail(input.account.id, reason, warmup.stage.cooldownMs)
+    throw new Error(reason)
+  }
+
   private async buildClaudeNaturalCapacityDisallowedAccountIds(input: {
     accounts: StoredAccount[]
     currentRoute: SessionRoute | null
@@ -3383,7 +3469,12 @@ export class OAuthService {
       if (isExistingSession && isYoung && account.id !== input.currentRoute?.accountId) {
         disallowed.add(account.id)
       }
-      if (requestWeight.heavy && (ageMs == null || ageMs < matureHeavyAgeMs) && account.id !== input.currentRoute?.accountId) {
+      if (
+        requestWeight.heavy &&
+        hasExplicitClaudeWarmupPolicy(account) &&
+        (ageMs == null || ageMs < matureHeavyAgeMs) &&
+        account.id !== input.currentRoute?.accountId
+      ) {
         disallowed.add(account.id)
       }
     }
@@ -3733,6 +3824,12 @@ export class OAuthService {
         lastSelectedAt: nowIso,
         updatedAt: nowIso,
       }
+
+      await this.assertClaudeWarmupPreflight({
+        account: selectedAccount,
+        options,
+        now,
+      })
 
       // Attempt session route update; on failure revert to original data
       let sessionRoute: SessionRoute | null = null

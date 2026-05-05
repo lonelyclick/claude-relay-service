@@ -40,6 +40,8 @@ function buildAccount(input: Partial<StoredAccount> & { id: string }): StoredAcc
     displayName: input.displayName ?? input.id,
     hasExtraUsageEnabled: input.hasExtraUsageEnabled ?? null,
     billingType: input.billingType ?? null,
+    warmupEnabled: input.warmupEnabled,
+    warmupPolicyId: input.warmupPolicyId,
     accountCreatedAt: input.accountCreatedAt ?? null,
     subscriptionCreatedAt: input.subscriptionCreatedAt ?? null,
     rawProfile: input.rawProfile ?? null,
@@ -1383,4 +1385,50 @@ test('OAuthService.selectAccount allows openai-codex accounts without proxy', as
 
   assert.equal(resolved.account.id, 'openai-codex:account-no-proxy')
   assert.equal(resolved.proxyUrl, null)
+})
+
+test('OAuthService.selectAccount blocks heavy requests for explicit warmup-policy Claude accounts', async () => {
+  const { oauthService } = createService([
+    buildAccount({
+      id: 'claude-warmup-heavy',
+      provider: 'claude-official',
+      createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      accountCreatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      warmupEnabled: true,
+      warmupPolicyId: 'a',
+    }),
+  ])
+
+  await assert.rejects(
+    oauthService.selectAccount({
+      provider: 'claude-official',
+      forceAccountId: 'claude-warmup-heavy',
+      currentRequestBodyPreview: '{"cache_read_input_tokens":300000}',
+    }),
+    /warmup_preflight_block.*heavy_request=cache_read_preview_300000/,
+  )
+
+  const account = await oauthService.getAccount('claude-warmup-heavy')
+  assert.ok(account)
+  assert.equal(account.schedulerState, 'auto_blocked')
+  assert.match(account.autoBlockedReason ?? '', /warmup_preflight_block/)
+})
+
+test('OAuthService.selectAccount does not apply warmup limits to Claude accounts without warmup policy', async () => {
+  const { oauthService } = createService([
+    buildAccount({
+      id: 'claude-no-warmup-heavy',
+      provider: 'claude-official',
+      warmupEnabled: false,
+      warmupPolicyId: undefined,
+    }),
+  ])
+
+  const resolved = await oauthService.selectAccount({
+    provider: 'claude-official',
+    forceAccountId: 'claude-no-warmup-heavy',
+    currentRequestBodyPreview: '{"cache_read_input_tokens":300000}',
+  })
+
+  assert.equal(resolved.account.id, 'claude-no-warmup-heavy')
 })

@@ -46,6 +46,7 @@ export const getAccount = async (id: string) => {
 }
 export const deleteAccount = (id: string) => post(`/admin/accounts/${enc(id)}/delete`)
 export const refreshAccount = (id: string) => post(`/admin/accounts/${enc(id)}/refresh`)
+export const banAccount = (id: string) => post<{ account: Account }>(`/admin/accounts/${enc(id)}/ban`)
 export const updateAccountSettings = (id: string, settings: Record<string, unknown>) =>
   post(`/admin/accounts/${enc(id)}/settings`, settings)
 export const clearAccounts = () => post('/admin/account/clear')

@@ -2055,6 +2055,10 @@ async function refreshAccountControl(services, accountId) {
   const account = await services.oauthService.refreshAccount(accountId);
   return jsonResult(200, { ok: true, account: sanitizeAccount(account) });
 }
+async function banAccountControl(services, accountId) {
+  const account = await services.oauthService.banAccount(accountId);
+  return jsonResult(200, { ok: true, account: sanitizeAccount(account) });
+}
 async function clearSessionRoutesControl(services) {
   await services.oauthService.clearSessionRoutes();
   return jsonResult(200, { ok: true });
@@ -3541,6 +3545,16 @@ export function createServer(services): express.Express {
       "/internal/control/accounts/:accountId/refresh",
       asyncRoute(async (req, res) => {
         const result = await refreshAccountControl(
+          services,
+          getRouteParam(req.params.accountId),
+        );
+        res.status(result.status).json(result.body);
+      }),
+    );
+    app.post(
+      "/internal/control/accounts/:accountId/ban",
+      asyncRoute(async (req, res) => {
+        const result = await banAccountControl(
           services,
           getRouteParam(req.params.accountId),
         );
@@ -5796,6 +5810,16 @@ export function createServer(services): express.Express {
         await respondWithRelayControl(res, relayControlClient, {
           method: "POST",
           path: `/internal/control/accounts/${encodeURIComponent(accountId)}/refresh`,
+        });
+      }),
+    );
+    app.post(
+      "/admin/accounts/:accountId/ban",
+      asyncRoute(async (req, res) => {
+        const accountId = getRouteParam(req.params.accountId);
+        await respondWithRelayControl(res, relayControlClient, {
+          method: "POST",
+          path: `/internal/control/accounts/${encodeURIComponent(accountId)}/ban`,
         });
       }),
     );

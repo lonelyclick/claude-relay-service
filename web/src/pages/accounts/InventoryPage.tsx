@@ -31,6 +31,7 @@ const FILTER_KEYS = {
   group: 'accounts.group',
   health: 'accounts.health',
   stressedOnly: 'accounts.stressedOnly',
+  showBanned: 'accounts.showBanned',
   viewMode: 'accounts.viewMode',
 } as const
 
@@ -106,6 +107,7 @@ export function InventoryPage() {
   const [group, setGroup] = useLocalStorageString<string>(FILTER_KEYS.group, 'all')
   const [health, setHealth] = useLocalStorageString<HealthLevel>(FILTER_KEYS.health, 'all', isHealthLevel)
   const [stressedOnly, setStressedOnly] = useLocalStorageBoolean(FILTER_KEYS.stressedOnly, false)
+  const [showBanned, setShowBanned] = useLocalStorageBoolean(FILTER_KEYS.showBanned, false)
   const [viewMode, setViewMode] = useLocalStorageString<ViewMode>(FILTER_KEYS.viewMode, 'table', isViewMode)
 
   const accountList = accounts.data?.accounts ?? []
@@ -123,6 +125,7 @@ export function InventoryPage() {
 
   const filtered = useMemo(() => {
     return accountList.filter((a) => {
+      if (!showBanned && a.status === 'banned') return false
       if (search && !matchesSearch(a, search)) return false
       if (provider !== 'all' && a.provider !== provider) return false
       if (scheduler !== 'all' && a.schedulerState !== scheduler) return false
@@ -136,7 +139,12 @@ export function InventoryPage() {
       }
       return true
     })
-  }, [accountList, search, provider, scheduler, group, health, stressedOnly, viewMode])
+  }, [accountList, showBanned, search, provider, scheduler, group, health, stressedOnly, viewMode])
+
+  const bannedCount = useMemo(
+    () => accountList.filter((a) => a.status === 'banned').length,
+    [accountList],
+  )
 
   const sortedForCards = useMemo(() => {
     const order: Record<string, number> = { critical: 0, warning: 1, healthy: 2 }
@@ -180,6 +188,18 @@ export function InventoryPage() {
               className="accent-orange-500"
             />
             仅显示 ≥70%
+          </label>
+        )}
+
+        {bannedCount > 0 && (
+          <label className="inline-flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none px-2 py-1.5 rounded-lg border border-border-default hover:border-border-hover transition-all duration-150">
+            <input
+              type="checkbox"
+              checked={showBanned}
+              onChange={(e) => setShowBanned(e.target.checked)}
+              className="accent-red-500"
+            />
+            显示已 Ban ({bannedCount})
           </label>
         )}
 
