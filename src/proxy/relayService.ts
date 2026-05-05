@@ -2886,8 +2886,7 @@ export class RelayService {
     let resolved: ResolvedAccount
     try {
       resolved = await this.oauthService.selectAccount({
-        // provider unset: let the scheduler pick whichever account the routing group
-        // exposes (openai-codex real account or openai-compatible adapter account).
+        provider: OPENAI_CODEX_PROVIDER.id,
         sessionKey: this.isOpenAICodexResponsesPath(input.req.path) ? input.sessionKey : null,
         forceAccountId: input.forceAccountId,
         routingGroupId: input.routingGroupId,
