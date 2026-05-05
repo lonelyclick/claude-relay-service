@@ -11,6 +11,7 @@ export type RelayControlRequest = {
   body?: unknown
   query?: Record<string, string | null | undefined>
   headers?: Record<string, string | null | undefined>
+  timeoutMs?: number
 }
 
 export type RelayControlResponse = {
@@ -57,7 +58,7 @@ export function createRelayControlClient(
           ...extraHeaders,
         },
         body: input.body === undefined ? undefined : JSON.stringify(input.body),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(input.timeoutMs ?? timeoutMs),
       })
 
       const text = await response.text()

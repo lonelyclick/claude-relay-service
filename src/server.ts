@@ -5856,6 +5856,7 @@ export function createServer(services): express.Express {
         await respondWithRelayControl(res, relayControlClient, {
           method: "GET",
           path: `/internal/control/accounts/${encodeURIComponent(accountId)}/ratelimit`,
+          timeoutMs: appConfig.requestTimeoutMs + 15_000,
         });
       }),
     );

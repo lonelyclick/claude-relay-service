@@ -130,6 +130,7 @@ export async function probeOpenAICodexRateLimits(options: {
       dispatcher: options.proxyDispatcher,
       headersTimeout: appConfig.requestTimeoutMs,
       bodyTimeout: appConfig.requestTimeoutMs,
+      signal: AbortSignal.timeout(appConfig.requestTimeoutMs),
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
