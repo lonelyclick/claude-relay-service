@@ -6201,6 +6201,21 @@ export class RelayService {
     }, 'GET')
   }
 
+  private async pipelineWithUpstreamDeadline(
+    source: NodeJS.ReadableStream,
+    ...destinations: Array<NodeJS.WritableStream | NodeJS.ReadWriteStream>
+  ): Promise<void> {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => {
+      controller.abort(new Error(`upstream wall-clock timeout after ${appConfig.upstreamRequestTimeoutMs}ms`))
+    }, appConfig.upstreamRequestTimeoutMs)
+    try {
+      await pipeline([source, ...destinations], { signal: controller.signal })
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
   private async pipelineWithUsageTracking(
     upstream: ForwardedHttpResponse,
     res: Response,
@@ -6238,7 +6253,7 @@ export class RelayService {
     const rl = extractRateLimitInfo(upstream.headers)
 
     if (!shouldTrack) {
-      await pipeline(upstream.body, res)
+      await this.pipelineWithUpstreamDeadline(upstream.body, res)
       return {
         rateLimitStatus: rl.status,
         responseBodyPreview: null,
@@ -6286,7 +6301,7 @@ export class RelayService {
 
         // Forward raw data to client untouched, tee to decompressor for usage
         try {
-          await pipeline(upstream.body, new Transform({
+          await this.pipelineWithUpstreamDeadline(upstream.body, new Transform({
             transform(chunk: Buffer, _enc: string, cb: TransformCallback) {
               if (decompressor) {
                 decompressor.write(chunk)
@@ -6364,7 +6379,7 @@ export class RelayService {
           },
         })
         try {
-          await pipeline(upstream.body, previewCollector, sseErrorTransform, usageTransform, res)
+          await this.pipelineWithUpstreamDeadline(upstream.body, previewCollector, sseErrorTransform, usageTransform, res)
         } catch (err) {
           if (!sseErrorTransform.destroyed) {
             sseErrorTransform.destroy()
@@ -6456,7 +6471,7 @@ export class RelayService {
           cb(null, chunk)
         },
       })
-      await pipeline(upstream.body, collector, res)
+      await this.pipelineWithUpstreamDeadline(upstream.body, collector, res)
       const capturedBody = Buffer.concat(captureChunks)
       const contentEncoding =
         typeof upstream.headers['content-encoding'] === 'string'
