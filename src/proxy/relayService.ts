@@ -3255,6 +3255,7 @@ export class RelayService {
         'x-request-id': input.trace.requestId,
       }
       for (const headerName of [
+        'content-encoding',
         'user-agent',
         'x-client-request-id',
         'x-codex-turn-metadata',
