@@ -6,8 +6,10 @@ export type RelayLogEvent = {
     | 'billing_sku_preflight_soft_missing'
     | 'claude_compatible_model_routed'
     | 'http_completed'
+    | 'http_client_disconnected'
     | 'http_rejected'
     | 'http_failed'
+    | 'http_request_timeout'
     | 'http_stream_error'
     | 'usage_record_failed'
     | 'upstream_incident_changed'
@@ -32,6 +34,7 @@ export type RelayLogEvent = {
   forceAccountId?: string | null
   hasStickySessionKey?: boolean
   durationMs: number
+  timeoutMs?: number
   statusCode?: number
   statusText?: string
   upstreamRequestId?: string | null

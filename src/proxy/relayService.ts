@@ -212,6 +212,7 @@ type HttpTraceContext = {
   headers: IncomingHttpHeaders
   method: string
   requestId: string
+  signal: AbortSignal
   startedAt: number
   target: string
 }
@@ -300,6 +301,13 @@ class BufferedRequestBodyTooLargeError extends Error {
   constructor(readonly maxBytes: number) {
     super(`Request body exceeds buffered limit of ${maxBytes} bytes`)
     this.name = 'BufferedRequestBodyTooLargeError'
+  }
+}
+
+class RelayRequestTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`request exceeded relay timeout after ${timeoutMs}ms`)
+    this.name = 'RelayRequestTimeoutError'
   }
 }
 
@@ -1321,7 +1329,9 @@ export class RelayService {
   }
 
   async handle(req: Request, res: Response): Promise<void> {
-    const trace = this.createTraceContext(req.method, req.originalUrl, req.headers)
+    const requestController = new AbortController()
+    const trace = this.createTraceContext(req.method, req.originalUrl, req.headers, requestController.signal)
+    const clearRequestDeadline = this.createHttpRequestDeadline(req, res, trace, requestController)
     const requestUrl = this.buildUpstreamUrlFromRawUrl(req.originalUrl)
 
     try {
@@ -1423,7 +1433,7 @@ export class RelayService {
       const sessionKey = this.extractStickySessionKeyFromHeaders(req.headers)
       let preparedRequestBody: PreparedRequestBody
       try {
-        preparedRequestBody = await this.prepareRequestBody(req)
+        preparedRequestBody = await this.prepareRequestBody(req, trace.signal)
       } catch (error) {
         if (error instanceof BufferedRequestBodyTooLargeError) {
           res.status(413).json(
@@ -1768,6 +1778,7 @@ export class RelayService {
           requestHeaders: RelayService.sanitizeHeaders(req.headers),
           requestBodyPreview: RelayService.truncateBody(rawRequestBody),
           upstreamRequestHeaders: upstream.upstreamRequestHeaders ? RelayService.rawHeadersToObject(upstream.upstreamRequestHeaders) : null,
+          signal: trace.signal,
         })
         if (upstream.statusCode >= 500) {
           this.trackUpstreamServerFailure(resolvedForProxy.account.id, trace)
@@ -2220,6 +2231,7 @@ export class RelayService {
             requestHeaders: RelayService.sanitizeHeaders(req.headers),
             requestBodyPreview: RelayService.truncateBody(rawRequestBody),
             upstreamRequestHeaders: upstream.upstreamRequestHeaders ? RelayService.rawHeadersToObject(upstream.upstreamRequestHeaders) : null,
+            signal: trace.signal,
           })
           if (sessionKey && this.userStore) {
             await this.userStore.noteSessionRouteUsage({
@@ -2392,8 +2404,28 @@ export class RelayService {
         }
       }
     } catch (error) {
+      if (this.isRelayRequestTimeout(trace, error)) {
+        this.logHttpRejection(trace, {
+          error: trace.signal.reason instanceof Error ? trace.signal.reason.message : String(error),
+          internalCode: RELAY_ERROR_CODES.SERVICE_UNAVAILABLE,
+          routeAuthStrategy: null,
+          statusCode: 504,
+          statusText: STATUS_CODES[504] ?? 'Gateway Timeout',
+        })
+        if (!res.headersSent && !res.writableEnded) {
+          res.status(504).json(
+            anthropicErrorBody(504, 'request exceeded relay timeout', RELAY_ERROR_CODES.SERVICE_UNAVAILABLE),
+          )
+        }
+        return
+      }
+      if (this.isClientDisconnected(trace)) {
+        return
+      }
       this.logHttpFailure(trace, error)
       throw error
+    } finally {
+      clearRequestDeadline()
     }
   }
 
@@ -3078,6 +3110,7 @@ export class RelayService {
         headersTimeout: appConfig.upstreamRequestTimeoutMs,
         bodyTimeout: appConfig.upstreamRequestTimeoutMs,
         responseHeaders: 'raw',
+        signal: input.trace.signal,
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -3275,6 +3308,7 @@ export class RelayService {
         headersTimeout: appConfig.upstreamRequestTimeoutMs,
         bodyTimeout: appConfig.upstreamRequestTimeoutMs,
         responseHeaders: 'raw',
+        signal: input.trace.signal,
       })
 
       const upstreamRawHeaders = Array.isArray(upstream.headers)
@@ -3479,6 +3513,7 @@ export class RelayService {
           requestHeaders: RelayService.sanitizeHeaders(input.req.headers),
           requestBodyPreview: RelayService.truncateBody(input.rawRequestBody),
           upstreamRequestHeaders,
+          signal: input.trace.signal,
         },
       )
 
@@ -3691,6 +3726,7 @@ export class RelayService {
       headersTimeout: appConfig.upstreamRequestTimeoutMs,
       bodyTimeout: appConfig.upstreamRequestTimeoutMs,
       responseHeaders: 'raw',
+      signal: input.trace.signal,
     })
 
     const upstreamRawHeaders = Array.isArray(upstream.headers)
@@ -3747,6 +3783,7 @@ export class RelayService {
         requestHeaders: RelayService.sanitizeHeaders(input.req.headers),
         requestBodyPreview: RelayService.truncateBody(input.rawRequestBody),
         upstreamRequestHeaders,
+        signal: input.trace.signal,
       },
     )
 
@@ -3982,6 +4019,7 @@ export class RelayService {
       headersTimeout: appConfig.upstreamRequestTimeoutMs,
       bodyTimeout: appConfig.upstreamRequestTimeoutMs,
       responseHeaders: 'raw',
+      signal: input.trace.signal,
     })
 
     const upstreamRawHeaders = Array.isArray(upstream.headers) ? upstream.headers : undefined
@@ -4192,6 +4230,7 @@ export class RelayService {
       headersTimeout: appConfig.upstreamRequestTimeoutMs,
       bodyTimeout: appConfig.upstreamRequestTimeoutMs,
       responseHeaders: 'raw',
+      signal: input.trace.signal,
     })
 
     const upstreamRawHeaders = Array.isArray(upstream.headers) ? upstream.headers : undefined
@@ -4456,6 +4495,7 @@ export class RelayService {
         headersTimeout: appConfig.upstreamRequestTimeoutMs,
         bodyTimeout: appConfig.upstreamRequestTimeoutMs,
         responseHeaders: 'raw',
+        signal: input.trace.signal,
       })
 
       const upstreamRawHeaders = Array.isArray(upstream.headers)
@@ -4620,6 +4660,7 @@ export class RelayService {
           requestHeaders: RelayService.sanitizeHeaders(input.req.headers),
           requestBodyPreview: RelayService.truncateBody(input.rawRequestBody),
           upstreamRequestHeaders,
+          signal: input.trace.signal,
         },
       )
 
@@ -4804,6 +4845,7 @@ export class RelayService {
                 headers: {},
                 requestId: input.usage.requestId,
                 method: 'GET',
+                signal: new AbortController().signal,
                 startedAt: input.usage.startedAt,
                 target: input.usage.target,
               },
@@ -5392,10 +5434,97 @@ export class RelayService {
     })
   }
 
+  private createHttpRequestDeadline(
+    req: Request,
+    res: Response,
+    trace: HttpTraceContext,
+    controller: AbortController,
+  ): () => void {
+    let finished = false
+    const timeoutMs = appConfig.upstreamRequestTimeoutMs
+    const timeout = setTimeout(() => {
+      const error = new RelayRequestTimeoutError(timeoutMs)
+      if (!controller.signal.aborted) {
+        controller.abort(error)
+      }
+      this.safeLog({
+        event: 'http_request_timeout',
+        requestId: trace.requestId,
+        method: trace.method,
+        target: trace.target,
+        durationMs: Date.now() - trace.startedAt,
+        timeoutMs,
+      })
+      if (res.writableEnded || res.destroyed) {
+        return
+      }
+      if (!res.headersSent) {
+        res.status(504).json(
+          anthropicErrorBody(504, error.message, RELAY_ERROR_CODES.SERVICE_UNAVAILABLE),
+        )
+        return
+      }
+      if (this.responseIsEventStream(res)) {
+        res.write(`\nevent: error\ndata: ${JSON.stringify({ type: 'stream_error', message: 'request_timeout' })}\n\n`)
+      }
+      res.end()
+    }, timeoutMs)
+    timeout.unref?.()
+
+    const onFinish = () => {
+      finished = true
+    }
+    const onClientClosed = () => {
+      if (finished || controller.signal.aborted) {
+        return
+      }
+      controller.abort(new Error('client disconnected before response completed'))
+      this.safeLog({
+        event: 'http_client_disconnected',
+        requestId: trace.requestId,
+        method: trace.method,
+        target: trace.target,
+        durationMs: Date.now() - trace.startedAt,
+      })
+    }
+
+    req.once('aborted', onClientClosed)
+    res.once('finish', onFinish)
+    res.once('close', onClientClosed)
+
+    return () => {
+      clearTimeout(timeout)
+      req.off('aborted', onClientClosed)
+      res.off('finish', onFinish)
+      res.off('close', onClientClosed)
+    }
+  }
+
+  private responseIsEventStream(res: Response): boolean {
+    const value = res.getHeader('content-type')
+    if (typeof value === 'string') {
+      return value.toLowerCase().includes('text/event-stream')
+    }
+    if (Array.isArray(value)) {
+      return value.some((item) => item.toLowerCase().includes('text/event-stream'))
+    }
+    return false
+  }
+
+  private isRelayRequestTimeout(trace: HttpTraceContext, error: unknown): boolean {
+    return error instanceof RelayRequestTimeoutError ||
+      (trace.signal.aborted && trace.signal.reason instanceof RelayRequestTimeoutError)
+  }
+
+  private isClientDisconnected(trace: HttpTraceContext): boolean {
+    return trace.signal.aborted && !(trace.signal.reason instanceof RelayRequestTimeoutError)
+  }
+
   private createTraceContext(
     method: string,
     rawUrl: string | undefined,
     headers: IncomingHttpHeaders,
+    signal: AbortSignal = new AbortController().signal,
   ): HttpTraceContext {
     return {
       headers,
@@ -5404,6 +5533,7 @@ export class RelayService {
         this.normalizeHeaderValue(headers['x-request-id']) ??
         this.normalizeHeaderValue(headers['request-id']) ??
         crypto.randomUUID(),
+      signal,
       startedAt: Date.now(),
       target: rawUrl ?? '/',
     }
@@ -5506,7 +5636,7 @@ export class RelayService {
     })
   }
 
-  private async prepareRequestBody(req: Request): Promise<PreparedRequestBody> {
+  private async prepareRequestBody(req: Request, signal: AbortSignal): Promise<PreparedRequestBody> {
     if (req.method === 'GET' || req.method === 'HEAD') {
       return { body: undefined, bufferedBody: undefined }
     }
@@ -5533,7 +5663,7 @@ export class RelayService {
       }
     }
 
-    const bufferedBody = await this.readBufferedRequestBody(req, appConfig.bufferedRequestBodyMaxBytes)
+    const bufferedBody = await this.readBufferedRequestBody(req, appConfig.bufferedRequestBodyMaxBytes, signal)
     return {
       body: bufferedBody,
       bufferedBody,
@@ -5553,10 +5683,16 @@ export class RelayService {
     )
   }
 
-  private async readBufferedRequestBody(req: Request, maxBytes: number): Promise<Buffer | undefined> {
+  private async readBufferedRequestBody(req: Request, maxBytes: number, signal: AbortSignal): Promise<Buffer | undefined> {
     const chunks: Buffer[] = []
     let total = 0
+    if (signal.aborted) {
+      throw signal.reason
+    }
     for await (const chunk of req) {
+      if (signal.aborted) {
+        throw signal.reason
+      }
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
       total += buffer.length
       if (total > maxBytes) {
@@ -5633,6 +5769,7 @@ export class RelayService {
       headersTimeout: appConfig.upstreamRequestTimeoutMs,
       bodyTimeout: appConfig.upstreamRequestTimeoutMs,
       responseHeaders: 'raw',
+      signal: options?.trace.signal,
     })
 
     const rawHeaders = Array.isArray(upstream.headers)
@@ -6203,14 +6340,19 @@ export class RelayService {
 
   private async pipelineWithUpstreamDeadline(
     source: NodeJS.ReadableStream,
-    ...destinations: Array<NodeJS.WritableStream | NodeJS.ReadWriteStream>
+    destinations: Array<NodeJS.WritableStream | NodeJS.ReadWriteStream>,
+    signal?: AbortSignal,
   ): Promise<void> {
     const controller = new AbortController()
     const timeout = setTimeout(() => {
       controller.abort(new Error(`upstream wall-clock timeout after ${appConfig.upstreamRequestTimeoutMs}ms`))
     }, appConfig.upstreamRequestTimeoutMs)
+    timeout.unref?.()
+    const pipelineSignal = signal
+      ? AbortSignal.any([controller.signal, signal])
+      : controller.signal
     try {
-      await pipeline([source, ...destinations], { signal: controller.signal })
+      await pipeline([source, ...destinations], { signal: pipelineSignal })
     } finally {
       clearTimeout(timeout)
     }
@@ -6234,6 +6376,7 @@ export class RelayService {
       requestHeaders?: Record<string, string | string[] | undefined> | null
       requestBodyPreview?: string | null
       upstreamRequestHeaders?: Record<string, string | string[] | undefined> | null
+      signal?: AbortSignal
     },
   ): Promise<PipelineObservation> {
     const shouldTrack =
@@ -6253,7 +6396,7 @@ export class RelayService {
     const rl = extractRateLimitInfo(upstream.headers)
 
     if (!shouldTrack) {
-      await this.pipelineWithUpstreamDeadline(upstream.body, res)
+      await this.pipelineWithUpstreamDeadline(upstream.body, [res], context.signal)
       return {
         rateLimitStatus: rl.status,
         responseBodyPreview: null,
@@ -6301,7 +6444,7 @@ export class RelayService {
 
         // Forward raw data to client untouched, tee to decompressor for usage
         try {
-          await this.pipelineWithUpstreamDeadline(upstream.body, new Transform({
+          await this.pipelineWithUpstreamDeadline(upstream.body, [new Transform({
             transform(chunk: Buffer, _enc: string, cb: TransformCallback) {
               if (decompressor) {
                 decompressor.write(chunk)
@@ -6316,7 +6459,7 @@ export class RelayService {
               }
               cb()
             },
-          }), res)
+          }), res], context.signal)
         } catch (err) {
           if (decompressor && !decompressor.destroyed) {
             decompressor.destroy()
@@ -6379,7 +6522,7 @@ export class RelayService {
           },
         })
         try {
-          await this.pipelineWithUpstreamDeadline(upstream.body, previewCollector, sseErrorTransform, usageTransform, res)
+          await this.pipelineWithUpstreamDeadline(upstream.body, [previewCollector, sseErrorTransform, usageTransform, res], context.signal)
         } catch (err) {
           if (!sseErrorTransform.destroyed) {
             sseErrorTransform.destroy()
@@ -6471,7 +6614,7 @@ export class RelayService {
           cb(null, chunk)
         },
       })
-      await this.pipelineWithUpstreamDeadline(upstream.body, collector, res)
+      await this.pipelineWithUpstreamDeadline(upstream.body, [collector, res], context.signal)
       const capturedBody = Buffer.concat(captureChunks)
       const contentEncoding =
         typeof upstream.headers['content-encoding'] === 'string'
