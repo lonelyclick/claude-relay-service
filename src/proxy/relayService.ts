@@ -3315,6 +3315,9 @@ export class RelayService {
     const chatRequest = convertResponsesToChat(parsedBody)
     chatRequest.model = targetModel
     chatRequest.stream = wantsStream
+    if (wantsStream) {
+      chatRequest.stream_options = { include_usage: true }
+    }
 
     const upstreamUrl = buildOpenAICompatibleChatCompletionsUrl(resolved.account)
     const upstreamRequestHeaders: Record<string, string> = {
@@ -3414,6 +3417,43 @@ export class RelayService {
     input.res.setHeader('cache-control', 'no-cache, no-transform')
     input.res.flushHeaders?.()
 
+    const upstreamHeaders = Array.isArray(upstream.headers)
+      ? collapseIncomingHeaders(upstream.headers)
+      : upstream.headers
+    const rateLimitInfo = extractRateLimitInfo(upstreamHeaders)
+    let extractedUsage: ExtractedUsage | null = null
+    let recordedUsage = false
+    const recordAdapterUsage = (): void => {
+      if (recordedUsage) return
+      recordedUsage = true
+      this.recordUsageRecord({
+        requestId: input.trace.requestId,
+        accountId: resolved.account.id,
+        userId: input.relayUser.userId,
+        organizationId: input.relayUser.organizationId,
+        relayKeySource: input.relayUser.relayKeySource,
+        sessionKey: input.sessionKey,
+        clientDeviceId: input.clientDeviceId,
+        model: extractedUsage?.model ?? targetModel,
+        inputTokens: extractedUsage?.inputTokens ?? 0,
+        outputTokens: extractedUsage?.outputTokens ?? 0,
+        cacheCreationInputTokens: extractedUsage?.cacheCreationInputTokens ?? 0,
+        cacheReadInputTokens: extractedUsage?.cacheReadInputTokens ?? 0,
+        statusCode: 200,
+        durationMs: Date.now() - input.trace.startedAt,
+        target: input.trace.target,
+        rateLimitStatus: rateLimitInfo.status,
+        rateLimit5hUtilization: rateLimitInfo.fiveHourUtilization,
+        rateLimit7dUtilization: rateLimitInfo.sevenDayUtilization,
+        rateLimitReset: rateLimitInfo.resetTimestamp,
+        requestHeaders: RelayService.sanitizeHeaders(input.req.headers),
+        requestBodyPreview: RelayService.truncateBody(input.rawRequestBody),
+        responseHeaders: RelayService.sanitizeHeaders(upstreamHeaders),
+        responseBodyPreview: null,
+        upstreamRequestHeaders: RelayService.sanitizeHeaders(upstreamRequestHeaders),
+      }, input.req.method)
+    }
+
     let clientClosed = false
     input.res.once('close', () => {
       clientClosed = true
@@ -3424,6 +3464,16 @@ export class RelayService {
       for await (const sse of streamChatToResponses(upstream.body as AsyncIterable<Uint8Array>, {
         model: targetModel,
         request: parsedBody,
+      }, {
+        onUsage: (usage) => {
+          extractedUsage = {
+            model: targetModel,
+            inputTokens: usage.input_tokens,
+            outputTokens: usage.output_tokens,
+            cacheCreationInputTokens: 0,
+            cacheReadInputTokens: 0,
+          }
+        },
       })) {
         if (clientClosed) break
         input.res.write(sse)
@@ -3442,6 +3492,7 @@ export class RelayService {
     if (!clientClosed) {
       try { input.res.end() } catch { /* ignore */ }
     }
+    recordAdapterUsage()
   }
 
   private buildOpenAICodexResponsesProxyUrl(
@@ -3682,7 +3733,7 @@ export class RelayService {
           requestBodyPreview: RelayService.truncateBody(input.rawRequestBody),
           responseHeaders: RelayService.sanitizeHeaders(upstreamHeaders),
           responseBodyPreview: RelayService.truncateBody(retryFailureBody),
-          upstreamRequestHeaders,
+          upstreamRequestHeaders: RelayService.sanitizeHeaders(upstreamRequestHeaders),
         })
         try {
           codexDisallowed.push(currentResolved.account.id)
@@ -3748,7 +3799,7 @@ export class RelayService {
           method: input.req.method,
           requestHeaders: RelayService.sanitizeHeaders(input.req.headers),
           requestBodyPreview: RelayService.truncateBody(input.rawRequestBody),
-          upstreamRequestHeaders,
+          upstreamRequestHeaders: RelayService.sanitizeHeaders(upstreamRequestHeaders),
           signal: input.trace.signal,
         },
       )
@@ -4812,7 +4863,7 @@ export class RelayService {
           requestBodyPreview: RelayService.truncateBody(input.rawRequestBody),
           responseHeaders: RelayService.sanitizeHeaders(upstreamHeaders),
           responseBodyPreview: RelayService.truncateBody(retryFailureBody),
-          upstreamRequestHeaders,
+          upstreamRequestHeaders: RelayService.sanitizeHeaders(upstreamRequestHeaders),
         })
         try {
           compatDisallowed.push(currentResolved.account.id)
@@ -4893,7 +4944,7 @@ export class RelayService {
           method: input.req.method,
           requestHeaders: RelayService.sanitizeHeaders(input.req.headers),
           requestBodyPreview: RelayService.truncateBody(input.rawRequestBody),
-          upstreamRequestHeaders,
+          upstreamRequestHeaders: RelayService.sanitizeHeaders(upstreamRequestHeaders),
           signal: input.trace.signal,
         },
       )
@@ -4979,7 +5030,7 @@ export class RelayService {
           accountId: resolvedForProxy.account.id,
           statusCode: 101,
           responseHeaders: RelayService.sanitizeHeaders(upstream.upgradeHeaders),
-          upstreamRequestHeaders,
+          upstreamRequestHeaders: RelayService.sanitizeHeaders(upstreamRequestHeaders),
         })
         return upstream
       } catch (error) {
@@ -4990,7 +5041,7 @@ export class RelayService {
           statusCode: failure.statusCode,
           responseHeaders: RelayService.sanitizeHeaders(failure.responseHeaders),
           responseBodyPreview: RelayService.truncateBody(failure.responseBody),
-          upstreamRequestHeaders,
+          upstreamRequestHeaders: RelayService.sanitizeHeaders(upstreamRequestHeaders),
         })
         throw failure
       }
@@ -5043,7 +5094,7 @@ export class RelayService {
           accountId: resolved.account.id,
           statusCode: 101,
           responseHeaders: RelayService.sanitizeHeaders(upstream.upgradeHeaders),
-          upstreamRequestHeaders,
+          upstreamRequestHeaders: RelayService.sanitizeHeaders(upstreamRequestHeaders),
         })
         return upstream
       } catch (error) {
@@ -6282,21 +6333,23 @@ export class RelayService {
     body: RelayRequestBody,
     handoffSummary: string | null,
   ): { body: RelayRequestBody; handoffInjected: boolean } {
-    if (!handoffSummary?.trim() || !Buffer.isBuffer(body) || body.length === 0) {
+    if (!Buffer.isBuffer(body) || body.length === 0) {
       return { body, handoffInjected: false }
     }
 
     try {
       const parsed = JSON.parse(body.toString('utf8')) as Record<string, unknown>
-      const existingInstructions = typeof parsed.instructions === 'string'
-        ? parsed.instructions.trim()
-        : ''
-      parsed.instructions = existingInstructions
-        ? `${existingInstructions}\n\n${handoffSummary.trim()}`
-        : handoffSummary.trim()
+      if (handoffSummary?.trim()) {
+        const existingInstructions = typeof parsed.instructions === 'string'
+          ? parsed.instructions.trim()
+          : ''
+        parsed.instructions = existingInstructions
+          ? `${existingInstructions}\n\n${handoffSummary.trim()}`
+          : handoffSummary.trim()
+      }
       return {
         body: Buffer.from(JSON.stringify(parsed), 'utf8'),
-        handoffInjected: true,
+        handoffInjected: Boolean(handoffSummary?.trim()),
       }
     } catch {
       return { body, handoffInjected: false }
@@ -6732,7 +6785,13 @@ export class RelayService {
       }
     }
 
-    const isStreaming = (contentType ?? '').includes('text/event-stream')
+    const normalizedPipelineTarget = context.target.split('?', 1)[0] ?? context.target
+    const isStreaming =
+      (contentType ?? '').includes('text/event-stream') ||
+      (!contentType && upstream.statusCode >= 200 && upstream.statusCode < 300 && (
+        normalizedPipelineTarget === '/v1/responses' ||
+        normalizedPipelineTarget.startsWith('/v1/responses/')
+      ))
 
     if (isStreaming) {
       const contentEncoding =
@@ -6743,10 +6802,33 @@ export class RelayService {
       const { transform: usageTransform, usagePromise } = createUsageTransform()
       const sseErrorTransform = new SseErrorInspectTransform()
 
-      // Collect first 2KB of response for preview
+      // Collect response head and tail preview so SSE terminal usage events remain diagnosable.
       const respPreviewChunks: Buffer[] = []
       let respPreviewLen = 0
       const RESP_PREVIEW_MAX = 2048
+      const respTailChunks: Buffer[] = []
+      let respTailLen = 0
+      const RESP_TAIL_MAX = 2048
+      const collectResponsePreview = (chunk: Buffer): void => {
+        if (respPreviewLen < RESP_PREVIEW_MAX) {
+          const take = chunk.subarray(0, RESP_PREVIEW_MAX - respPreviewLen)
+          respPreviewChunks.push(take)
+          respPreviewLen += take.length
+        }
+        respTailChunks.push(chunk)
+        respTailLen += chunk.length
+        while (respTailLen > RESP_TAIL_MAX && respTailChunks.length > 0) {
+          const first = respTailChunks[0]!
+          const overflow = respTailLen - RESP_TAIL_MAX
+          if (overflow >= first.length) {
+            respTailChunks.shift()
+            respTailLen -= first.length
+          } else {
+            respTailChunks[0] = first.subarray(overflow)
+            respTailLen -= overflow
+          }
+        }
+      }
 
       if (contentEncoding) {
         // Compressed: forward raw data to client, decompress a branch for usage extraction
@@ -6759,11 +6841,7 @@ export class RelayService {
         if (decompressor) {
           decompressor.on('error', () => {})
           decompressor.on('data', (chunk: Buffer) => {
-            if (respPreviewLen < RESP_PREVIEW_MAX) {
-              const take = chunk.subarray(0, RESP_PREVIEW_MAX - respPreviewLen)
-              respPreviewChunks.push(take)
-              respPreviewLen += take.length
-            }
+            collectResponsePreview(chunk)
           })
           decompressor.pipe(sseErrorTransform).pipe(usageTransform).resume()
         } else {
@@ -6841,11 +6919,7 @@ export class RelayService {
         // No compression: pass through usage transform, collect preview
         const previewCollector = new Transform({
           transform(chunk: Buffer, _enc: string, cb: TransformCallback) {
-            if (respPreviewLen < RESP_PREVIEW_MAX) {
-              const take = chunk.subarray(0, RESP_PREVIEW_MAX - respPreviewLen)
-              respPreviewChunks.push(take)
-              respPreviewLen += take.length
-            }
+            collectResponsePreview(chunk)
             cb(null, chunk)
           },
         })
@@ -6898,7 +6972,11 @@ export class RelayService {
           throw err
         }
       }
-      const respBodyPreview = respPreviewChunks.length > 0 ? Buffer.concat(respPreviewChunks).toString('utf8') : null
+      const respHeadPreview = respPreviewChunks.length > 0 ? Buffer.concat(respPreviewChunks).toString('utf8') : null
+      const respTailPreview = respTailChunks.length > 0 ? Buffer.concat(respTailChunks).toString('utf8') : null
+      const respBodyPreview = respHeadPreview && respTailPreview && respTailPreview !== respHeadPreview
+        ? `${respHeadPreview}\n\n--- response tail ---\n${respTailPreview}`
+        : respHeadPreview
       if (sseErrorTransform.errorEventPreview) {
         this.logHttpStreamError(context, {
           error: 'sse_error_event',

@@ -10,6 +10,10 @@ import type {
 } from './types.js'
 import { splitFlattenedNamespaceToolName } from './toolNameMapper.js'
 
+export type StreamChatToResponsesHooks = {
+  onUsage?: (usage: ResponsesUsage) => void
+}
+
 interface ToolCallState {
   index: number
   outputIndex: number
@@ -139,6 +143,7 @@ export function buildFailureEvent(model: string, code: string, message: string):
 export async function* streamChatToResponses(
   upstream: AsyncIterable<Uint8Array>,
   ctx: ConvertStreamContext,
+  hooks: StreamChatToResponsesHooks = {},
 ): AsyncGenerator<string, void, void> {
   const state = createInitialState()
   const decoder = new TextDecoder()
@@ -201,6 +206,7 @@ export async function* streamChatToResponses(
         output_tokens: outT,
         total_tokens: chunk.usage.total_tokens ?? inT + outT,
       }
+      hooks.onUsage?.(usage)
     }
     if (!choice) return
     const delta = choice.delta ?? {}

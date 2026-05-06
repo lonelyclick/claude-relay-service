@@ -152,6 +152,7 @@ export function convertResponsesToChat(body: ResponsesRequest): ChatCompletionRe
     messages,
     stream: body.stream ?? true,
   }
+  if (out.stream) out.stream_options = { include_usage: true }
   if (chatTools && chatTools.length > 0) out.tools = chatTools
   if (body.tool_choice !== undefined) out.tool_choice = body.tool_choice
   if (body.temperature !== undefined) out.temperature = body.temperature

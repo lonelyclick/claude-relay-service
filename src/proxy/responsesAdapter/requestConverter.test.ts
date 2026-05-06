@@ -13,6 +13,7 @@ test('string input becomes single user message; instructions become system', () 
   assert.equal(chat.messages.length, 2)
   assert.deepEqual(chat.messages[0], { role: 'system', content: 'you are mimo' })
   assert.deepEqual(chat.messages[1], { role: 'user', content: 'hi' })
+  assert.deepEqual(chat.stream_options, { include_usage: true })
 })
 
 test('input array with message + function_call attaches tool_calls to assistant', () => {
