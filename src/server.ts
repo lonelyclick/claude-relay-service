@@ -859,14 +859,27 @@ function resolveRelayOrgIdFromBetterAuthOrganization(organization) {
   );
 }
 
-async function resolveSyncedRelayOrgIdFromBetterAuthOrganization(services, organization) {
+async function ensureSyncedRelayOrganizationForBetterAuthOrganization(services, organization) {
   if (!organization?.id || !services.organizationStore) {
-    return null;
+    throw new Error("organization_store_unavailable");
   }
-  const relayOrganization = await services.organizationStore.getOrganizationByExternalId(
+  const existing = await services.organizationStore.getOrganizationByExternalId(
     String(organization.id),
   );
-  return relayOrganization?.id ?? null;
+  if (existing) return existing;
+  const slug = getOptionalString(organization.slug);
+  const name = getOptionalString(organization.name);
+  if (!slug || !name) {
+    throw new Error("better_auth_organization_missing_slug_or_name");
+  }
+  return services.organizationStore.syncOrganization({
+    externalOrganizationId: String(organization.id),
+    slug,
+    name,
+    kind: organization.metadata?.kind ?? (slug.startsWith("user-") ? "personal" : "team"),
+    billingMode: "prepaid",
+    billingCurrency: "CNY",
+  });
 }
 
 async function findBetterAuthUserForRelayUser(relayUser) {
@@ -1118,8 +1131,9 @@ async function buildBetterAuthUsersOverview(services) {
     const members = membersResult.ok
       ? getBetterAuthMembersPayload(membersResult.data)
       : [];
-    const relayOrgId =
-      await resolveSyncedRelayOrgIdFromBetterAuthOrganization(services, organization);
+    const relayOrganization =
+      await ensureSyncedRelayOrganizationForBetterAuthOrganization(services, organization);
+    const relayOrgId = relayOrganization.id;
     for (const member of members) {
       const list = membershipsByUserId.get(member.userId) ?? [];
       list.push({
