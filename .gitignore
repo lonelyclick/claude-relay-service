@@ -8,3 +8,4 @@ dogfood-output/
 
 # yoho-remote uploaded files (never commit)
 .yoho-remote/
+.yoho-remote-image-refs/
