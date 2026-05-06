@@ -132,7 +132,7 @@ test('bodyRewriter', async (t) => {
     assert.equal(parsed.tools[1].name, 'Monitor')
   })
 
-  await t.test('drops request-only tools so unknown tools never reach upstream', () => {
+  await t.test('keeps runtime MCP tools while template overrides built-ins', () => {
     const body = makeBody({
       tools: [
         { name: 'Bash', description: 'client Bash' },
@@ -144,8 +144,10 @@ test('bodyRewriter', async (t) => {
     const parsed = JSON.parse(result.toString('utf8'))
     assert.deepEqual(
       parsed.tools.map((tool: { name: string }) => tool.name),
-      ['Bash', 'Monitor'],
+      ['Bash', 'Monitor', 'mcp__skill__search'],
     )
+    assert.equal(parsed.tools[0].description, 'v98 Bash')
+    assert.equal(parsed.tools[2].description, 'runtime MCP tool')
   })
 
   await t.test('preserves other fields unchanged', () => {
@@ -191,6 +193,25 @@ test('bodyRewriter', async (t) => {
     assert.ok(result)
     const parsed = JSON.parse(result.toString('utf8'))
     assert.deepEqual(parsed.tools.map((tool: { name: string }) => tool.name), ['Bash', 'Monitor'])
+  })
+
+  await t.test('drops malformed runtime tools instead of forwarding them', () => {
+    const body = makeBody({
+      tools: [
+        { name: 'Bash', description: 'client Bash' },
+        { description: 'missing name' },
+        null,
+        { name: 'mcp__skill__search', description: 'runtime MCP tool' },
+        { name: 'mcp__skill__search', description: 'duplicate runtime MCP tool' },
+      ],
+    })
+    const result = rewriteMessageBody(body, TEMPLATE)
+    assert.ok(result)
+    const parsed = JSON.parse(result.toString('utf8'))
+    assert.deepEqual(
+      parsed.tools.map((tool: { name: string }) => tool.name),
+      ['Bash', 'Monitor', 'mcp__skill__search'],
+    )
   })
 
   await t.test('handles single-block system by appending template blocks', () => {

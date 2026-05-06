@@ -224,9 +224,9 @@ export function rewriteMessageBodyDetailed(
   // capture-time cwd to downstream viewers (relay session UIs, logs, etc.).
   backfillEnvSection(parsed.system as SystemBlock[], system as SystemBlock[])
 
-  // 3. Keep only captured template tool definitions. Unknown client-supplied tools
-  //    must not be forwarded to the official Claude upstream.
-  parsed.tools = cloneJsonArray(template.tools)
+  // 3. Use captured template definitions for built-in tools, but preserve
+  //    runtime extension tools (for example MCP tools) appended by Claude Code.
+  parsed.tools = mergeTemplateAndRuntimeTools(parsed.tools, template.tools)
 
   // 4. Normalize metadata.user_id so device_id and account_uuid
   //    match the relay account, not the individual client
@@ -304,6 +304,42 @@ function backfillEnvSection(
 
   const preservedEnv = original.text.slice(originalEnvIdx)
   rewritten.text = rewritten.text.slice(0, rewrittenEnvIdx) + preservedEnv
+}
+
+function mergeTemplateAndRuntimeTools(
+  requestTools: unknown,
+  templateTools: readonly unknown[],
+): unknown[] {
+  const merged = cloneJsonArray(templateTools)
+  const templateToolNames = new Set(
+    merged
+      .map((tool) => (tool && typeof tool === 'object' && !Array.isArray(tool)
+        ? (tool as Record<string, unknown>).name
+        : null))
+      .filter((name): name is string => typeof name === 'string' && name.length > 0),
+  )
+
+  if (!Array.isArray(requestTools)) {
+    return merged
+  }
+
+  const runtimeToolNames = new Set<string>()
+  for (const tool of requestTools) {
+    if (!tool || typeof tool !== 'object' || Array.isArray(tool)) {
+      continue
+    }
+    const name = (tool as Record<string, unknown>).name
+    if (typeof name !== 'string' || name.length === 0) {
+      continue
+    }
+    if (templateToolNames.has(name) || runtimeToolNames.has(name)) {
+      continue
+    }
+    runtimeToolNames.add(name)
+    merged.push(JSON.parse(JSON.stringify(tool)) as unknown)
+  }
+
+  return merged
 }
 
 function rewriteMetadataUserId(
