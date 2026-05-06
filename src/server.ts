@@ -882,6 +882,39 @@ async function ensureSyncedRelayOrganizationForBetterAuthOrganization(services, 
   });
 }
 
+async function resolvePrimaryWorkspaceForRelayUser(services, relayUser) {
+  if (!relayUser) return null;
+  const relayOrganization = relayUser.orgId
+    ? await getBillingRouteOrganization(services, relayUser.orgId)
+    : null;
+  if (relayOrganization) return relayOrganization;
+  if (!relayUser.externalUserId) return null;
+  const organizations = await listBetterAuthOrganizationsInternal();
+  for (const organization of organizations) {
+    const membersResult = await requestBetterAuthInternal(
+      "/organization/list-members",
+      { organizationId: organization.id, limit: 1000 },
+    );
+    const members = getBetterAuthMembersPayload(
+      unwrapBetterAuthResult(
+        membersResult,
+        `Better Auth list members failed: HTTP ${membersResult.status}`,
+      ),
+    );
+    const isMember = members.some(
+      (member) => String(member.userId ?? "") === String(relayUser.externalUserId),
+    );
+    if (!isMember) continue;
+    if (organization.metadata?.kind === "personal") {
+      return ensureSyncedRelayOrganizationForBetterAuthOrganization(
+        services,
+        organization,
+      );
+    }
+  }
+  return null;
+}
+
 async function findBetterAuthUserForRelayUser(relayUser) {
   if (!relayUser) {
     return null;
@@ -2599,9 +2632,10 @@ async function createBillingLedgerControl(services, userId, body) {
     const relayUser = services.userStore
       ? await services.userStore.getUserById(userId)
       : null;
-    const relayOrganization = relayUser?.orgId
-      ? await getBillingRouteOrganization(services, relayUser.orgId)
-      : null;
+    const relayOrganization = await resolvePrimaryWorkspaceForRelayUser(
+      services,
+      relayUser,
+    );
     const result = relayOrganization
       ? await services.billingStore.createOrganizationLedgerEntry({
           organizationId: relayOrganization.id,
