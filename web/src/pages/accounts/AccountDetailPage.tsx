@@ -379,6 +379,7 @@ function WarmupHistoryRow({ event }: { event: AccountLifecycleEvent }) {
   const unifiedStatus = stringNote(notes, 'unifiedStatus') ?? '—'
   const overageStatus = stringNote(notes, 'overageStatus') ?? '—'
   const overageReason = stringNote(notes, 'overageDisabledReason')
+  const overageDisplay = formatWarmupOverage(overageStatus, overageReason, unifiedStatus, event.upstreamStatus)
   const tone: BadgeTone = event.outcome === 'ok' ? 'green' : event.outcome === 'failure' ? 'red' : 'gray'
   return (
     <tr className="hover:bg-bg-input/50 align-top">
@@ -390,13 +391,34 @@ function WarmupHistoryRow({ event }: { event: AccountLifecycleEvent }) {
       <td className="px-3 py-2 text-slate-300">{event.upstreamStatus ?? '—'}</td>
       <td className="px-3 py-2 text-slate-300">{unifiedStatus}</td>
       <td className="px-3 py-2 text-slate-300">
-        <div>{overageStatus}</div>
-        {overageReason && <div className="text-[10px] text-amber-300">{overageReason}</div>}
+        <div className={overageDisplay.toneClass}>{overageDisplay.status}</div>
+        {overageDisplay.reason && <div className={`text-[10px] ${overageDisplay.reasonClass}`}>{overageDisplay.reason}</div>}
       </td>
       <td className="px-3 py-2 text-slate-400">{event.durationMs != null ? `${event.durationMs}ms` : '—'}</td>
       <td className="px-3 py-2 font-mono text-[11px] text-slate-500 break-all">{event.upstreamRequestId ?? '—'}</td>
     </tr>
   )
+}
+
+function formatWarmupOverage(status: string, reason: string | null, unifiedStatus: string, upstreamStatus?: number | null) {
+  const isNonBlockingOrgDisabled =
+    upstreamStatus === 200 &&
+    unifiedStatus === 'allowed' &&
+    reason === 'org_level_disabled'
+  if (isNonBlockingOrgDisabled) {
+    return {
+      status: 'overage off',
+      reason: 'org-level, non-blocking',
+      toneClass: 'text-slate-400',
+      reasonClass: 'text-slate-500',
+    }
+  }
+  return {
+    status,
+    reason,
+    toneClass: 'text-slate-300',
+    reasonClass: 'text-amber-300',
+  }
 }
 
 function stringNote(notes: Record<string, unknown>, key: string): string | null {
