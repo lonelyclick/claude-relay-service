@@ -658,7 +658,7 @@ function BillingSection({
   const qc = useQueryClient()
   const userOrgId = u.orgId?.trim() || null
   const selectedOrganization = userOrgId ? findOrganizationByRelayOrgId(organizations, userOrgId) : null
-  const [billingTarget, setBillingTarget] = useState(userOrgId ? `org:${userOrgId}` : `user:${u.id}`)
+  const [billingTarget, setBillingTarget] = useState(`user:${u.id}`)
   const [billingMode, setBillingMode] = useState<'postpaid' | 'prepaid'>(u.billingMode ?? 'postpaid')
   const [billingCurrency, setBillingCurrency] = useState<BillingCurrency>(u.billingCurrency ?? balance?.billingCurrency ?? balance?.currency ?? 'CNY')
   const [customerTier, setCustomerTier] = useState(u.customerTier ?? 'standard')
@@ -669,11 +669,11 @@ function BillingSection({
   const [note, setNote] = useState('')
 
   useEffect(() => {
-    const nextTarget = userOrgId ? `org:${userOrgId}` : `user:${u.id}`
     setBillingTarget((current) => {
-      if (current.startsWith('org:') && current !== nextTarget) return nextTarget
-      if (current.startsWith('user:') && current !== `user:${u.id}`) return nextTarget
-      return current
+      if (current.startsWith('org:')) {
+        return userOrgId && current === `org:${userOrgId}` ? current : `user:${u.id}`
+      }
+      return current === `user:${u.id}` ? current : `user:${u.id}`
     })
   }, [u.id, userOrgId])
 
@@ -766,7 +766,7 @@ function BillingSection({
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Billing & Recharge</div>
-          <div className="text-xs text-slate-500 mt-1">充值目标必须和前台 active 工作区一致；前台 /profile 显示的是 Organization balance。</div>
+          <div className="text-xs text-slate-500 mt-1">计费按 API key 归属扣费：个人 key 扣 Personal，组织 key 扣 Organization；前台 /profile 显示 active 工作区余额。</div>
         </div>
         {activeBalance?.lastLedgerAt ? <div className="text-xs text-slate-500">Last change {timeAgo(activeBalance.lastLedgerAt)}</div> : null}
       </div>
@@ -786,7 +786,7 @@ function BillingSection({
           </select>
         </label>
         <div className="text-xs text-amber-100/80">
-          当前选择：{target.kind === 'organization' ? '组织余额，会反映到用户前台 /profile active 工作区' : '个人余额，不会反映到组织工作区余额'}。
+          当前选择：{target.kind === 'organization' ? '组织余额：给组织 API key / 前台 active 工作区使用' : '个人余额：给个人 API key 使用，不影响组织余额'}。
         </div>
         {target.kind === 'organization' && orgBalance.error ? (
           <div className="text-xs text-red-300">Organization balance failed: {(orgBalance.error as Error).message}</div>
