@@ -681,6 +681,17 @@ function inferModelVendorFromModel(
   return "custom";
 }
 
+function normalizeUsageModelForBilling(
+  model: string | null,
+  provider: BillingModelProvider | null,
+): string | null {
+  if (!model) return null;
+  const normalized = model.trim();
+  if (!normalized) return null;
+  if (provider !== "openai") return normalized;
+  return normalized.replace(/-\d{4}-\d{2}-\d{2}$/, "");
+}
+
 function normalizeBillingModelVendor(
   value: unknown,
   model: string,
@@ -1610,6 +1621,14 @@ export class BillingStore {
     if (!protocol) {
       return null;
     }
+    const provider = normalizeUsageProvider(candidate.provider);
+    const billingModel = normalizeUsageModelForBilling(
+      candidate.model,
+      provider,
+    );
+    if (!billingModel) {
+      return null;
+    }
     const result = await this.pool.query<BillingResolvedSkuRow>(
       `SELECT
          b.id, b.provider, b.model_vendor, b.protocol, b.model, b.currency, b.display_name, b.is_active, b.supports_prompt_caching,
@@ -1634,8 +1653,8 @@ export class BillingStore {
        LIMIT 1`,
       [
         candidate.routingGroupId,
-        candidate.provider,
-        candidate.model,
+        provider,
+        billingModel,
         candidate.billingCurrency,
         protocol,
       ],
