@@ -2596,12 +2596,25 @@ async function createBillingLedgerControl(services, userId, body) {
     return jsonResult(404, { error: "billing_user_not_found" });
   }
   try {
-    const result = await services.billingStore.createLedgerEntry({
-      userId,
-      kind,
-      amountMicros,
-      note: body?.note,
-    });
+    const relayUser = services.userStore
+      ? await services.userStore.getUserById(userId)
+      : null;
+    const relayOrganization = relayUser?.orgId
+      ? await getBillingRouteOrganization(services, relayUser.orgId)
+      : null;
+    const result = relayOrganization
+      ? await services.billingStore.createOrganizationLedgerEntry({
+          organizationId: relayOrganization.id,
+          kind,
+          amountMicros,
+          note: body?.note,
+        })
+      : await services.billingStore.createLedgerEntry({
+          userId,
+          kind,
+          amountMicros,
+          note: body?.note,
+        });
     return jsonResult(200, {
       ok: true,
       entry: result.entry,
