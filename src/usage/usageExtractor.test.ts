@@ -105,3 +105,26 @@ test('createUsageTransform extracts OpenAI Responses response.done usage', async
     cacheReadInputTokens: 3,
   })
 })
+
+
+test('createUsageTransform extracts usage from any OpenAI Responses SSE event payload', async () => {
+  const { transform, usagePromise } = createUsageTransform()
+  transform.end(Buffer.from([
+    'event: response.in_progress',
+    'data: {"type":"response.in_progress","response":{"model":"gpt-5.4-mini-2026-03-17","usage":null}}',
+    '',
+    'event: response.completed',
+    'data: {"type":"response.completed","response":{"model":"gpt-5.4-mini-2026-03-17","usage":{"input_tokens":509,"output_tokens":191,"input_tokens_details":{"cached_tokens":17}}}}',
+    '',
+  ].join('\n')))
+
+  const usage = await usagePromise
+
+  assert.deepEqual(usage, {
+    model: 'gpt-5.4-mini-2026-03-17',
+    inputTokens: 509,
+    outputTokens: 191,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 17,
+  })
+})

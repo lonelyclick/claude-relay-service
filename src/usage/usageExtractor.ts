@@ -130,6 +130,59 @@ function safeParseJson(text: string): unknown | null {
   }
 }
 
+function readNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function readObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function readUsageObject(value: unknown): Record<string, unknown> | null {
+  const object = readObject(value)
+  if (!object) return null
+  return object.usage ? readObject(object.usage) : null
+}
+
+function extractUsageFromObject(data: unknown, previous: ExtractedUsage | null): ExtractedUsage | null {
+  const record = readObject(data)
+  if (!record) return null
+
+  const response = readObject(record.response) ?? record
+  const usageObject = readUsageObject(record) ?? readUsageObject(response)
+  if (!usageObject) return null
+
+  const inputDetails = readObject(usageObject.input_tokens_details)
+  const outputDetails = readObject(usageObject.output_tokens_details)
+  const inputTokens =
+    readNumber(usageObject.input_tokens) ??
+    readNumber(usageObject.prompt_tokens) ??
+    previous?.inputTokens ??
+    0
+  const outputTokens =
+    readNumber(usageObject.output_tokens) ??
+    readNumber(usageObject.completion_tokens) ??
+    previous?.outputTokens ??
+    0
+
+  return {
+    model: readString(response.model) ?? readString(record.model) ?? previous?.model ?? null,
+    inputTokens,
+    outputTokens,
+    cacheCreationInputTokens:
+      readNumber(usageObject.cache_creation_input_tokens) ??
+      readNumber(inputDetails?.cache_creation_tokens) ??
+      previous?.cacheCreationInputTokens ??
+      0,
+    cacheReadInputTokens:
+      readNumber(usageObject.cache_read_input_tokens) ??
+      readNumber(inputDetails?.cached_tokens) ??
+      readNumber(outputDetails?.cached_tokens) ??
+      previous?.cacheReadInputTokens ??
+      0,
+  }
+}
+
 /**
  * Create a pass-through Transform stream that extracts usage data from
  * SSE streaming responses without modifying the data.
@@ -163,71 +216,57 @@ export function createUsageTransform(): {
       currentEvent = line.slice(7).trim()
       return
     }
-    if (!line.startsWith('data: ') || !currentEvent) {
+    if (!line.startsWith('data: ')) {
       return
     }
 
     const jsonStr = line.slice(6)
+    if (jsonStr === '[DONE]') {
+      currentEvent = ''
+      return
+    }
+    const parsed = safeParseJson(jsonStr)
+    const extracted = extractUsageFromObject(parsed, usage)
+    if (extracted) {
+      usage = extracted
+      model = extracted.model ?? model
+      currentEvent = ''
+      return
+    }
+
+    if (!currentEvent) {
+      return
+    }
+
     if (currentEvent === 'message_start') {
       try {
-        const data = JSON.parse(jsonStr)
-        model = data?.message?.model ?? null
-        const u = data?.message?.usage
+        const data = readObject(parsed)
+        const message = readObject(data?.message)
+        model = readString(message?.model) ?? null
+        const u = readObject(message?.usage)
         if (u) {
           usage = {
             model,
-            inputTokens: u.input_tokens ?? 0,
-            outputTokens: u.output_tokens ?? 0,
-            cacheCreationInputTokens: u.cache_creation_input_tokens ?? 0,
-            cacheReadInputTokens: u.cache_read_input_tokens ?? 0,
+            inputTokens: readNumber(u.input_tokens) ?? 0,
+            outputTokens: readNumber(u.output_tokens) ?? 0,
+            cacheCreationInputTokens: readNumber(u.cache_creation_input_tokens) ?? 0,
+            cacheReadInputTokens: readNumber(u.cache_read_input_tokens) ?? 0,
           }
-        }
-      } catch {
-        // ignore parse errors
-      }
-    } else if (currentEvent === 'response.completed' || currentEvent === 'response.done') {
-      try {
-        const data = JSON.parse(jsonStr)
-        const response = data?.response ?? data
-        const u = response?.usage
-        if (u) {
-          usage = {
-            model: response?.model ?? model ?? null,
-            inputTokens:
-              typeof u.input_tokens === 'number'
-                ? u.input_tokens
-                : typeof u.prompt_tokens === 'number'
-                  ? u.prompt_tokens
-                  : usage?.inputTokens ?? 0,
-            outputTokens:
-              typeof u.output_tokens === 'number'
-                ? u.output_tokens
-                : typeof u.completion_tokens === 'number'
-                  ? u.completion_tokens
-                  : usage?.outputTokens ?? 0,
-            cacheCreationInputTokens: u.cache_creation_input_tokens ?? usage?.cacheCreationInputTokens ?? 0,
-            cacheReadInputTokens:
-              u.cache_read_input_tokens ??
-              u.input_tokens_details?.cached_tokens ??
-              usage?.cacheReadInputTokens ??
-              0,
-          }
-          model = response?.model ?? model
         }
       } catch {
         // ignore parse errors
       }
     } else if (currentEvent === 'message_delta') {
       try {
-        const data = JSON.parse(jsonStr)
-        const u = data?.usage
+        const data = readObject(parsed)
+        const u = readObject(data?.usage)
         if (u) {
           usage = {
             model,
-            inputTokens: u.input_tokens ?? usage?.inputTokens ?? 0,
-            outputTokens: u.output_tokens ?? usage?.outputTokens ?? 0,
-            cacheCreationInputTokens: u.cache_creation_input_tokens ?? usage?.cacheCreationInputTokens ?? 0,
-            cacheReadInputTokens: u.cache_read_input_tokens ?? usage?.cacheReadInputTokens ?? 0,
+            inputTokens: readNumber(u.input_tokens) ?? usage?.inputTokens ?? 0,
+            outputTokens: readNumber(u.output_tokens) ?? usage?.outputTokens ?? 0,
+            cacheCreationInputTokens: readNumber(u.cache_creation_input_tokens) ?? usage?.cacheCreationInputTokens ?? 0,
+            cacheReadInputTokens: readNumber(u.cache_read_input_tokens) ?? usage?.cacheReadInputTokens ?? 0,
           }
         }
       } catch {
@@ -300,28 +339,7 @@ export function extractUsageFromJsonBody(
         break
     }
     const data = JSON.parse(decoded.toString('utf8'))
-    const usageHolder = data?.response ?? data
-    const u = usageHolder?.usage
-    if (!u) return null
-    const inputTokens =
-      typeof u.input_tokens === 'number'
-        ? u.input_tokens
-        : typeof u.prompt_tokens === 'number'
-          ? u.prompt_tokens
-          : 0
-    const outputTokens =
-      typeof u.output_tokens === 'number'
-        ? u.output_tokens
-        : typeof u.completion_tokens === 'number'
-          ? u.completion_tokens
-          : 0
-    return {
-      model: usageHolder?.model ?? data?.model ?? null,
-      inputTokens,
-      outputTokens,
-      cacheCreationInputTokens: u.cache_creation_input_tokens ?? 0,
-      cacheReadInputTokens: u.cache_read_input_tokens ?? 0,
-    }
+    return extractUsageFromObject(data, null)
   } catch {
     return null
   }
