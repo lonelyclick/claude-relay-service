@@ -308,19 +308,22 @@ function rewriteMetadataUserId(
     return false
   }
 
+  let record: Record<string, unknown>
   try {
     const userId = JSON.parse(raw) as unknown
     if (!userId || typeof userId !== 'object' || Array.isArray(userId)) {
-      return false
+      record = {}
+    } else {
+      record = userId as Record<string, unknown>
     }
-    const record = userId as Record<string, unknown>
-    record.device_id = template.deviceId
-    record.account_uuid = template.accountUuid
-    meta.user_id = JSON.stringify(record)
-    return true
   } catch {
-    return false
+    record = {}
   }
+
+  record.device_id = template.deviceId
+  record.account_uuid = template.accountUuid
+  meta.user_id = JSON.stringify(record)
+  return true
 }
 
 function hasOnlyAllowedMessageBodyKeys(parsed: Record<string, unknown>): boolean {
