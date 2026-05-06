@@ -6726,9 +6726,14 @@ export function createServer(services): express.Express {
           return;
         }
         const organizationId = getRouteParam(req.params.organizationId);
+        const organization = await getBillingRouteOrganization(services, organizationId);
+        if (!organization) {
+          res.status(404).json({ error: "billing_organization_not_found" });
+          return;
+        }
         const balance =
           await services.billingStore.getOrganizationBalanceSummary(
-            organizationId,
+            organization.id,
           );
         if (!balance) {
           res.status(404).json({ error: "billing_organization_not_found" });
@@ -6749,16 +6754,21 @@ export function createServer(services): express.Express {
           typeof req.query.limit === "string" ? Number(req.query.limit) : 100;
         const offset =
           typeof req.query.offset === "string" ? Number(req.query.offset) : 0;
+        const organization = await getBillingRouteOrganization(services, organizationId);
+        if (!organization) {
+          res.status(404).json({ error: "billing_organization_not_found" });
+          return;
+        }
         const balance =
           await services.billingStore.getOrganizationBalanceSummary(
-            organizationId,
+            organization.id,
           );
         if (!balance) {
           res.status(404).json({ error: "billing_organization_not_found" });
           return;
         }
         const result = await services.billingStore.listOrganizationLedger(
-          organizationId,
+          organization.id,
           limit,
           offset,
         );
@@ -6787,9 +6797,14 @@ export function createServer(services): express.Express {
           });
           return;
         }
+        const organization = await getBillingRouteOrganization(services, organizationId);
+        if (!organization) {
+          res.status(404).json({ error: "billing_organization_not_found" });
+          return;
+        }
         const existing =
           await services.billingStore.getOrganizationBalanceSummary(
-            organizationId,
+            organization.id,
           );
         if (!existing) {
           res.status(404).json({ error: "billing_organization_not_found" });
@@ -6798,7 +6813,7 @@ export function createServer(services): express.Express {
         try {
           const result =
             await services.billingStore.createOrganizationLedgerEntry({
-              organizationId,
+              organizationId: organization.id,
               kind,
               amountMicros,
               note: req.body?.note,

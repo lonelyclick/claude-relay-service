@@ -169,6 +169,14 @@ export class OrganizationStore {
     return result.rows[0] ? rowToOrganization(result.rows[0]) : null
   }
 
+  async getOrganizationByIdOrExternalIdOrSlug(identifier: string): Promise<RelayOrganization | null> {
+    const result = await this.pool.query(
+      'SELECT * FROM relay_organizations WHERE id = $1 OR external_organization_id = $1 OR slug = $1 LIMIT 1',
+      [identifier],
+    )
+    return result.rows[0] ? rowToOrganization(result.rows[0]) : null
+  }
+
   async updateOrganization(
     id: string,
     input: { billingMode?: RelayUserBillingMode; billingCurrency?: BillingCurrency },
