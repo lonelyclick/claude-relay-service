@@ -77,6 +77,7 @@ import {
 } from '../providers/openaiCodex.js'
 import {
   buildOpenAICompatibleChatCompletionsUrl,
+  buildOpenAICompatibleEndpointUrl,
   isOpenAICompatibleAccount,
   planOpenAICompatibleModelRouting,
 } from '../providers/openaiCompatible.js'
@@ -1146,7 +1147,8 @@ export class RelayService {
       path === '/v1/messages' ||
       path === '/v1/chat/completions' ||
       path === '/v1/responses' ||
-      path.startsWith('/v1/responses/')
+      path.startsWith('/v1/responses/') ||
+      this.isOpenAICommercialGatewayPostPath(path)
     )
   }
 
@@ -1154,12 +1156,29 @@ export class RelayService {
     if (!Buffer.isBuffer(body)) {
       return null
     }
-    try {
-      const parsed = JSON.parse(body.toString('utf8')) as Record<string, unknown>
-      const model = parsed.model
-      return typeof model === 'string' && model.trim() ? model.trim() : null
-    } catch {
+    const parsed = JSON.parse(body.toString('utf8')) as Record<string, unknown>
+    const model = parsed.model
+    return typeof model === 'string' && model.trim() ? model.trim() : null
+  }
+
+  private extractRequestedModelIfJson(body: RelayRequestBody): string | null {
+    if (!Buffer.isBuffer(body) || body.length === 0) {
       return null
+    }
+    const parsed = JSON.parse(body.toString('utf8')) as Record<string, unknown>
+    const model = parsed.model
+    return typeof model === 'string' && model.trim() ? model.trim() : null
+  }
+
+  private maybeExtractRequestedModel(body: RelayRequestBody): string | null {
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      return null
+    }
+    try {
+      return this.extractRequestedModelIfJson(body)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`Invalid JSON request body: ${message}`)
     }
   }
 
@@ -1167,19 +1186,29 @@ export class RelayService {
     if (!Buffer.isBuffer(body) || body.length === 0) {
       return body
     }
-    try {
-      const parsed = JSON.parse(body.toString('utf8')) as Record<string, unknown>
-      parsed.model = targetModel
-      return Buffer.from(JSON.stringify(parsed), 'utf8')
-    } catch {
-      return body
-    }
+    const parsed = JSON.parse(body.toString('utf8')) as Record<string, unknown>
+    parsed.model = targetModel
+    return Buffer.from(JSON.stringify(parsed), 'utf8')
   }
 
   private routingGroupTypeForProvider(provider: AccountProvider): keyof RelayApiKeyGroupAssignments {
     if (provider === 'openai-codex' || provider === 'openai-compatible') return 'openai'
     if (provider === 'google-gemini-oauth') return 'google'
     return 'anthropic'
+  }
+
+  private apiKeyRoutingGroupMissingMessage(provider: AccountProvider): string {
+    const groupType = this.routingGroupTypeForProvider(provider)
+    if (groupType === 'openai') {
+      return '当前 Relay API Key 没有选择 OpenAI/Codex 渠道。请在 API Key 的渠道/分组设置中选择一个 OpenAI 分组（例如 codex-official、mimo-openai 或 deepseek-openai）后重试。'
+    }
+    if (groupType === 'anthropic') {
+      return '当前 Relay API Key 没有选择 Claude/Anthropic 渠道。请在 API Key 的渠道/分组设置中选择一个 Claude 分组（例如 claude-official、deepseek、openclaudecode 或 mimo-claude）后重试。'
+    }
+    if (groupType === 'google') {
+      return '当前 Relay API Key 没有选择 Google/Gemini 渠道。请在 API Key 的渠道/分组设置中选择一个 Google 分组（例如 gemini-official）后重试。'
+    }
+    return `当前 Relay API Key 没有选择 ${groupType} 渠道。请在 API Key 的渠道/分组设置中选择对应分组后重试。`
   }
 
   private routingGroupFromApiKeyAssignments(
@@ -1616,7 +1645,7 @@ export class RelayService {
       )
       const apiKeyRoutingGroupId = this.routingGroupFromApiKeyAssignments(relayUser, requestedProvider)
       if (!this.extractAccountGroup(req.headers) && relayUser.apiKeyGroupAssignments && !apiKeyRoutingGroupId) {
-        const message = `Relay API key is not allowed to use ${this.routingGroupTypeForProvider(requestedProvider)} providers.`
+        const message = this.apiKeyRoutingGroupMissingMessage(requestedProvider)
         res.status(403).json(localHttpErrorBody(req.path, 403, message, RELAY_ERROR_CODES.ROUTING_GROUP_UNAVAILABLE))
         this.logHttpRejection(trace, {
           error: message,
@@ -3018,6 +3047,10 @@ export class RelayService {
       return 'openai-compatible'
     }
 
+    if (this.isOpenAICompatibleCommercialGatewayPath(pathname)) {
+      return 'openai-compatible'
+    }
+
     if (!hasClaudeOfficial && visibleAccounts.some(isOpenAICodexAccount)) {
       return OPENAI_CODEX_PROVIDER.id
     }
@@ -3059,6 +3092,26 @@ export class RelayService {
 
   private isOpenAICompatibleChatCompletionsPath(pathname: string): boolean {
     return pathname === '/v1/chat/completions'
+  }
+
+  private isOpenAICompatibleCommercialGatewayPath(pathname: string): boolean {
+    return (
+      this.isOpenAICompatibleChatCompletionsPath(pathname) ||
+      pathname === '/v1/models' ||
+      /^\/v1\/models\/[^/]+$/.test(pathname) ||
+      this.isOpenAICommercialGatewayPostPath(pathname)
+    )
+  }
+
+  private isOpenAICommercialGatewayPostPath(pathname: string): boolean {
+    return (
+      pathname === '/v1/embeddings' ||
+      pathname === '/v1/images/generations' ||
+      pathname === '/v1/images/edits' ||
+      pathname === '/v1/audio/transcriptions' ||
+      pathname === '/v1/audio/translations' ||
+      pathname === '/v1/audio/speech'
+    )
   }
 
   private isGeminiNativePath(pathname: string): boolean {
@@ -3743,7 +3796,7 @@ export class RelayService {
   }
 
   private supportsOpenAICompatibleHttpPath(pathname: string): boolean {
-    return this.isOpenAICompatibleChatCompletionsPath(pathname)
+    return this.isOpenAICompatibleCommercialGatewayPath(pathname)
   }
 
   private async handleOpenAICompatibleHttp(input: {
@@ -3762,7 +3815,7 @@ export class RelayService {
     if (!this.supportsOpenAICompatibleHttpPath(input.req.path)) {
       input.res.status(501).json(anthropicErrorBody(
         501,
-        'openai-compatible currently only supports /v1/chat/completions.',
+        'openai-compatible does not support this relay path.',
         RELAY_ERROR_CODES.PROVIDER_ROUTE_UNSUPPORTED,
       ))
       this.logHttpRejection(input.trace, {
@@ -3875,7 +3928,7 @@ export class RelayService {
       }
     }
 
-    const sourceModel = this.extractRequestedModel(input.requestBody)
+    const sourceModel = this.maybeExtractRequestedModel(input.requestBody)
     const route = planOpenAICompatibleModelRouting(sourceModel, resolved.account)
     let upstreamBody: RelayRequestBody = input.requestBody
     if (route.targetModel && route.targetModel !== sourceModel) {
@@ -4001,9 +4054,7 @@ export class RelayService {
     originalUrl: string,
   ): URL {
     const incomingUrl = this.buildUpstreamUrlFromRawUrl(originalUrl)
-    const upstreamUrl = buildOpenAICompatibleChatCompletionsUrl(account)
-    upstreamUrl.search = incomingUrl.search
-    return upstreamUrl
+    return buildOpenAICompatibleEndpointUrl(account, incomingUrl.pathname, incomingUrl.search)
   }
 
   private supportsGoogleGeminiHttpPath(pathname: string): boolean {
@@ -5956,7 +6007,8 @@ export class RelayService {
       path === '/v1/messages/count_tokens' ||
       path === '/v1/chat/completions' ||
       path === '/v1/responses' ||
-      path.startsWith('/v1/responses/')
+      path.startsWith('/v1/responses/') ||
+      this.isOpenAICommercialGatewayPostPath(path)
     )
   }
 
@@ -6661,7 +6713,8 @@ export class RelayService {
         context.path === '/v1/messages' ||
         context.path === '/v1/chat/completions' ||
         context.path === '/v1/responses' ||
-        context.path.startsWith('/v1/responses/')
+        context.path.startsWith('/v1/responses/') ||
+        this.isOpenAICommercialGatewayPostPath(context.path)
       )
 
     const contentType =

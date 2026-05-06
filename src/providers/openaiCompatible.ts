@@ -212,11 +212,24 @@ export function estimateOpenAICompatibleInputTokens(
 }
 
 export function buildOpenAICompatibleChatCompletionsUrl(account: StoredAccount): URL {
+  return buildOpenAICompatibleEndpointUrl(account, '/v1/chat/completions')
+}
+
+export function buildOpenAICompatibleEndpointUrl(
+  account: StoredAccount,
+  pathname: string,
+  search = '',
+): URL {
   const baseUrl = account.apiBaseUrl?.trim()
   if (!baseUrl) {
     throw new Error(`Account ${account.id} is missing apiBaseUrl`)
   }
-  return new URL('chat/completions', `${baseUrl}/`)
+  if (!pathname.startsWith('/v1/')) {
+    throw new Error(`OpenAI compatible endpoint must start with /v1/: ${pathname}`)
+  }
+  const url = new URL(pathname.replace(/^\/v1\/?/, ''), `${baseUrl}/`)
+  url.search = search
+  return url
 }
 
 export function transformOpenAICompatibleResponse(

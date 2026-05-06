@@ -63,14 +63,21 @@ export function isKnownProviderId(value: string): value is AccountProvider {
 }
 
 export function getProviderProfile(provider: AccountProvider): ProviderProfile {
-  return PROVIDER_PROFILE_MAP.get(provider) ?? CLAUDE_OFFICIAL_PROVIDER
+  const profile = PROVIDER_PROFILE_MAP.get(provider)
+  if (!profile) {
+    throw new Error(`Unknown provider: ${provider}`)
+  }
+  return profile
 }
 
 export function resolveProviderProfile(provider: string | null | undefined): ProviderProfile {
-  if (provider && isKnownProviderId(provider)) {
-    return getProviderProfile(provider)
+  if (!provider) {
+    throw new Error('Provider is required')
   }
-  return CLAUDE_OFFICIAL_PROVIDER
+  if (!isKnownProviderId(provider)) {
+    throw new Error(`Unknown provider: ${provider}`)
+  }
+  return getProviderProfile(provider)
 }
 
 export function providerRequiresProxy(provider: AccountProvider): boolean {

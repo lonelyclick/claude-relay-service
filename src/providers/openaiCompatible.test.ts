@@ -4,6 +4,7 @@ import test from 'node:test'
 import type { StoredAccount } from '../types.js'
 import {
   buildOpenAICompatibleChatCompletionsUrl,
+  buildOpenAICompatibleEndpointUrl,
   planOpenAICompatibleModelRouting,
   resolveOpenAICompatibleTargetModel,
 } from './openaiCompatible.js'
@@ -75,6 +76,38 @@ test('buildOpenAICompatibleChatCompletionsUrl targets the native chat completion
   const url = buildOpenAICompatibleChatCompletionsUrl(account)
 
   assert.equal(url.toString(), 'https://api.openai.com/v1/chat/completions')
+})
+
+test('buildOpenAICompatibleEndpointUrl forwards commercial gateway v1 endpoints', () => {
+  const account = buildAccount({
+    apiBaseUrl: 'https://api.openai.com/v1',
+  })
+
+  assert.equal(
+    buildOpenAICompatibleEndpointUrl(account, '/v1/embeddings', '?trace=1').toString(),
+    'https://api.openai.com/v1/embeddings?trace=1',
+  )
+  assert.equal(
+    buildOpenAICompatibleEndpointUrl(account, '/v1/images/generations').toString(),
+    'https://api.openai.com/v1/images/generations',
+  )
+  assert.equal(
+    buildOpenAICompatibleEndpointUrl(account, '/v1/audio/transcriptions').toString(),
+    'https://api.openai.com/v1/audio/transcriptions',
+  )
+  assert.equal(
+    buildOpenAICompatibleEndpointUrl(account, '/v1/models/gpt-5').toString(),
+    'https://api.openai.com/v1/models/gpt-5',
+  )
+})
+
+test('buildOpenAICompatibleEndpointUrl rejects non-v1 endpoint', () => {
+  const account = buildAccount()
+
+  assert.throws(
+    () => buildOpenAICompatibleEndpointUrl(account, '/admin/users'),
+    /must start with \/v1\//,
+  )
 })
 
 test('planOpenAICompatibleModelRouting honors modelMap exact match', () => {
