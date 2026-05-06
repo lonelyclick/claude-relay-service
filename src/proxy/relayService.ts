@@ -910,6 +910,7 @@ export class RelayService {
   private readonly recentServerFailures: UpstreamFailureRecord[] = []
   private upstreamIncidentActiveUntil = 0
   private readonly riskAlertService: RiskAlertService
+  private readonly billingReservationIds = new Map<string, string>()
 
   constructor(
     private readonly oauthService: OAuthService,
@@ -1250,6 +1251,7 @@ export class RelayService {
     const model = input.effectiveModelOverride ?? inspected.model
     const intendedRoutingGroupId = input.routingGroupId
     const result = await this.billingStore.preflightBillableRequest({
+      requestId: input.trace.requestId,
       userId: input.relayUser.userId,
       organizationId: input.relayUser.organizationId,
       billingCurrency: input.relayUser.billingCurrency,
@@ -1263,6 +1265,9 @@ export class RelayService {
       estimatedOutputTokens: inspected.estimatedOutputTokens,
     })
     if (result.ok) {
+      if (result.reservationId) {
+        this.billingReservationIds.set(input.trace.requestId, result.reservationId)
+      }
       return false
     }
     const insufficientBalance = result.status === 'insufficient_balance'
@@ -1934,13 +1939,6 @@ export class RelayService {
             effectiveTemplate,
           ),
         })
-        this.writeResponseHead(
-          res,
-          upstream.statusCode,
-          upstream.statusText,
-          upstream.headers,
-          upstream.rawHeaders,
-        )
         this.setHttpTracePhase(trace, 'upstream_streaming')
         const observation = await this.pipelineWithUsageTracking(upstream, res, {
           requestId: trace.requestId,
@@ -2391,13 +2389,6 @@ export class RelayService {
             })
             return
           }
-          this.writeResponseHead(
-            res,
-            upstream.statusCode,
-            upstream.statusText,
-            upstream.headers,
-            upstream.rawHeaders,
-          )
           await this.oauthService.markAccountUsed(resolved.account.id)
           this.setHttpTracePhase(trace, 'upstream_streaming')
           // Auto-bind user to account on first successful request
@@ -3768,13 +3759,6 @@ export class RelayService {
         }
       }
 
-      this.writeResponseHead(
-        input.res,
-        upstream.statusCode,
-        upstream.statusText,
-        upstreamHeaders,
-        upstreamRawHeaders,
-      )
       const observation = await this.pipelineWithUsageTracking(
         {
           statusCode: upstream.statusCode,
@@ -4038,13 +4022,6 @@ export class RelayService {
       )
     }
 
-    this.writeResponseHead(
-      input.res,
-      upstream.statusCode,
-      upstream.statusText,
-      upstreamHeaders,
-      upstreamRawHeaders,
-    )
     const observation = await this.pipelineWithUsageTracking(
       {
         statusCode: upstream.statusCode,
@@ -4913,13 +4890,6 @@ export class RelayService {
         }
       }
 
-      this.writeResponseHead(
-        input.res,
-        upstream.statusCode,
-        upstream.statusText,
-        upstreamHeaders,
-        upstreamRawHeaders,
-      )
       const observation = await this.pipelineWithUsageTracking(
         {
           statusCode: upstream.statusCode,
@@ -6466,23 +6436,32 @@ export class RelayService {
 
   private recordUsageRecord(record: UsageRecord, method: string = 'POST'): void {
     const normalizedTarget = RelayService.normalizeStoredTarget(record.target)
+    const billingReservationId = this.billingReservationIds.get(record.requestId) ?? null
+    const recordWithReservation: UsageRecord = {
+      ...record,
+      billingReservationId,
+    }
     if (!this.usageStore) {
-      void this.applyUsageSideEffects(record, method, normalizedTarget, 0)
+      void this.applyUsageSideEffects(recordWithReservation, method, normalizedTarget, 0)
       return
     }
     const usageStore = this.usageStore
     void (async () => {
       try {
-        const usageRecordId = await usageStore.insertRecord(record)
-        this.logRiskObservation(record, usageRecordId, method, normalizedTarget)
-        this.recordFirstRealRequestLifecycle(record, normalizedTarget)
-        await this.applyUsageSideEffects(record, method, normalizedTarget, usageRecordId)
+        const usageRecordId = await usageStore.insertRecord(recordWithReservation)
+        this.logRiskObservation(recordWithReservation, usageRecordId, method, normalizedTarget)
+        this.recordFirstRealRequestLifecycle(recordWithReservation, normalizedTarget)
+        await this.applyUsageSideEffects(recordWithReservation, method, normalizedTarget, usageRecordId)
         const billingStore = this.billingStore
         if (billingStore && usageRecordId > 0) {
-          await billingStore.syncUsageRecordById(usageRecordId)
+          if (billingReservationId && (recordWithReservation.statusCode < 200 || recordWithReservation.statusCode >= 300)) {
+            await billingStore.releaseBillingReservation(billingReservationId)
+          } else {
+            await billingStore.syncUsageRecordById(usageRecordId)
+          }
         }
       } catch (error) {
-        await this.applyUsageSideEffects(record, method, normalizedTarget, 0)
+        await this.applyUsageSideEffects(recordWithReservation, method, normalizedTarget, 0)
         this.safeLog({
           event: 'usage_record_failed',
           requestId: record.requestId,
@@ -6493,6 +6472,9 @@ export class RelayService {
           statusCode: record.statusCode,
           error: error instanceof Error ? error.message : String(error),
         })
+      }
+      if (billingReservationId) {
+        this.billingReservationIds.delete(record.requestId)
       }
     })()
   }
@@ -6775,8 +6757,21 @@ export class RelayService {
         ? upstream.headers['content-type']
         : null
     const rl = extractRateLimitInfo(upstream.headers)
+    const writeUpstreamResponseHead = (): void => {
+      if (res.headersSent) {
+        return
+      }
+      this.writeResponseHead(
+        res,
+        upstream.statusCode,
+        upstream.statusText,
+        upstream.headers,
+        upstream.rawHeaders,
+      )
+    }
 
     if (!shouldTrack) {
+      writeUpstreamResponseHead()
       await this.pipelineWithUpstreamDeadline(upstream.body, [res], context.signal)
       return {
         rateLimitStatus: rl.status,
@@ -6794,6 +6789,7 @@ export class RelayService {
       ))
 
     if (isStreaming) {
+      writeUpstreamResponseHead()
       const contentEncoding =
         typeof upstream.headers['content-encoding'] === 'string'
           ? upstream.headers['content-encoding'].trim().toLowerCase()
@@ -7000,35 +6996,68 @@ export class RelayService {
         responseContentType: contentType,
       }
     } else {
-      // Non-streaming: capture only a bounded sample to avoid buffering whole bodies in memory.
-      const captureChunks: Buffer[] = []
-      let capturedLen = 0
-      let captureTruncated = false
-      const captureMax = appConfig.nonStreamResponseCaptureMaxBytes
+      const previewChunks: Buffer[] = []
+      let previewLen = 0
+      const previewMax = appConfig.nonStreamResponseCaptureMaxBytes
+      const usageChunks: Buffer[] = []
+      let usageLen = 0
+      let usageTruncated = false
+      const usageMax = appConfig.nonStreamUsageCaptureMaxBytes
       const collector = new Transform({
         transform(chunk: Buffer, _enc: string, cb: TransformCallback) {
-          if (!captureTruncated && capturedLen < captureMax) {
-            const take = chunk.subarray(0, captureMax - capturedLen)
-            captureChunks.push(take)
-            capturedLen += take.length
-            if (take.length < chunk.length) {
-              captureTruncated = true
+          if (previewLen < previewMax) {
+            const take = chunk.subarray(0, previewMax - previewLen)
+            previewChunks.push(take)
+            previewLen += take.length
+          }
+
+          usageChunks.push(chunk)
+          usageLen += chunk.length
+          while (usageLen > usageMax && usageChunks.length > 0) {
+            usageTruncated = true
+            const first = usageChunks[0]!
+            const overflow = usageLen - usageMax
+            if (overflow >= first.length) {
+              usageChunks.shift()
+              usageLen -= first.length
+            } else {
+              usageChunks[0] = first.subarray(overflow)
+              usageLen -= overflow
             }
-          } else if (chunk.length > 0) {
-            captureTruncated = true
           }
           cb(null, chunk)
         },
       })
+      writeUpstreamResponseHead()
       await this.pipelineWithUpstreamDeadline(upstream.body, [collector, res], context.signal)
-      const capturedBody = Buffer.concat(captureChunks)
+      const previewBody = Buffer.concat(previewChunks)
+      const usageBody = Buffer.concat(usageChunks)
       const contentEncoding =
         typeof upstream.headers['content-encoding'] === 'string'
           ? upstream.headers['content-encoding'].trim().toLowerCase()
           : null
-      const usage = captureTruncated ? null : extractUsageFromJsonBody(capturedBody, contentEncoding)
-      const responseBodyPreview = RelayService.decodeResponseBodyPreview(capturedBody, contentEncoding)
-      if (this.usageStore) {
+      const usage = extractUsageFromJsonBody(usageBody, contentEncoding)
+      if (upstream.statusCode >= 200 && upstream.statusCode < 300 && !usage) {
+        const reason = usageTruncated
+          ? `non-stream billable response usage tail exceeded capture limit ${usageMax}`
+          : `non-stream billable response missing parseable usage for ${context.target}`
+        if (this.billingStore && (context.userId || context.organizationId)) {
+          await this.billingStore.recordUsageExtractionFailure({
+            requestId: context.requestId,
+            ownerType: context.organizationId ? 'organization' : 'user',
+            ownerId: context.organizationId ?? context.userId,
+            target: context.target,
+            errorMessage: reason,
+          })
+          const reservationId = this.billingReservationIds.get(context.requestId)
+          if (reservationId) {
+            await this.billingStore.releaseBillingReservation(reservationId)
+            this.billingReservationIds.delete(context.requestId)
+          }
+        }
+      }
+      const responseBodyPreview = RelayService.decodeResponseBodyPreview(previewBody, contentEncoding)
+      if (this.usageStore && usage) {
         this.recordUsageRecord({
           requestId: context.requestId,
           accountId: context.accountId,
@@ -8106,6 +8135,26 @@ export class RelayService {
     return failure
   }
 
+  private releaseBillingReservationForTrace(trace: HttpTraceContext): void {
+    const reservationId = this.billingReservationIds.get(trace.requestId)
+    if (!reservationId || !this.billingStore) return
+    void this.billingStore.releaseBillingReservation(reservationId)
+      .catch((error) => {
+        this.safeLog({
+          event: 'billing_reservation_release_failed',
+          requestId: trace.requestId,
+          method: trace.method,
+          target: trace.target,
+          durationMs: Date.now() - trace.startedAt,
+          reservationId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      })
+      .finally(() => {
+        this.billingReservationIds.delete(trace.requestId)
+      })
+  }
+
   private logHttpRejection(
     trace: HttpTraceContext,
     input: {
@@ -8117,6 +8166,7 @@ export class RelayService {
       statusText: string
     },
   ): void {
+    this.releaseBillingReservationForTrace(trace)
     const internalCode = input.internalCode ?? fallbackRelayErrorCode(input.statusCode)
     const durationMs = Date.now() - trace.startedAt
     this.recordUsageRecord({
@@ -8164,6 +8214,7 @@ export class RelayService {
   }
 
   private logHttpFailure(trace: HttpTraceContext, error: unknown): void {
+    this.releaseBillingReservationForTrace(trace)
     const clientError = classifyClientFacingRelayError(error)
     const statusCode = clientError?.statusCode ?? 500
     const internalCode = clientError?.code ?? RELAY_ERROR_CODES.INTERNAL_ERROR

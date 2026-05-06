@@ -2824,6 +2824,22 @@ async function rebuildBillingLineItemsControl(services) {
   const result = await services.billingStore.rebuildLineItems();
   return jsonResult(200, { ok: true, result });
 }
+async function retryBillingSyncFailuresControl(services, body) {
+  if (!services.billingStore) {
+    return jsonResult(404, { error: "billing_disabled" });
+  }
+  const limit = typeof body?.limit === "number" ? body.limit : 100;
+  const result = await services.billingStore.retryBillingSyncFailures(limit);
+  return jsonResult(200, { ok: true, result });
+}
+async function expireBillingReservationsControl(services, body) {
+  if (!services.billingStore) {
+    return jsonResult(404, { error: "billing_disabled" });
+  }
+  const limit = typeof body?.limit === "number" ? body.limit : 500;
+  const result = await services.billingStore.expireBillingReservations(limit);
+  return jsonResult(200, { ok: true, result });
+}
 function resolveProbeProxyTarget(proxy) {
   if (proxy.localUrl && /^https?:\/\//i.test(proxy.localUrl)) {
     return { via: "localUrl", proxyUrl: proxy.localUrl };
@@ -3943,6 +3959,20 @@ export function createServer(services): express.Express {
         res.status(result.status).json(result.body);
       }),
     );
+    app.post(
+      "/internal/control/billing/sync-failures/retry",
+      asyncRoute(async (req, res) => {
+        const result = await retryBillingSyncFailuresControl(services, req.body);
+        res.status(result.status).json(result.body);
+      }),
+    );
+    app.post(
+      "/internal/control/billing/reservations/expire",
+      asyncRoute(async (req, res) => {
+        const result = await expireBillingReservationsControl(services, req.body);
+        res.status(result.status).json(result.body);
+      }),
+    );
   }
   if (serviceMode === "server" || serviceMode === "relay") {
     app.use("/admin", (req, res, next) => {
@@ -4244,13 +4274,16 @@ export function createServer(services): express.Express {
           res.status(404).json({ error: "organization_not_found" });
           return;
         }
-        const { sinceParam, limitParam, offsetParam, legacyExternalUserId } = req.query as Record<
+        const { sinceParam, untilParam, limitParam, offsetParam, legacyExternalUserId } = req.query as Record<
           string,
           string | undefined
         >;
         const sinceDate = sinceParam ? new Date(sinceParam) : null;
         const since =
           sinceDate && !Number.isNaN(sinceDate.getTime()) ? sinceDate : null;
+        const untilDate = untilParam ? new Date(untilParam) : null;
+        const until =
+          untilDate && !Number.isNaN(untilDate.getTime()) ? untilDate : null;
         const limit = limitParam ? Number.parseInt(limitParam, 10) : 50;
         const offset = offsetParam ? Number.parseInt(offsetParam, 10) : 0;
         const legacyUser = legacyExternalUserId && services.userStore
@@ -4263,12 +4296,14 @@ export function createServer(services): express.Express {
               since,
               Number.isFinite(limit) ? limit : 50,
               Number.isFinite(offset) ? offset : 0,
+              until,
             )
           : await services.billingStore.getOrganizationUsageSnapshot(
               relayOrgId,
               since,
               Number.isFinite(limit) ? limit : 50,
               Number.isFinite(offset) ? offset : 0,
+              until,
             );
         res.json({ usage: snapshot });
       }),
@@ -7199,6 +7234,51 @@ export function createServer(services): express.Express {
         await respondWithRelayControl(res, relayControlClient, {
           method: "POST",
           path: "/internal/control/billing/rebuild",
+        });
+      }),
+    );
+    app.get(
+      "/admin/billing/sync-failures/summary",
+      asyncRoute(async (_req, res) => {
+        if (!services.billingStore) {
+          res.status(404).json({ error: "billing_disabled" });
+          return;
+        }
+        const summary = await services.billingStore.getSyncFailureSummary();
+        res.json(summary);
+      }),
+    );
+    app.get(
+      "/admin/billing/sync-failures",
+      asyncRoute(async (req, res) => {
+        if (!services.billingStore) {
+          res.status(404).json({ error: "billing_disabled" });
+          return;
+        }
+        const status = req.query.status === "resolved" ? "resolved" : req.query.status === "pending" ? "pending" : undefined;
+        const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : 100;
+        const offset = typeof req.query.offset === "string" ? Number(req.query.offset) : 0;
+        const result = await services.billingStore.listSyncFailures({ status, limit, offset });
+        res.json(result);
+      }),
+    );
+    app.post(
+      "/admin/billing/sync-failures/retry",
+      asyncRoute(async (req, res) => {
+        await respondWithRelayControl(res, relayControlClient, {
+          method: "POST",
+          path: "/internal/control/billing/sync-failures/retry",
+          body: req.body,
+        });
+      }),
+    );
+    app.post(
+      "/admin/billing/reservations/expire",
+      asyncRoute(async (req, res) => {
+        await respondWithRelayControl(res, relayControlClient, {
+          method: "POST",
+          path: "/internal/control/billing/reservations/expire",
+          body: req.body,
         });
       }),
     );

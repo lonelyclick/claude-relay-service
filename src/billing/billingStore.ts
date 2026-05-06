@@ -261,9 +261,69 @@ export interface BillingSyncResult {
   billedRequests: number;
   missingSkuRequests: number;
   invalidUsageRequests: number;
+  failedRequests: number;
+}
+
+export type BillingSyncFailureStatus = "pending" | "resolved";
+
+export interface BillingSyncFailureRow {
+  id: string;
+  usageRecordId: number;
+  requestId: string | null;
+  ownerType: "user" | "organization" | null;
+  ownerId: string | null;
+  target: string | null;
+  status: BillingSyncFailureStatus;
+  errorMessage: string;
+  retryCount: number;
+  nextRetryAt: string;
+  resolvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BillingSyncFailureSummary {
+  pendingCount: number;
+  resolvedCount: number;
+  lastFailedAt: string | null;
+  recentErrors: Array<{
+    usageRecordId: number;
+    requestId: string | null;
+    ownerType: "user" | "organization" | null;
+    ownerId: string | null;
+    target: string | null;
+    errorMessage: string;
+    retryCount: number;
+    nextRetryAt: string;
+    updatedAt: string;
+  }>;
+}
+
+export interface BillingRetryFailuresResult {
+  attempted: number;
+  resolved: number;
+  failed: number;
+}
+
+export class BillingInsufficientBalanceError extends Error {
+  readonly status = "insufficient_balance" as const;
+
+  constructor(
+    readonly ownerType: "user" | "organization",
+    readonly ownerId: string,
+    readonly requestedMicros: string,
+    readonly availableMicros: string,
+    readonly currency: BillingCurrency,
+  ) {
+    super(
+      `Insufficient ${ownerType} billing balance for ${ownerId}: requested ${requestedMicros} ${currency} micros, available ${availableMicros} ${currency} micros`,
+    );
+    this.name = "BillingInsufficientBalanceError";
+  }
 }
 
 export interface BillingPreflightInput {
+  requestId: string;
   userId: string | null;
   organizationId?: string | null;
   billingCurrency: BillingCurrency;
@@ -293,7 +353,10 @@ export interface BillingPreflightResult {
   availableMicros?: string;
   /** Currency the amounts are denominated in (matches the resolved SKU). */
   currency?: BillingCurrency;
+  reservationId?: string;
 }
+
+export type BillingReservationStatus = "reserved" | "settled" | "released" | "expired";
 
 export interface ChannelUsageWindowSnapshot {
   totalRequests: number;
@@ -426,6 +489,44 @@ CREATE TABLE IF NOT EXISTS billing_meta (
 );
 `;
 
+const CREATE_SYNC_FAILURES_SQL = `
+CREATE TABLE IF NOT EXISTS billing_sync_failures (
+  id TEXT PRIMARY KEY,
+  usage_record_id BIGINT NOT NULL UNIQUE,
+  request_id TEXT,
+  owner_type TEXT,
+  owner_id TEXT,
+  target TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'resolved')),
+  error_message TEXT NOT NULL,
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  next_retry_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE billing_sync_failures ADD COLUMN IF NOT EXISTS id TEXT;
+UPDATE billing_sync_failures SET id = 'bsf_' || usage_record_id::text WHERE id IS NULL;
+ALTER TABLE billing_sync_failures ALTER COLUMN id SET NOT NULL;
+ALTER TABLE billing_sync_failures ADD COLUMN IF NOT EXISTS target TEXT;
+ALTER TABLE billing_sync_failures ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE billing_sync_failures ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE billing_sync_failures ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE billing_sync_failures ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+ALTER TABLE billing_sync_failures ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE billing_sync_failures ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE billing_sync_failures DROP COLUMN IF EXISTS error_name;
+ALTER TABLE billing_sync_failures DROP COLUMN IF EXISTS attempts;
+ALTER TABLE billing_sync_failures DROP COLUMN IF EXISTS first_failed_at;
+ALTER TABLE billing_sync_failures DROP COLUMN IF EXISTS last_failed_at;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_sync_failures_usage_record_id
+  ON billing_sync_failures (usage_record_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_sync_failures_id
+  ON billing_sync_failures (id);
+CREATE INDEX IF NOT EXISTS idx_billing_sync_failures_status_next_retry
+  ON billing_sync_failures (status, next_retry_at);
+`;
+
 const CREATE_LEDGER_SQL = `
 CREATE TABLE IF NOT EXISTS billing_balance_ledger (
   id TEXT PRIMARY KEY,
@@ -478,6 +579,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_topup_orders_external_ref
   ON billing_topup_orders (external_ref) WHERE external_ref IS NOT NULL;
 `;
 
+const CREATE_RESERVATIONS_SQL = `
+CREATE TABLE IF NOT EXISTS billing_reservations (
+  id TEXT PRIMARY KEY,
+  owner_type TEXT NOT NULL CHECK (owner_type IN ('user', 'organization')),
+  owner_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  usage_record_id BIGINT UNIQUE,
+  currency TEXT NOT NULL,
+  reserved_amount_micros BIGINT NOT NULL CHECK (reserved_amount_micros >= 0),
+  settled_amount_micros BIGINT,
+  status TEXT NOT NULL CHECK (status IN ('reserved', 'settled', 'released', 'expired')),
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_reservations_request_reserved
+  ON billing_reservations (request_id) WHERE status = 'reserved';
+CREATE INDEX IF NOT EXISTS idx_billing_reservations_status_expires
+  ON billing_reservations (status, expires_at);
+`;
+
 const USER_BILLING_MIGRATIONS_SQL = `
 ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS billing_mode TEXT NOT NULL DEFAULT 'prepaid';
 ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS billing_currency TEXT NOT NULL DEFAULT '${DEFAULT_BILLING_CURRENCY}';
@@ -486,6 +608,7 @@ ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS credit_limit_micros BIGINT NOT 
 ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS sales_owner TEXT;
 ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS risk_status TEXT NOT NULL DEFAULT 'normal';
 ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS balance_micros BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS reserved_balance_micros BIGINT NOT NULL DEFAULT 0;
 UPDATE relay_users
 SET billing_mode = 'prepaid'
 WHERE billing_mode IS NULL OR billing_mode NOT IN ('postpaid', 'prepaid');
@@ -498,6 +621,9 @@ WHERE risk_status IS NULL OR risk_status NOT IN ('normal', 'watch', 'restricted'
 UPDATE relay_users
 SET credit_limit_micros = 0
 WHERE credit_limit_micros IS NULL OR credit_limit_micros < 0;
+UPDATE relay_users
+SET reserved_balance_micros = 0
+WHERE reserved_balance_micros IS NULL OR reserved_balance_micros < 0;
 `;
 
 type BillingBaseSkuRow = {
@@ -992,7 +1118,11 @@ export class BillingStore {
       await client.query(CREATE_LINE_ITEMS_SQL);
       await client.query(CREATE_LEDGER_SQL);
       await client.query(CREATE_TOPUP_ORDERS_SQL);
+      await client.query(CREATE_RESERVATIONS_SQL);
       await client.query(CREATE_META_SQL);
+      await client.query(CREATE_SYNC_FAILURES_SQL);
+      await client.query("ALTER TABLE relay_organizations ADD COLUMN IF NOT EXISTS reserved_balance_micros BIGINT NOT NULL DEFAULT 0");
+      await client.query("UPDATE relay_organizations SET reserved_balance_micros = 0 WHERE reserved_balance_micros IS NULL OR reserved_balance_micros < 0");
       await client.query(
         "ALTER TABLE billing_line_items ADD COLUMN IF NOT EXISTS organization_id TEXT",
       );
@@ -1452,7 +1582,7 @@ export class BillingStore {
       await client.query("COMMIT");
       return m;
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
+      await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();
@@ -2706,34 +2836,88 @@ export class BillingStore {
       return { ok: false, status: "zero_price" };
     }
     if (!input.organizationId && !input.userId) {
-      // No owner to charge against. Higher layers should never reach here for
-      // billable paths, but be permissive to avoid blocking unrelated routes.
+      throw new Error("Billing preflight requires a user or organization owner");
+    }
+    return this.reserveBillableRequest({
+      ownerType: input.organizationId ? "organization" : "user",
+      ownerId: input.organizationId ?? input.userId as string,
+      requestId: input.requestId,
+      amountMicros: resolved.amountMicros,
+      currency: resolved.currency,
+    });
+  }
+
+  private async reserveBillableRequest(input: {
+    ownerType: "user" | "organization";
+    ownerId: string;
+    requestId: string;
+    amountMicros: string;
+    currency: BillingCurrency;
+  }): Promise<BillingPreflightResult> {
+    const client = await this.pool.connect();
+    const table = input.ownerType === "organization" ? "relay_organizations" : "relay_users";
+    try {
+      await client.query("BEGIN");
+      const owner = await client.query<{
+        billing_mode: string;
+        balance_micros: string | number | bigint;
+        credit_limit_micros: string | number | bigint;
+        reserved_balance_micros: string | number | bigint;
+      }>(
+        `SELECT billing_mode, balance_micros, credit_limit_micros, reserved_balance_micros
+         FROM ${table}
+         WHERE id = $1
+         FOR UPDATE`,
+        [input.ownerId],
+      );
+      const row = owner.rows[0];
+      if (!row) {
+        throw new Error(`Billing owner not found for reservation: ${input.ownerType}:${input.ownerId}`);
+      }
+      const balance = BigInt(readBigIntString(row.balance_micros));
+      const credit = row.billing_mode === "postpaid" ? BigInt(readBigIntString(row.credit_limit_micros)) : 0n;
+      const reserved = BigInt(readBigIntString(row.reserved_balance_micros));
+      const availableMicros = balance + credit - reserved;
+      const amountMicros = BigInt(input.amountMicros);
+      if (availableMicros < amountMicros) {
+        await client.query("ROLLBACK");
+        return {
+          ok: false,
+          status: "insufficient_balance",
+          estimatedAmountMicros: input.amountMicros,
+          availableMicros: availableMicros.toString(),
+          currency: input.currency,
+        };
+      }
+      const reservationId = crypto.randomUUID();
+      await client.query(
+        `INSERT INTO billing_reservations (
+          id, owner_type, owner_id, request_id, currency, reserved_amount_micros, status, expires_at
+         ) VALUES ($1, $2, $3, $4, $5, $6::bigint, 'reserved', NOW() + INTERVAL '30 minutes')`,
+        [reservationId, input.ownerType, input.ownerId, input.requestId, input.currency, input.amountMicros],
+      );
+      await client.query(
+        `UPDATE ${table}
+         SET reserved_balance_micros = reserved_balance_micros + $1::bigint,
+             updated_at = NOW()
+         WHERE id = $2`,
+        [input.amountMicros, input.ownerId],
+      );
+      await client.query("COMMIT");
       return {
         ok: true,
         status: "billed",
-        estimatedAmountMicros: resolved.amountMicros,
-        currency: resolved.currency,
-      };
-    }
-    const availableMicros = input.organizationId
-      ? await this.getOrganizationAvailableMicros(input.organizationId)
-      : await this.getUserAvailableMicros(input.userId as string);
-    if (availableMicros < BigInt(resolved.amountMicros)) {
-      return {
-        ok: false,
-        status: "insufficient_balance",
-        estimatedAmountMicros: resolved.amountMicros,
+        estimatedAmountMicros: input.amountMicros,
         availableMicros: availableMicros.toString(),
-        currency: resolved.currency,
+        currency: input.currency,
+        reservationId,
       };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
     }
-    return {
-      ok: true,
-      status: "billed",
-      estimatedAmountMicros: resolved.amountMicros,
-      availableMicros: availableMicros.toString(),
-      currency: resolved.currency,
-    };
   }
 
   /**
@@ -2794,6 +2978,7 @@ export class BillingStore {
       billedRequests: 0,
       missingSkuRequests: 0,
       invalidUsageRequests: 0,
+      failedRequests: 0,
     };
 
     let lastUsageId = await this.getLastUsageRecordId();
@@ -2803,12 +2988,26 @@ export class BillingStore {
         break;
       }
 
-      await this.upsertCandidates(batch, result);
+      await this.upsertCandidatesIndividually(batch, result);
       lastUsageId = batch[batch.length - 1]!.usageRecordId;
       await this.setLastUsageRecordId(lastUsageId);
     }
 
     if (options?.reconcileMissing) {
+      let lastFailedUsageId = 0;
+      while (true) {
+        const failed = await this.loadFailedUsageCandidates(
+          lastFailedUsageId,
+          500,
+        );
+        if (!failed.length) {
+          break;
+        }
+
+        await this.upsertCandidatesIndividually(failed, result);
+        lastFailedUsageId = failed[failed.length - 1]!.usageRecordId;
+      }
+
       let lastMissingUsageId = 0;
       while (true) {
         const pending = await this.loadCandidatesForStatus(
@@ -2820,7 +3019,7 @@ export class BillingStore {
           break;
         }
 
-        await this.upsertCandidates(pending, result);
+        await this.upsertCandidatesIndividually(pending, result);
         lastMissingUsageId = pending[pending.length - 1]!.usageRecordId;
       }
     }
@@ -2846,8 +3045,15 @@ export class BillingStore {
       billedRequests: 0,
       missingSkuRequests: 0,
       invalidUsageRequests: 0,
+      failedRequests: 0,
     };
-    await this.upsertCandidates([candidate], result);
+    try {
+      await this.upsertCandidates([candidate], result);
+      await this.clearSyncFailure(candidate.usageRecordId);
+    } catch (error) {
+      await this.recordSyncFailure(candidate, error);
+      throw error;
+    }
   }
 
   async rebuildLineItems(): Promise<BillingSyncResult> {
@@ -3413,8 +3619,9 @@ export class BillingStore {
     since: Date | null,
     limit = 50,
     offset = 0,
+    until: Date | null = null,
   ): Promise<BillingUserUsageSnapshot> {
-    return this.getWorkspaceUsageSnapshot({ organizationId, legacyUserId: null }, since, limit, offset);
+    return this.getWorkspaceUsageSnapshot({ organizationId, legacyUserId: null }, since, limit, offset, until);
   }
 
   async getPersonalWorkspaceUsageSnapshot(
@@ -3423,8 +3630,9 @@ export class BillingStore {
     since: Date | null,
     limit = 50,
     offset = 0,
+    until: Date | null = null,
   ): Promise<BillingUserUsageSnapshot> {
-    return this.getWorkspaceUsageSnapshot({ organizationId, legacyUserId }, since, limit, offset);
+    return this.getWorkspaceUsageSnapshot({ organizationId, legacyUserId }, since, limit, offset, until);
   }
 
   private async getWorkspaceUsageSnapshot(
@@ -3432,6 +3640,7 @@ export class BillingStore {
     since: Date | null,
     limit = 50,
     offset = 0,
+    until: Date | null = null,
   ): Promise<BillingUserUsageSnapshot> {
     const sinceDate = normalizeSince(since);
     const cappedLimit = Math.max(1, Math.min(limit, 200));
@@ -3441,11 +3650,18 @@ export class BillingStore {
       ? `((organization_id = $1) OR (user_id = $2))`
       : `organization_id = $1`;
     const sinceParamIndex = owner.legacyUserId ? 3 : 2;
-    const baseParams = owner.legacyUserId
+    const baseParams: unknown[] = owner.legacyUserId
       ? [owner.organizationId, owner.legacyUserId, sinceDate]
       : [owner.organizationId, sinceDate];
-    const limitParamIndex = sinceParamIndex + 1;
-    const offsetParamIndex = sinceParamIndex + 2;
+    let untilClause = "";
+    let untilParamIndex = 0;
+    if (until && !Number.isNaN(until.getTime())) {
+      untilParamIndex = sinceParamIndex + 1;
+      untilClause = ` AND usage_created_at < $${untilParamIndex}`;
+      baseParams.push(until);
+    }
+    const limitParamIndex = (untilParamIndex || sinceParamIndex) + 1;
+    const offsetParamIndex = limitParamIndex + 1;
 
     const [totalResult, byDayResult, byModelResult, itemsResult, countResult] =
       await Promise.all([
@@ -3467,7 +3683,7 @@ export class BillingStore {
              MAX(usage_created_at) AS last_active_at
            FROM billing_line_items
            WHERE ${ownerFilter}
-             AND usage_created_at >= $${sinceParamIndex}`,
+             AND usage_created_at >= $${sinceParamIndex}${untilClause}`,
           baseParams,
         ),
         this.pool.query<{
@@ -3491,7 +3707,7 @@ export class BillingStore {
              COALESCE(SUM(amount_micros), 0)::bigint AS total_amount_micros
            FROM billing_line_items
            WHERE ${ownerFilter}
-             AND usage_created_at >= $${sinceParamIndex}
+             AND usage_created_at >= $${sinceParamIndex}${untilClause}
            GROUP BY date_trunc('day', usage_created_at)
            ORDER BY period_start DESC
            LIMIT 90`,
@@ -3518,7 +3734,7 @@ export class BillingStore {
              COALESCE(SUM(amount_micros), 0)::bigint AS total_amount_micros
            FROM billing_line_items
            WHERE ${ownerFilter}
-             AND usage_created_at >= $${sinceParamIndex}
+             AND usage_created_at >= $${sinceParamIndex}${untilClause}
            GROUP BY model
            ORDER BY total_amount_micros DESC, total_input_tokens DESC, model ASC NULLS LAST`,
           baseParams,
@@ -3549,7 +3765,7 @@ export class BillingStore {
              amount_micros, usage_created_at
            FROM billing_line_items
            WHERE ${ownerFilter}
-             AND usage_created_at >= $${sinceParamIndex}
+             AND usage_created_at >= $${sinceParamIndex}${untilClause}
            ORDER BY usage_created_at DESC
            LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}`,
           [...baseParams, cappedLimit, cappedOffset],
@@ -3558,7 +3774,7 @@ export class BillingStore {
           `SELECT COUNT(*)::int AS total
            FROM billing_line_items
            WHERE ${ownerFilter}
-             AND usage_created_at >= $${sinceParamIndex}`,
+             AND usage_created_at >= $${sinceParamIndex}${untilClause}`,
           baseParams,
         ),
       ]);
@@ -3747,6 +3963,260 @@ export class BillingStore {
     }
   }
 
+  private async upsertCandidatesIndividually(
+    candidates: BillingUsageCandidate[],
+    result: BillingSyncResult,
+  ): Promise<void> {
+    for (const candidate of candidates) {
+      try {
+        await this.upsertCandidates([candidate], result);
+        await this.clearSyncFailure(candidate.usageRecordId);
+      } catch (error) {
+        result.failedRequests += 1;
+        await this.recordSyncFailure(candidate, error);
+      }
+    }
+  }
+
+  private async clearSyncFailure(usageRecordId: number): Promise<void> {
+    await this.pool.query(
+      `UPDATE billing_sync_failures
+       SET status = 'resolved',
+           resolved_at = COALESCE(resolved_at, NOW()),
+           updated_at = NOW()
+       WHERE usage_record_id = $1`,
+      [usageRecordId],
+    );
+  }
+
+  private async recordSyncFailure(
+    candidate: BillingUsageCandidate,
+    error: unknown,
+  ): Promise<void> {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const ownerType = candidate.organizationId ? "organization" : "user";
+    const ownerId = candidate.organizationId ?? candidate.userId;
+    await this.pool.query(
+      `INSERT INTO billing_sync_failures (
+        id, usage_record_id, request_id, owner_type, owner_id, target, status, error_message, retry_count, next_retry_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, 0, NOW())
+       ON CONFLICT (usage_record_id) DO UPDATE SET
+         request_id = EXCLUDED.request_id,
+         owner_type = EXCLUDED.owner_type,
+         owner_id = EXCLUDED.owner_id,
+         target = EXCLUDED.target,
+         status = 'pending',
+         error_message = EXCLUDED.error_message,
+         next_retry_at = NOW(),
+         resolved_at = NULL,
+         updated_at = NOW()`,
+      [
+        `bsf_${candidate.usageRecordId}`,
+        candidate.usageRecordId,
+        candidate.requestId,
+        ownerType,
+        ownerId,
+        candidate.target,
+        errorMessage.slice(0, 2048),
+      ],
+    );
+  }
+
+  async listSyncFailures(input?: {
+    status?: BillingSyncFailureStatus;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ failures: BillingSyncFailureRow[]; total: number }> {
+    const status = input?.status;
+    const limit = Math.max(1, Math.min(500, Math.floor(input?.limit ?? 100)));
+    const offset = Math.max(0, Math.floor(input?.offset ?? 0));
+    const where = status ? "WHERE status = $1" : "";
+    const params: Array<string | number> = status
+      ? [status, limit, offset]
+      : [limit, offset];
+    const limitParam = status ? "$2" : "$1";
+    const offsetParam = status ? "$3" : "$2";
+    const [rowsResult, countResult] = await Promise.all([
+      this.pool.query(
+        `SELECT id, usage_record_id, request_id, owner_type, owner_id, target, status,
+                error_message, retry_count, next_retry_at, resolved_at, created_at, updated_at
+         FROM billing_sync_failures
+         ${where}
+         ORDER BY updated_at DESC
+         LIMIT ${limitParam} OFFSET ${offsetParam}`,
+        params,
+      ),
+      this.pool.query<{ total: string | number }>(
+        `SELECT COUNT(*)::bigint AS total FROM billing_sync_failures ${where}`,
+        status ? [status] : [],
+      ),
+    ]);
+    return {
+      failures: rowsResult.rows.map((row) => this.toBillingSyncFailureRow(row)),
+      total: Number(countResult.rows[0]?.total ?? 0),
+    };
+  }
+
+  async getSyncFailureSummary(): Promise<BillingSyncFailureSummary> {
+    const [counts, recent] = await Promise.all([
+      this.pool.query<{
+        pending_count: string | number;
+        resolved_count: string | number;
+        last_failed_at: Date | null;
+      }>(
+        `SELECT
+           COUNT(*) FILTER (WHERE status = 'pending')::bigint AS pending_count,
+           COUNT(*) FILTER (WHERE status = 'resolved')::bigint AS resolved_count,
+           MAX(updated_at) FILTER (WHERE status = 'pending') AS last_failed_at
+         FROM billing_sync_failures`,
+      ),
+      this.pool.query(
+        `SELECT id, usage_record_id, request_id, owner_type, owner_id, target, status,
+                error_message, retry_count, next_retry_at, resolved_at, created_at, updated_at
+         FROM billing_sync_failures
+         WHERE status = 'pending'
+         ORDER BY updated_at DESC
+         LIMIT 10`,
+      ),
+    ]);
+    const countRow = counts.rows[0];
+    return {
+      pendingCount: Number(countRow?.pending_count ?? 0),
+      resolvedCount: Number(countRow?.resolved_count ?? 0),
+      lastFailedAt: countRow?.last_failed_at?.toISOString() ?? null,
+      recentErrors: recent.rows.map((row) => {
+        const failure = this.toBillingSyncFailureRow(row);
+        return {
+          usageRecordId: failure.usageRecordId,
+          requestId: failure.requestId,
+          ownerType: failure.ownerType,
+          ownerId: failure.ownerId,
+          target: failure.target,
+          errorMessage: failure.errorMessage,
+          retryCount: failure.retryCount,
+          nextRetryAt: failure.nextRetryAt,
+          updatedAt: failure.updatedAt,
+        };
+      }),
+    };
+  }
+
+  async retryBillingSyncFailures(limit = 100): Promise<BillingRetryFailuresResult> {
+    const cappedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+    const rows = await this.pool.query<{ usage_record_id: string | number }>(
+      `SELECT usage_record_id
+       FROM billing_sync_failures
+       WHERE status = 'pending'
+         AND usage_record_id > 0
+         AND next_retry_at <= NOW()
+       ORDER BY next_retry_at ASC, updated_at ASC
+       LIMIT $1`,
+      [cappedLimit],
+    );
+    const result: BillingRetryFailuresResult = {
+      attempted: 0,
+      resolved: 0,
+      failed: 0,
+    };
+    for (const row of rows.rows) {
+      result.attempted += 1;
+      const usageRecordId = Number(row.usage_record_id);
+      try {
+        await this.syncUsageRecordById(usageRecordId);
+        result.resolved += 1;
+      } catch (error) {
+        result.failed += 1;
+        await this.scheduleSyncFailureRetry(usageRecordId, error);
+      }
+    }
+    return result;
+  }
+
+  async recordUsageExtractionFailure(input: {
+    requestId: string;
+    ownerType: "user" | "organization" | null;
+    ownerId: string | null;
+    target: string;
+    errorMessage: string;
+  }): Promise<void> {
+    const syntheticUsageRecordId = -Number.parseInt(
+      crypto.createHash("sha256").update(input.requestId).digest("hex").slice(0, 12),
+      16,
+    );
+    await this.pool.query(
+      `INSERT INTO billing_sync_failures (
+        id, usage_record_id, request_id, owner_type, owner_id, target, status, error_message, retry_count, next_retry_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, 0, NOW())
+       ON CONFLICT (usage_record_id) DO UPDATE SET
+         request_id = EXCLUDED.request_id,
+         owner_type = EXCLUDED.owner_type,
+         owner_id = EXCLUDED.owner_id,
+         target = EXCLUDED.target,
+         status = 'pending',
+         error_message = EXCLUDED.error_message,
+         next_retry_at = EXCLUDED.next_retry_at,
+         resolved_at = NULL,
+         updated_at = NOW()`,
+      [
+        `bsf_usage_extraction_${input.requestId}`,
+        syntheticUsageRecordId,
+        input.requestId,
+        input.ownerType,
+        input.ownerId,
+        input.target,
+        input.errorMessage.slice(0, 2048),
+      ],
+    );
+  }
+
+  private async scheduleSyncFailureRetry(
+    usageRecordId: number,
+    error: unknown,
+  ): Promise<void> {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    await this.pool.query(
+      `UPDATE billing_sync_failures
+       SET error_message = $2,
+           retry_count = retry_count + 1,
+           next_retry_at = NOW() + LEAST(3600, POWER(2, LEAST(retry_count + 1, 10))) * INTERVAL '1 second',
+           updated_at = NOW()
+       WHERE usage_record_id = $1`,
+      [usageRecordId, errorMessage.slice(0, 2048)],
+    );
+  }
+
+  private toBillingSyncFailureRow(row: {
+    id: string;
+    usage_record_id: string | number;
+    request_id: string | null;
+    owner_type: string | null;
+    owner_id: string | null;
+    target: string | null;
+    status: string;
+    error_message: string;
+    retry_count: string | number;
+    next_retry_at: Date;
+    resolved_at: Date | null;
+    created_at: Date;
+    updated_at: Date;
+  }): BillingSyncFailureRow {
+    return {
+      id: row.id,
+      usageRecordId: Number(row.usage_record_id),
+      requestId: row.request_id,
+      ownerType: row.owner_type === "organization" ? "organization" : row.owner_type === "user" ? "user" : null,
+      ownerId: row.owner_id,
+      target: row.target,
+      status: row.status === "resolved" ? "resolved" : "pending",
+      errorMessage: row.error_message,
+      retryCount: Number(row.retry_count ?? 0),
+      nextRetryAt: row.next_retry_at.toISOString(),
+      resolvedAt: row.resolved_at?.toISOString() ?? null,
+      createdAt: row.created_at.toISOString(),
+      updatedAt: row.updated_at.toISOString(),
+    };
+  }
+
   private async getLastUsageRecordId(): Promise<number> {
     const result = await this.pool.query<{ value: string }>(
       `SELECT value FROM billing_meta WHERE key = 'last_usage_record_id'`,
@@ -3788,6 +4258,7 @@ export class BillingStore {
       cache_creation_input_tokens: number;
       cache_read_input_tokens: number;
       status_code: number;
+      billing_reservation_id: string | null;
       created_at: Date;
     }>(
       `SELECT
@@ -3809,6 +4280,7 @@ export class BillingStore {
          u.cache_creation_input_tokens,
          u.cache_read_input_tokens,
          u.status_code,
+         u.billing_reservation_id,
          u.created_at
        FROM usage_records u
        LEFT JOIN billing_line_items b ON b.usage_record_id = u.id
@@ -3848,6 +4320,7 @@ export class BillingStore {
         cacheCreationInputTokens: Number(row.cache_creation_input_tokens ?? 0),
         cacheReadInputTokens: Number(row.cache_read_input_tokens ?? 0),
         statusCode: Number(row.status_code ?? 0),
+        billingReservationId: row.billing_reservation_id,
         createdAt: row.created_at.toISOString(),
       }));
   }
@@ -3874,6 +4347,7 @@ export class BillingStore {
       cache_creation_input_tokens: number;
       cache_read_input_tokens: number;
       status_code: number;
+      billing_reservation_id: string | null;
       created_at: Date;
     }>(
       `SELECT
@@ -3895,6 +4369,7 @@ export class BillingStore {
          u.cache_creation_input_tokens,
          u.cache_read_input_tokens,
          u.status_code,
+         u.billing_reservation_id,
          u.created_at
        FROM usage_records u
        LEFT JOIN relay_users ru ON ru.id = u.user_id
@@ -3938,6 +4413,96 @@ export class BillingStore {
     };
   }
 
+  private async loadFailedUsageCandidates(
+    afterUsageRecordId: number,
+    limit: number,
+  ): Promise<BillingUsageCandidate[]> {
+    const result = await this.pool.query<{
+      usage_record_id: number;
+      request_id: string;
+      user_id: string | null;
+      organization_id: string | null;
+      user_name: string | null;
+      billing_currency: string;
+      account_id: string | null;
+      provider: string | null;
+      model: string | null;
+      routing_group_id: string | null;
+      session_key: string | null;
+      client_device_id: string | null;
+      target: string;
+      input_tokens: number;
+      output_tokens: number;
+      cache_creation_input_tokens: number;
+      cache_read_input_tokens: number;
+      status_code: number;
+      billing_reservation_id: string | null;
+      created_at: Date;
+    }>(
+      `SELECT
+         u.id AS usage_record_id,
+         u.request_id,
+         u.user_id,
+         u.organization_id,
+         COALESCE(ro.name, ru.name) AS user_name,
+         COALESCE(ro.billing_currency, ru.billing_currency) AS billing_currency,
+         u.account_id,
+         a.data->>'provider' AS provider,
+         u.model,
+         u.routing_group_id,
+         u.session_key,
+         u.client_device_id,
+         u.target,
+         u.input_tokens,
+         u.output_tokens,
+         u.cache_creation_input_tokens,
+         u.cache_read_input_tokens,
+         u.status_code,
+         u.billing_reservation_id,
+         u.created_at
+       FROM billing_sync_failures f
+       INNER JOIN usage_records u ON u.id = f.usage_record_id
+       LEFT JOIN relay_users ru ON ru.id = u.user_id
+       LEFT JOIN relay_organizations ro ON ro.id = u.organization_id
+       LEFT JOIN accounts a ON a.id = u.account_id
+       WHERE f.usage_record_id > $1
+         AND f.usage_record_id > 0
+         AND (u.user_id IS NOT NULL OR u.organization_id IS NOT NULL)
+         AND u.status_code >= 200
+         AND u.status_code < 300
+         AND COALESCE(u.attempt_kind, 'final') = 'final'
+         AND (split_part(u.target, '?', 1) = ANY($2) OR split_part(u.target, '?', 1) LIKE '/v1/responses/%')
+       ORDER BY f.usage_record_id ASC
+       LIMIT $3`,
+      [afterUsageRecordId, [...BILLABLE_USAGE_TARGETS], limit],
+    );
+
+    return result.rows
+      .filter((row) => isBillableUsageTarget(row.target))
+      .map((row) => ({
+        usageRecordId: Number(row.usage_record_id),
+        requestId: row.request_id,
+        userId: row.user_id,
+        organizationId: row.organization_id,
+        userName: row.user_name,
+        billingCurrency: normalizeStoredBillingCurrency(row.billing_currency),
+        accountId: row.account_id,
+        provider: normalizeUsageProvider(row.provider),
+        model: row.model,
+        routingGroupId: row.routing_group_id,
+        sessionKey: row.session_key,
+        clientDeviceId: row.client_device_id,
+        target: row.target,
+        inputTokens: Number(row.input_tokens ?? 0),
+        outputTokens: Number(row.output_tokens ?? 0),
+        cacheCreationInputTokens: Number(row.cache_creation_input_tokens ?? 0),
+        cacheReadInputTokens: Number(row.cache_read_input_tokens ?? 0),
+        statusCode: Number(row.status_code ?? 0),
+        billingReservationId: row.billing_reservation_id,
+        createdAt: row.created_at.toISOString(),
+      }));
+  }
+
   private async loadCandidatesForStatus(
     status: "missing_sku",
     afterUsageRecordId: number,
@@ -3962,6 +4527,7 @@ export class BillingStore {
       cache_creation_input_tokens: number;
       cache_read_input_tokens: number;
       status_code: number;
+      billing_reservation_id: string | null;
       created_at: Date;
     }>(
       `SELECT
@@ -3983,6 +4549,7 @@ export class BillingStore {
          u.cache_creation_input_tokens,
          u.cache_read_input_tokens,
          u.status_code,
+         u.billing_reservation_id,
          u.created_at
        FROM billing_line_items b
        INNER JOIN usage_records u ON u.id = b.usage_record_id
@@ -4015,6 +4582,7 @@ export class BillingStore {
       cacheCreationInputTokens: Number(row.cache_creation_input_tokens ?? 0),
       cacheReadInputTokens: Number(row.cache_read_input_tokens ?? 0),
       statusCode: Number(row.status_code ?? 0),
+      billingReservationId: row.billing_reservation_id,
       createdAt: row.created_at.toISOString(),
     }));
   }
@@ -4054,28 +4622,52 @@ export class BillingStore {
       : null;
     const nextAmountMicros = BigInt(targetAmountMicros);
 
+    if (candidate.billingReservationId && resolved.status !== "billed") {
+      await this.releaseBillingReservationWithClient(
+        client,
+        candidate.billingReservationId,
+        "released",
+      );
+    }
+
     if (!existing && nextAmountMicros === 0n) {
       return;
+    }
+
+    if (candidate.billingReservationId) {
+      await this.settleBillingReservationWithClient(
+        client,
+        candidate.billingReservationId,
+        candidate.usageRecordId,
+        resolved.status === "billed" ? resolved.amountMicros : "0",
+      );
     }
 
     const delta = nextAmountMicros - existingAmountMicros;
     if (delta !== 0n) {
       if (candidate.organizationId) {
-        await client.query(
-          `UPDATE relay_organizations
-           SET balance_micros = balance_micros + $1::bigint,
-               updated_at = NOW()
-           WHERE id = $2`,
-          [delta.toString(), candidate.organizationId],
-        );
+        await this.applyOrganizationBalanceDelta(client, {
+          organizationId: candidate.organizationId,
+          delta,
+          chargeMicros: nextAmountMicros < existingAmountMicros
+            ? (existingAmountMicros - nextAmountMicros).toString()
+            : "0",
+          currency: resolved.currency,
+        });
       } else {
-        await client.query(
-          `UPDATE relay_users
-           SET balance_micros = balance_micros + $1::bigint,
-               updated_at = NOW()
-           WHERE id = $2`,
-          [delta.toString(), candidate.userId],
-        );
+        if (!candidate.userId) {
+          throw new Error(
+            `Billing usage candidate ${candidate.usageRecordId} has no billable owner`,
+          );
+        }
+        await this.applyUserBalanceDelta(client, {
+          userId: candidate.userId,
+          delta,
+          chargeMicros: nextAmountMicros < existingAmountMicros
+            ? (existingAmountMicros - nextAmountMicros).toString()
+            : "0",
+          currency: resolved.currency,
+        });
       }
     }
 
@@ -4123,6 +4715,291 @@ export class BillingStore {
           note,
           candidate.requestId,
         ],
+      );
+    }
+  }
+
+  private async applyUserBalanceDelta(
+    client: pg.PoolClient,
+    input: {
+      userId: string;
+      delta: bigint;
+      chargeMicros: string;
+      currency: BillingCurrency;
+    },
+  ): Promise<void> {
+    const rowResult = await client.query<{
+      billing_mode: string;
+      balance_micros: string | number | bigint;
+      credit_limit_micros: string | number | bigint;
+      reserved_balance_micros: string | number | bigint;
+    }>(
+      `SELECT billing_mode, balance_micros, credit_limit_micros, reserved_balance_micros
+       FROM relay_users
+       WHERE id = $1
+       FOR UPDATE`,
+      [input.userId],
+    );
+    const row = rowResult.rows[0];
+    if (!row) {
+      throw new Error(`Relay user not found for billing debit: ${input.userId}`);
+    }
+
+    this.assertOwnerCanApplyBalanceDelta({
+      ownerType: "user",
+      ownerId: input.userId,
+      balanceMicros: readBigIntString(row.balance_micros),
+      creditLimitMicros: readBigIntString(row.credit_limit_micros),
+      reservedBalanceMicros: readBigIntString(row.reserved_balance_micros),
+      billingMode: row.billing_mode,
+      delta: input.delta,
+      chargeMicros: input.chargeMicros,
+      currency: input.currency,
+    });
+
+    await client.query(
+      `UPDATE relay_users
+       SET balance_micros = balance_micros + $1::bigint,
+           updated_at = NOW()
+       WHERE id = $2`,
+      [input.delta.toString(), input.userId],
+    );
+  }
+
+  async releaseBillingReservation(reservationId: string): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await this.releaseBillingReservationWithClient(client, reservationId, "released");
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async expireBillingReservations(limit = 500): Promise<{ expired: number }> {
+    const cappedLimit = Math.max(1, Math.min(5000, Math.floor(limit)));
+    const rows = await this.pool.query<{ id: string }>(
+      `SELECT id
+       FROM billing_reservations
+       WHERE status = 'reserved'
+         AND expires_at < NOW()
+       ORDER BY expires_at ASC
+       LIMIT $1`,
+      [cappedLimit],
+    );
+    let expired = 0;
+    for (const row of rows.rows) {
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN");
+        const didExpire = await this.releaseBillingReservationWithClient(client, row.id, "expired");
+        await client.query("COMMIT");
+        if (didExpire) {
+          expired += 1;
+        }
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+    return { expired };
+  }
+
+  private async settleBillingReservationWithClient(
+    client: pg.PoolClient,
+    reservationId: string,
+    usageRecordId: number,
+    settledAmountMicros: string,
+  ): Promise<void> {
+    const reservation = await client.query<{
+      owner_type: string;
+      owner_id: string;
+      reserved_amount_micros: string | number | bigint;
+      status: string;
+    }>(
+      `SELECT owner_type, owner_id, reserved_amount_micros, status
+       FROM billing_reservations
+       WHERE id = $1
+       FOR UPDATE`,
+      [reservationId],
+    );
+    const row = reservation.rows[0];
+    if (!row) {
+      throw new Error(`Billing reservation not found: ${reservationId}`);
+    }
+    if (row.status === "settled") {
+      return;
+    }
+    if (row.status !== "reserved") {
+      throw new Error(`Billing reservation is not reserved: ${reservationId}:${row.status}`);
+    }
+    await this.applyReservedBalanceDeltaWithClient(
+      client,
+      row.owner_type,
+      row.owner_id,
+      -BigInt(readBigIntString(row.reserved_amount_micros)),
+    );
+    await client.query(
+      `UPDATE billing_reservations
+       SET usage_record_id = $2,
+           settled_amount_micros = $3::bigint,
+           status = 'settled',
+           updated_at = NOW()
+       WHERE id = $1`,
+      [reservationId, usageRecordId, settledAmountMicros],
+    );
+  }
+
+  private async releaseBillingReservationWithClient(
+    client: pg.PoolClient,
+    reservationId: string,
+    status: "released" | "expired",
+  ): Promise<boolean> {
+    const reservation = await client.query<{
+      owner_type: string;
+      owner_id: string;
+      reserved_amount_micros: string | number | bigint;
+      status: string;
+    }>(
+      `SELECT owner_type, owner_id, reserved_amount_micros, status
+       FROM billing_reservations
+       WHERE id = $1
+       FOR UPDATE`,
+      [reservationId],
+    );
+    const row = reservation.rows[0];
+    if (!row) {
+      throw new Error(`Billing reservation not found: ${reservationId}`);
+    }
+    if (row.status !== "reserved") {
+      return false;
+    }
+    await this.applyReservedBalanceDeltaWithClient(
+      client,
+      row.owner_type,
+      row.owner_id,
+      -BigInt(readBigIntString(row.reserved_amount_micros)),
+    );
+    await client.query(
+      `UPDATE billing_reservations
+       SET status = $2,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [reservationId, status],
+    );
+    return true;
+  }
+
+  private async applyReservedBalanceDeltaWithClient(
+    client: pg.PoolClient,
+    ownerType: string,
+    ownerId: string,
+    delta: bigint,
+  ): Promise<void> {
+    if (ownerType === "organization") {
+      await client.query(
+        `UPDATE relay_organizations
+         SET reserved_balance_micros = reserved_balance_micros + $1::bigint,
+             updated_at = NOW()
+         WHERE id = $2`,
+        [delta.toString(), ownerId],
+      );
+      return;
+    }
+    if (ownerType !== "user") {
+      throw new Error(`Invalid billing reservation owner type: ${ownerType}`);
+    }
+    await client.query(
+      `UPDATE relay_users
+       SET reserved_balance_micros = reserved_balance_micros + $1::bigint,
+           updated_at = NOW()
+       WHERE id = $2`,
+      [delta.toString(), ownerId],
+    );
+  }
+
+  private async applyOrganizationBalanceDelta(
+    client: pg.PoolClient,
+    input: {
+      organizationId: string;
+      delta: bigint;
+      chargeMicros: string;
+      currency: BillingCurrency;
+    },
+  ): Promise<void> {
+    const rowResult = await client.query<{
+      billing_mode: string;
+      balance_micros: string | number | bigint;
+      credit_limit_micros: string | number | bigint;
+      reserved_balance_micros: string | number | bigint;
+    }>(
+      `SELECT billing_mode, balance_micros, credit_limit_micros, reserved_balance_micros
+       FROM relay_organizations
+       WHERE id = $1
+       FOR UPDATE`,
+      [input.organizationId],
+    );
+    const row = rowResult.rows[0];
+    if (!row) {
+      throw new Error(
+        `Relay organization not found for billing debit: ${input.organizationId}`,
+      );
+    }
+
+    this.assertOwnerCanApplyBalanceDelta({
+      ownerType: "organization",
+      ownerId: input.organizationId,
+      balanceMicros: readBigIntString(row.balance_micros),
+      creditLimitMicros: readBigIntString(row.credit_limit_micros),
+      reservedBalanceMicros: readBigIntString(row.reserved_balance_micros),
+      billingMode: row.billing_mode,
+      delta: input.delta,
+      chargeMicros: input.chargeMicros,
+      currency: input.currency,
+    });
+
+    await client.query(
+      `UPDATE relay_organizations
+       SET balance_micros = balance_micros + $1::bigint,
+           updated_at = NOW()
+       WHERE id = $2`,
+      [input.delta.toString(), input.organizationId],
+    );
+  }
+
+  private assertOwnerCanApplyBalanceDelta(input: {
+    ownerType: "user" | "organization";
+    ownerId: string;
+    balanceMicros: string;
+    creditLimitMicros: string;
+    reservedBalanceMicros: string;
+    billingMode: string;
+    delta: bigint;
+    chargeMicros: string;
+    currency: BillingCurrency;
+  }): void {
+    if (input.delta >= 0n) {
+      return;
+    }
+
+    const availableMicros =
+      input.billingMode === "postpaid"
+        ? BigInt(input.balanceMicros) + BigInt(input.creditLimitMicros) - BigInt(input.reservedBalanceMicros)
+        : BigInt(input.balanceMicros);
+    const requestedMicros = BigInt(input.chargeMicros);
+    if (availableMicros < requestedMicros) {
+      throw new BillingInsufficientBalanceError(
+        input.ownerType,
+        input.ownerId,
+        input.chargeMicros,
+        availableMicros.toString(),
+        input.currency,
       );
     }
   }

@@ -101,6 +101,7 @@ const envSchema = z.object({
   REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   BUFFERED_REQUEST_BODY_MAX_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
   NON_STREAM_RESPONSE_CAPTURE_MAX_BYTES: z.coerce.number().int().positive().default(1024 * 1024),
+  NON_STREAM_USAGE_CAPTURE_MAX_BYTES: z.coerce.number().int().positive().default(2 * 1024 * 1024),
   ADMIN_UI_KEYCLOAK_URL: z.string().url().default('https://auth.yohomobile.dev'),
   ADMIN_UI_KEYCLOAK_REALM: z.string().default('yoho'),
   ADMIN_UI_KEYCLOAK_CLIENT_ID: z.string().default('ccdash'),
@@ -424,6 +425,7 @@ export const appConfig = {
   requestTimeoutMs: env.REQUEST_TIMEOUT_MS,
   bufferedRequestBodyMaxBytes: env.BUFFERED_REQUEST_BODY_MAX_BYTES,
   nonStreamResponseCaptureMaxBytes: env.NON_STREAM_RESPONSE_CAPTURE_MAX_BYTES,
+  nonStreamUsageCaptureMaxBytes: env.NON_STREAM_USAGE_CAPTURE_MAX_BYTES,
   upstreamRequestTimeoutMs:
     env.API_TIMEOUT_MS ?? env.UPSTREAM_REQUEST_TIMEOUT_MS ?? 10 * 60 * 1000,
   upstreamProxyUrl: env.UPSTREAM_PROXY_URL,

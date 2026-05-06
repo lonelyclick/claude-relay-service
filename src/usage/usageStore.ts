@@ -29,6 +29,7 @@ export interface UsageRecord {
   responseHeaders: Record<string, string | string[] | undefined> | null
   responseBodyPreview: string | null
   upstreamRequestHeaders: Record<string, string | string[] | undefined> | null
+  billingReservationId?: string | null
 }
 
 export interface UsageSummary {
@@ -107,6 +108,7 @@ CREATE TABLE IF NOT EXISTS usage_records (
   rate_limit_reset            BIGINT,
   relay_key_source TEXT,
   organization_id TEXT,
+  billing_reservation_id TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 `
@@ -151,6 +153,7 @@ export class UsageStore {
       await client.query('ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS relay_key_source TEXT')
       await client.query('ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS routing_group_id TEXT')
       await client.query('ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS organization_id TEXT')
+      await client.query('ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS billing_reservation_id TEXT')
       for (const sql of CREATE_INDEXES_SQL) {
         await client.query(sql)
       }
@@ -168,11 +171,11 @@ export class UsageStore {
         status_code, duration_ms, target,
         rate_limit_status, rate_limit_5h_utilization,
         rate_limit_7d_utilization, rate_limit_reset, relay_key_source,
-        request_headers, request_body_preview, response_headers, response_body_preview, upstream_request_headers
+        request_headers, request_body_preview, response_headers, response_body_preview, upstream_request_headers, billing_reservation_id
       ) VALUES (
         $1,$2,$3,$4,
         COALESCE($5, (SELECT NULLIF(COALESCE(a.data->>'routingGroupId', a.data->>'group'), '') FROM accounts a WHERE a.id = $2)),
-        $6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
+        $6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27
       )
       RETURNING id`,
       [
@@ -202,6 +205,7 @@ export class UsageStore {
         record.responseHeaders ? JSON.stringify(record.responseHeaders) : null,
         record.responseBodyPreview,
         record.upstreamRequestHeaders ? JSON.stringify(record.upstreamRequestHeaders) : null,
+        record.billingReservationId ?? null,
       ],
     )
     return Number(result.rows[0]?.id ?? 0)

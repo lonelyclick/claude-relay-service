@@ -4,6 +4,7 @@ export type RelayLogEvent = {
   event:
     | 'body_rewrite_metrics'
     | 'billing_sku_preflight_soft_missing'
+    | 'billing_reservation_release_failed'
     | 'claude_compatible_model_routed'
     | 'http_completed'
     | 'http_client_disconnected'
@@ -31,6 +32,7 @@ export type RelayLogEvent = {
   authMode?: 'oauth' | 'api_key' | 'preserve_incoming_auth' | 'none'
   routeAuthStrategy?: 'prefer_incoming_auth' | 'preserve_incoming_auth' | 'none'
   accountId?: string | null
+  reservationId?: string | null
   forceAccountId?: string | null
   hasStickySessionKey?: boolean
   durationMs: number

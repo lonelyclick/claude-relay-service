@@ -6,7 +6,10 @@ import type {
   BillingChannelMultiplier,
   BillingLineItem,
   BillingLedgerEntry,
+  BillingRetryFailuresResult,
   BillingSummary,
+  BillingSyncFailure,
+  BillingSyncFailureSummary,
   BillingSyncResult,
   BillingUser,
   BillingUserDetail,
@@ -139,3 +142,17 @@ export const syncBilling = (reconcileMissing = false) =>
 
 export const rebuildBilling = () =>
   post<{ ok: true; result: BillingSyncResult }>('/admin/billing/rebuild')
+
+export const getBillingSyncFailureSummary = () =>
+  get<BillingSyncFailureSummary>('/admin/billing/sync-failures/summary')
+
+export const listBillingSyncFailures = (status: 'pending' | 'resolved' = 'pending', limit = 100, offset = 0) => {
+  const params = new URLSearchParams()
+  params.set('status', status)
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  return get<{ failures: BillingSyncFailure[]; total: number }>(`/admin/billing/sync-failures?${params.toString()}`)
+}
+
+export const retryBillingSyncFailures = (limit = 100) =>
+  post<{ ok: true; result: BillingRetryFailuresResult }>('/admin/billing/sync-failures/retry', { limit })

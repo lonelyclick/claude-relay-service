@@ -91,6 +91,7 @@ export interface BillingUsageCandidate {
   cacheReadInputTokens: number
   statusCode: number
   createdAt: string
+  billingReservationId?: string | null
 }
 
 export interface BillingLineItemResolution {

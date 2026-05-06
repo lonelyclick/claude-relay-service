@@ -652,6 +652,36 @@ export interface BillingSyncResult {
   billedRequests: number
   missingSkuRequests: number
   invalidUsageRequests: number
+  failedRequests: number
+}
+
+export interface BillingSyncFailure {
+  id: string
+  usageRecordId: number
+  requestId: string | null
+  ownerType: 'user' | 'organization' | null
+  ownerId: string | null
+  target: string | null
+  status: 'pending' | 'resolved'
+  errorMessage: string
+  retryCount: number
+  nextRetryAt: string
+  resolvedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface BillingSyncFailureSummary {
+  pendingCount: number
+  resolvedCount: number
+  lastFailedAt: string | null
+  recentErrors: Array<Pick<BillingSyncFailure, 'usageRecordId' | 'requestId' | 'ownerType' | 'ownerId' | 'target' | 'errorMessage' | 'retryCount' | 'nextRetryAt' | 'updatedAt'>>
+}
+
+export interface BillingRetryFailuresResult {
+  attempted: number
+  resolved: number
+  failed: number
 }
 
 export interface BillingBalanceSummary {

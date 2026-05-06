@@ -83,6 +83,33 @@ test('extractUsageFromJsonBody decodes gzip responses before parsing usage', () 
   })
 })
 
+test('extractUsageFromJsonBody reads usage at the end of large non-stream JSON', () => {
+  const body = Buffer.from(
+    JSON.stringify({
+      id: 'msg_large_non_stream',
+      type: 'message',
+      content: [{ type: 'text', text: 'x'.repeat(128 * 1024) }],
+      model: 'claude-sonnet-4-5',
+      usage: {
+        input_tokens: 321,
+        output_tokens: 123,
+        cache_creation_input_tokens: 11,
+        cache_read_input_tokens: 22,
+      },
+    }),
+  )
+
+  const usage = extractUsageFromJsonBody(body)
+
+  assert.deepEqual(usage, {
+    model: 'claude-sonnet-4-5',
+    inputTokens: 321,
+    outputTokens: 123,
+    cacheCreationInputTokens: 11,
+    cacheReadInputTokens: 22,
+  })
+})
+
 
 test('createUsageTransform extracts OpenAI Responses response.done usage', async () => {
   const { transform, usagePromise } = createUsageTransform()
