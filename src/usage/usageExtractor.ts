@@ -185,10 +185,10 @@ export function createUsageTransform(): {
       } catch {
         // ignore parse errors
       }
-    } else if (currentEvent === 'response.completed') {
+    } else if (currentEvent === 'response.completed' || currentEvent === 'response.done') {
       try {
         const data = JSON.parse(jsonStr)
-        const response = data?.response
+        const response = data?.response ?? data
         const u = response?.usage
         if (u) {
           usage = {
@@ -206,7 +206,11 @@ export function createUsageTransform(): {
                   ? u.completion_tokens
                   : usage?.outputTokens ?? 0,
             cacheCreationInputTokens: u.cache_creation_input_tokens ?? usage?.cacheCreationInputTokens ?? 0,
-            cacheReadInputTokens: u.cache_read_input_tokens ?? usage?.cacheReadInputTokens ?? 0,
+            cacheReadInputTokens:
+              u.cache_read_input_tokens ??
+              u.input_tokens_details?.cached_tokens ??
+              usage?.cacheReadInputTokens ??
+              0,
           }
           model = response?.model ?? model
         }

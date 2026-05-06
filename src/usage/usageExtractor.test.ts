@@ -3,6 +3,7 @@ import test from 'node:test'
 import { gzipSync } from 'node:zlib'
 
 import {
+  createUsageTransform,
   extractUsageFromJsonBody,
   extractRateLimitInfo,
   extractRateLimitInfoFromErrorResponse,
@@ -79,5 +80,28 @@ test('extractUsageFromJsonBody decodes gzip responses before parsing usage', () 
     outputTokens: 1,
     cacheCreationInputTokens: 0,
     cacheReadInputTokens: 0,
+  })
+})
+
+
+test('createUsageTransform extracts OpenAI Responses response.done usage', async () => {
+  const { transform, usagePromise } = createUsageTransform()
+  transform.end(Buffer.from([
+    'event: response.created',
+    'data: {"response":{"model":"gpt-5.4-mini","usage":null}}',
+    '',
+    'event: response.done',
+    'data: {"response":{"model":"gpt-5.4-mini","usage":{"input_tokens":12,"output_tokens":5,"input_tokens_details":{"cached_tokens":3}}}}',
+    '',
+  ].join('\n')))
+
+  const usage = await usagePromise
+
+  assert.deepEqual(usage, {
+    model: 'gpt-5.4-mini',
+    inputTokens: 12,
+    outputTokens: 5,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 3,
   })
 })
