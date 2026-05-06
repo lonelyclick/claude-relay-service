@@ -238,6 +238,25 @@ export interface BillingLedgerExternalRefEntry {
   createdAt: string;
 }
 
+export type BillingTopupOrderStatus = "pending" | "confirmed" | "cancelled";
+
+export interface BillingTopupOrder {
+  id: string;
+  userId: string | null;
+  organizationId: string | null;
+  amountMicros: string;
+  currency: BillingCurrency;
+  creditAmountMicros: string;
+  status: BillingTopupOrderStatus;
+  paymentProvider: string;
+  externalRef: string | null;
+  note: string | null;
+  ledgerEntryId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  confirmedAt: string | null;
+}
+
 export interface BillingSyncResult {
   processedRequests: number;
   billedRequests: number;
@@ -433,6 +452,33 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_balance_ledger_external_ref
   ON billing_balance_ledger (external_ref) WHERE external_ref IS NOT NULL;
 `;
 
+const CREATE_TOPUP_ORDERS_SQL = `
+CREATE TABLE IF NOT EXISTS billing_topup_orders (
+  id TEXT PRIMARY KEY,
+  user_id TEXT,
+  organization_id TEXT,
+  amount_micros BIGINT NOT NULL CHECK (amount_micros > 0),
+  currency TEXT NOT NULL,
+  credit_amount_micros BIGINT NOT NULL CHECK (credit_amount_micros > 0),
+  status TEXT NOT NULL CHECK (status IN ('pending', 'confirmed', 'cancelled')),
+  payment_provider TEXT NOT NULL,
+  external_ref TEXT,
+  note TEXT,
+  ledger_entry_id TEXT REFERENCES billing_balance_ledger(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  confirmed_at TIMESTAMPTZ
+);
+ALTER TABLE billing_topup_orders ADD COLUMN IF NOT EXISTS organization_id TEXT;
+ALTER TABLE billing_topup_orders ADD COLUMN IF NOT EXISTS ledger_entry_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_billing_topup_orders_user_created_at
+  ON billing_topup_orders (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_topup_orders_org_created_at
+  ON billing_topup_orders (organization_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_topup_orders_external_ref
+  ON billing_topup_orders (external_ref) WHERE external_ref IS NOT NULL;
+`;
+
 const USER_BILLING_MIGRATIONS_SQL = `
 ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS billing_mode TEXT NOT NULL DEFAULT 'prepaid';
 ALTER TABLE relay_users ADD COLUMN IF NOT EXISTS billing_currency TEXT NOT NULL DEFAULT '${DEFAULT_BILLING_CURRENCY}';
@@ -511,6 +557,23 @@ type BillingLedgerRow = {
   request_id: string | null;
   created_at: Date;
   updated_at: Date;
+};
+
+type BillingTopupOrderRow = {
+  id: string;
+  user_id: string | null;
+  organization_id: string | null;
+  amount_micros: string | number | bigint;
+  currency: string;
+  credit_amount_micros: string | number | bigint;
+  status: BillingTopupOrderStatus;
+  payment_provider: string;
+  external_ref: string | null;
+  note: string | null;
+  ledger_entry_id: string | null;
+  created_at: Date;
+  updated_at: Date;
+  confirmed_at: Date | null;
 };
 
 type AggregateRow = {
@@ -884,6 +947,25 @@ function toBillingLedgerEntry(row: BillingLedgerRow): BillingLedgerEntry {
   };
 }
 
+function toBillingTopupOrder(row: BillingTopupOrderRow): BillingTopupOrder {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    organizationId: row.organization_id,
+    amountMicros: readBigIntString(row.amount_micros),
+    currency: normalizeStoredBillingCurrency(row.currency),
+    creditAmountMicros: readBigIntString(row.credit_amount_micros),
+    status: row.status,
+    paymentProvider: row.payment_provider,
+    externalRef: row.external_ref,
+    note: row.note,
+    ledgerEntryId: row.ledger_entry_id,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+    confirmedAt: row.confirmed_at ? row.confirmed_at.toISOString() : null,
+  };
+}
+
 export class BillingStore {
   private readonly pool: pg.Pool;
 
@@ -899,6 +981,7 @@ export class BillingStore {
       await client.query(CREATE_CHANNEL_MULTIPLIERS_SQL);
       await client.query(CREATE_LINE_ITEMS_SQL);
       await client.query(CREATE_LEDGER_SQL);
+      await client.query(CREATE_TOPUP_ORDERS_SQL);
       await client.query(CREATE_META_SQL);
       await client.query(
         "ALTER TABLE billing_line_items ADD COLUMN IF NOT EXISTS organization_id TEXT",
@@ -1240,7 +1323,7 @@ export class BillingStore {
       await client.query("COMMIT");
       return sku;
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
+      await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();
@@ -2196,6 +2279,167 @@ export class BillingStore {
       },
       multipleMatches: result.rows.length > 1,
     };
+  }
+
+  async createTopupOrder(input: {
+    userId?: string | null;
+    organizationId?: string | null;
+    amountMicros: unknown;
+    currency: unknown;
+    creditAmountMicros?: unknown;
+    paymentProvider: unknown;
+    externalRef?: unknown;
+    note?: unknown;
+  }): Promise<BillingTopupOrder> {
+    const userId = input.userId ?? null;
+    const organizationId = input.organizationId ?? null;
+    if ((userId === null) === (organizationId === null)) {
+      throw new InputValidationError("Exactly one top-up order owner is required");
+    }
+    const amountMicros = normalizeUnsignedBigIntString(input.amountMicros, {
+      field: "amountMicros",
+      allowZero: false,
+    });
+    const creditAmountMicros = normalizeUnsignedBigIntString(
+      input.creditAmountMicros ?? input.amountMicros,
+      { field: "creditAmountMicros", allowZero: false },
+    );
+    const currency = normalizeBillingCurrency(input.currency, {
+      field: "currency",
+    });
+    const paymentProvider = normalizeRequiredText(input.paymentProvider, {
+      field: "paymentProvider",
+      maxLength: MAX_SCOPE_FIELD_LENGTH,
+    });
+    const externalRef = normalizeOptionalText(input.externalRef ?? null, {
+      field: "externalRef",
+      maxLength: 200,
+    });
+    const note = normalizeOptionalText(input.note ?? null, {
+      field: "note",
+      maxLength: MAX_BILLING_NOTE_LENGTH,
+    });
+
+    const id = crypto.randomUUID();
+    const result = await this.pool.query<BillingTopupOrderRow>(
+      `INSERT INTO billing_topup_orders (
+        id, user_id, organization_id, amount_micros, currency, credit_amount_micros,
+        status, payment_provider, external_ref, note
+      ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9)
+      RETURNING *`,
+      [
+        id,
+        userId,
+        organizationId,
+        amountMicros,
+        currency,
+        creditAmountMicros,
+        paymentProvider,
+        externalRef,
+        note,
+      ],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      throw new Error("Failed to create top-up order");
+    }
+    return toBillingTopupOrder(row);
+  }
+
+  async confirmTopupOrder(orderId: string): Promise<{
+    order: BillingTopupOrder;
+    ledger: BillingLedgerEntry;
+    balance: BillingBalanceSummary;
+  }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const orderResult = await client.query<BillingTopupOrderRow>(
+        `SELECT * FROM billing_topup_orders WHERE id = $1 FOR UPDATE`,
+        [orderId],
+      );
+      const order = orderResult.rows[0];
+      if (!order) {
+        throw new Error("Top-up order not found");
+      }
+      if (order.status !== "pending") {
+        throw new Error(`Top-up order is not pending: ${order.status}`);
+      }
+
+      const ledgerId = crypto.randomUUID();
+      await client.query(
+        `INSERT INTO billing_balance_ledger (
+          id, user_id, organization_id, kind, amount_micros, currency, note, external_ref
+        ) VALUES ($1, $2, $3, 'topup', $4, $5, $6, $7)`,
+        [
+          ledgerId,
+          order.user_id,
+          order.organization_id,
+          readBigIntString(order.credit_amount_micros),
+          normalizeStoredBillingCurrency(order.currency),
+          order.note,
+          `topup_order:${order.id}`,
+        ],
+      );
+      if (order.user_id) {
+        await client.query(
+          `UPDATE relay_users
+           SET balance_micros = balance_micros + $1::bigint,
+               billing_mode = 'prepaid',
+               billing_currency = $2,
+               updated_at = NOW()
+           WHERE id = $3`,
+          [readBigIntString(order.credit_amount_micros), normalizeStoredBillingCurrency(order.currency), order.user_id],
+        );
+      } else if (order.organization_id) {
+        await client.query(
+          `UPDATE relay_organizations
+           SET balance_micros = balance_micros + $1::bigint,
+               billing_mode = 'prepaid',
+               billing_currency = $2,
+               updated_at = NOW()
+           WHERE id = $3`,
+          [readBigIntString(order.credit_amount_micros), normalizeStoredBillingCurrency(order.currency), order.organization_id],
+        );
+      } else {
+        throw new Error("Top-up order has no owner");
+      }
+      await client.query(
+        `UPDATE billing_topup_orders
+         SET status = 'confirmed', ledger_entry_id = $2, confirmed_at = NOW(), updated_at = NOW()
+         WHERE id = $1`,
+        [order.id, ledgerId],
+      );
+      await client.query("COMMIT");
+
+      const [confirmedOrder, ledgerResult, balance] = await Promise.all([
+        this.pool.query<BillingTopupOrderRow>(`SELECT * FROM billing_topup_orders WHERE id = $1`, [order.id]),
+        this.pool.query<BillingLedgerRow>(
+          `SELECT l.*, COALESCE(u.name, o.name) AS user_name
+           FROM billing_balance_ledger l
+           LEFT JOIN relay_users u ON u.id = l.user_id
+           LEFT JOIN relay_organizations o ON o.id = l.organization_id
+           WHERE l.id = $1`,
+          [ledgerId],
+        ),
+        order.user_id
+          ? this.getUserBalanceSummary(order.user_id)
+          : this.getOrganizationBalanceSummary(order.organization_id!),
+      ]);
+      if (!confirmedOrder.rows[0] || !ledgerResult.rows[0] || !balance) {
+        throw new Error("Failed to load confirmed top-up order result");
+      }
+      return {
+        order: toBillingTopupOrder(confirmedOrder.rows[0]),
+        ledger: toBillingLedgerEntry(ledgerResult.rows[0]),
+        balance,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async assertUserCanConsume(userId: string): Promise<void> {
@@ -3154,10 +3398,38 @@ export class BillingStore {
     limit = 50,
     offset = 0,
   ): Promise<BillingUserUsageSnapshot> {
+    return this.getWorkspaceUsageSnapshot({ organizationId, legacyUserId: null }, since, limit, offset);
+  }
+
+  async getPersonalWorkspaceUsageSnapshot(
+    organizationId: string,
+    legacyUserId: string | null,
+    since: Date | null,
+    limit = 50,
+    offset = 0,
+  ): Promise<BillingUserUsageSnapshot> {
+    return this.getWorkspaceUsageSnapshot({ organizationId, legacyUserId }, since, limit, offset);
+  }
+
+  private async getWorkspaceUsageSnapshot(
+    owner: { organizationId: string; legacyUserId: string | null },
+    since: Date | null,
+    limit = 50,
+    offset = 0,
+  ): Promise<BillingUserUsageSnapshot> {
     const sinceDate = normalizeSince(since);
     const cappedLimit = Math.max(1, Math.min(limit, 200));
     const cappedOffset = Math.max(0, offset);
     await this.syncLineItems();
+    const ownerFilter = owner.legacyUserId
+      ? `((organization_id = $1) OR (user_id = $2))`
+      : `organization_id = $1`;
+    const sinceParamIndex = owner.legacyUserId ? 3 : 2;
+    const baseParams = owner.legacyUserId
+      ? [owner.organizationId, owner.legacyUserId, sinceDate]
+      : [owner.organizationId, sinceDate];
+    const limitParamIndex = sinceParamIndex + 1;
+    const offsetParamIndex = sinceParamIndex + 2;
 
     const [totalResult, byDayResult, byModelResult, itemsResult, countResult] =
       await Promise.all([
@@ -3178,9 +3450,9 @@ export class BillingStore {
              MAX(currency) AS currency,
              MAX(usage_created_at) AS last_active_at
            FROM billing_line_items
-           WHERE organization_id = $1
-             AND usage_created_at >= $2`,
-          [organizationId, sinceDate],
+           WHERE ${ownerFilter}
+             AND usage_created_at >= $${sinceParamIndex}`,
+          baseParams,
         ),
         this.pool.query<{
           period_start: Date;
@@ -3202,12 +3474,12 @@ export class BillingStore {
              COALESCE(SUM(cache_read_input_tokens), 0)::bigint AS total_cache_read_tokens,
              COALESCE(SUM(amount_micros), 0)::bigint AS total_amount_micros
            FROM billing_line_items
-           WHERE organization_id = $1
-             AND usage_created_at >= $2
+           WHERE ${ownerFilter}
+             AND usage_created_at >= $${sinceParamIndex}
            GROUP BY date_trunc('day', usage_created_at)
            ORDER BY period_start DESC
            LIMIT 90`,
-          [organizationId, sinceDate],
+          baseParams,
         ),
         this.pool.query<{
           model: string | null;
@@ -3229,11 +3501,11 @@ export class BillingStore {
              COALESCE(SUM(output_tokens), 0)::bigint AS total_output_tokens,
              COALESCE(SUM(amount_micros), 0)::bigint AS total_amount_micros
            FROM billing_line_items
-           WHERE organization_id = $1
-             AND usage_created_at >= $2
+           WHERE ${ownerFilter}
+             AND usage_created_at >= $${sinceParamIndex}
            GROUP BY model
            ORDER BY total_amount_micros DESC, total_input_tokens DESC, model ASC NULLS LAST`,
-          [organizationId, sinceDate],
+          baseParams,
         ),
         this.pool.query<{
           usage_record_id: number;
@@ -3260,18 +3532,18 @@ export class BillingStore {
              input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens,
              amount_micros, usage_created_at
            FROM billing_line_items
-           WHERE organization_id = $1
-             AND usage_created_at >= $2
+           WHERE ${ownerFilter}
+             AND usage_created_at >= $${sinceParamIndex}
            ORDER BY usage_created_at DESC
-           LIMIT $3 OFFSET $4`,
-          [organizationId, sinceDate, cappedLimit, cappedOffset],
+           LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}`,
+          [...baseParams, cappedLimit, cappedOffset],
         ),
         this.pool.query<{ total: string }>(
           `SELECT COUNT(*)::int AS total
            FROM billing_line_items
-           WHERE organization_id = $1
-             AND usage_created_at >= $2`,
-          [organizationId, sinceDate],
+           WHERE ${ownerFilter}
+             AND usage_created_at >= $${sinceParamIndex}`,
+          baseParams,
         ),
       ]);
 
@@ -3280,7 +3552,7 @@ export class BillingStore {
 
     return {
       userId: null,
-      organizationId,
+      organizationId: owner.organizationId,
       currency: total?.currency
         ? normalizeStoredBillingCurrency(total.currency)
         : null,

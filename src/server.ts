@@ -158,6 +158,13 @@ function isOpenAIStyleRelayPath(pathname) {
     pathname.startsWith("/responses/") ||
     pathname === "/v1/chat/completions" ||
     pathname === "/v1/models" ||
+    pathname.startsWith("/v1/models/") ||
+    pathname === "/v1/embeddings" ||
+    pathname === "/v1/images/generations" ||
+    pathname === "/v1/images/edits" ||
+    pathname === "/v1/audio/transcriptions" ||
+    pathname === "/v1/audio/translations" ||
+    pathname === "/v1/audio/speech" ||
     pathname === "/v1/responses" ||
     pathname.startsWith("/v1/responses/")
   );
@@ -2661,6 +2668,48 @@ async function createBillingLedgerControl(services, userId, body) {
     });
   }
 }
+
+async function createTopupOrderControl(services, body) {
+  if (!services.billingStore) {
+    return jsonResult(404, { error: "billing_disabled" });
+  }
+  try {
+    const order = await services.billingStore.createTopupOrder({
+      userId: getNullableStringField(body, "userId"),
+      organizationId: getNullableStringField(body, "organizationId"),
+      amountMicros: body?.amountMicros,
+      currency: body?.currency,
+      creditAmountMicros: body?.creditAmountMicros,
+      paymentProvider: body?.paymentProvider,
+      externalRef: body?.externalRef,
+      note: body?.note,
+    });
+    return jsonResult(200, { ok: true, order });
+  } catch (error) {
+    if (error instanceof InputValidationError) {
+      return jsonResult(400, {
+        error: "invalid_topup_order",
+        message: error.message,
+      });
+    }
+    throw error;
+  }
+}
+
+async function confirmTopupOrderControl(services, orderId) {
+  if (!services.billingStore) {
+    return jsonResult(404, { error: "billing_disabled" });
+  }
+  try {
+    const result = await services.billingStore.confirmTopupOrder(orderId);
+    return jsonResult(200, { ok: true, ...result });
+  } catch (error) {
+    return jsonResult(400, {
+      error: "invalid_topup_order_confirmation",
+      message: sanitizeErrorMessage(error),
+    });
+  }
+}
 async function upsertBaseSkuControl(services, body) {
   if (!services.billingStore) {
     return jsonResult(404, { error: "billing_disabled" });
@@ -3811,6 +3860,23 @@ export function createServer(services): express.Express {
       }),
     );
     app.post(
+      "/internal/control/billing/topup-orders",
+      asyncRoute(async (req, res) => {
+        const result = await createTopupOrderControl(services, req.body);
+        res.status(result.status).json(result.body);
+      }),
+    );
+    app.post(
+      "/internal/control/billing/topup-orders/:orderId/confirm",
+      asyncRoute(async (req, res) => {
+        const result = await confirmTopupOrderControl(
+          services,
+          getRouteParam(req.params.orderId),
+        );
+        res.status(result.status).json(result.body);
+      }),
+    );
+    app.post(
       "/internal/control/billing/base-skus",
       asyncRoute(async (req, res) => {
         const result = await upsertBaseSkuControl(services, req.body);
@@ -4176,7 +4242,7 @@ export function createServer(services): express.Express {
           res.status(404).json({ error: "organization_not_found" });
           return;
         }
-        const { sinceParam, limitParam, offsetParam } = req.query as Record<
+        const { sinceParam, limitParam, offsetParam, legacyExternalUserId } = req.query as Record<
           string,
           string | undefined
         >;
@@ -4185,13 +4251,23 @@ export function createServer(services): express.Express {
           sinceDate && !Number.isNaN(sinceDate.getTime()) ? sinceDate : null;
         const limit = limitParam ? Number.parseInt(limitParam, 10) : 50;
         const offset = offsetParam ? Number.parseInt(offsetParam, 10) : 0;
-        const snapshot =
-          await services.billingStore.getOrganizationUsageSnapshot(
-            relayOrgId,
-            since,
-            Number.isFinite(limit) ? limit : 50,
-            Number.isFinite(offset) ? offset : 0,
-          );
+        const legacyUser = legacyExternalUserId && services.userStore
+          ? await services.userStore.getUserByExternalId(legacyExternalUserId)
+          : null;
+        const snapshot = legacyExternalUserId
+          ? await services.billingStore.getPersonalWorkspaceUsageSnapshot(
+              relayOrgId,
+              legacyUser?.id ?? null,
+              since,
+              Number.isFinite(limit) ? limit : 50,
+              Number.isFinite(offset) ? offset : 0,
+            )
+          : await services.billingStore.getOrganizationUsageSnapshot(
+              relayOrgId,
+              since,
+              Number.isFinite(limit) ? limit : 50,
+              Number.isFinite(offset) ? offset : 0,
+            );
         res.json({ usage: snapshot });
       }),
     );
@@ -6771,6 +6847,26 @@ export function createServer(services): express.Express {
           method: "POST",
           path: `/internal/control/billing/users/${encodeURIComponent(userId)}/ledger`,
           body: req.body,
+        });
+      }),
+    );
+    app.post(
+      "/admin/billing/topup-orders",
+      asyncRoute(async (req, res) => {
+        await respondWithRelayControl(res, relayControlClient, {
+          method: "POST",
+          path: "/internal/control/billing/topup-orders",
+          body: req.body,
+        });
+      }),
+    );
+    app.post(
+      "/admin/billing/topup-orders/:orderId/confirm",
+      asyncRoute(async (req, res) => {
+        const orderId = getRouteParam(req.params.orderId);
+        await respondWithRelayControl(res, relayControlClient, {
+          method: "POST",
+          path: `/internal/control/billing/topup-orders/${encodeURIComponent(orderId)}/confirm`,
         });
       }),
     );
