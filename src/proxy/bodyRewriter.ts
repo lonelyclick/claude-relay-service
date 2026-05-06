@@ -38,6 +38,7 @@ const MESSAGE_BODY_ALLOWED_TOP_LEVEL_KEYS: ReadonlySet<string> = new Set([
   'metadata',
   'model',
   'output_config',
+  'stream',
   'system',
   'thinking',
   'tools',

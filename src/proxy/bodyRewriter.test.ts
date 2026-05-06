@@ -158,6 +158,13 @@ test('bodyRewriter', async (t) => {
     assert.deepEqual(parsed.metadata, { user_id: JSON.stringify({ device_id: 'template-device-id-hex', account_uuid: 'template-account-uuid' }) })
   })
 
+  await t.test('preserves stream flag from newer Claude Code requests', () => {
+    const result = rewriteMessageBody(makeBody({ stream: true }), TEMPLATE)
+    assert.ok(result)
+    const parsed = JSON.parse(result.toString('utf8'))
+    assert.equal(parsed.stream, true)
+  })
+
   await t.test('returns null for invalid JSON', () => {
     const result = rewriteMessageBody(Buffer.from('not json'), TEMPLATE)
     assert.equal(result, null)
