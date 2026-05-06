@@ -30,7 +30,6 @@ import {
   resolveBillingLineItem,
 } from "./engine.js";
 import { officialModelSkuInputs } from "./officialModelSkus.js";
-import { openAIOfficialSkuInputs } from "./openaiOfficialSkus.js";
 
 const DEFAULT_BILLING_CURRENCY = normalizeBillingCurrency(
   appConfig.billingCurrency,
@@ -1158,9 +1157,7 @@ export class BillingStore {
   }
 
   private async seedOfficialModelSkus(client: pg.PoolClient): Promise<void> {
-    for (const sku of openAIOfficialSkuInputs()) {
-      await this.upsertBaseSkuWithClient(client, sku);
-    }
+    // OpenAI 官方价目目录由人工维护，不再 seed。仅 anthropic / google 的官方 SKU 仍由代码注入。
     for (const sku of officialModelSkuInputs()) {
       await this.upsertBaseSkuWithClient(client, sku);
     }
