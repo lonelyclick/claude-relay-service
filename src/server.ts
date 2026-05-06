@@ -1256,6 +1256,15 @@ function getRouteParam(value) {
   return Array.isArray(value) ? (value[0] ?? "") : value;
 }
 
+async function getBillingRouteOrganization(services, organizationId) {
+  if (!services.organizationStore) {
+    return null;
+  }
+  return services.organizationStore.getOrganizationByIdOrExternalIdOrSlug(
+    organizationId,
+  );
+}
+
 const CHANNEL_STATUS_CACHE_TTL_MS = 5 * 60_000;
 let channelStatusCache: { payload: any; expiresAt: number } | null = null;
 function readChannelStatusCache() {
