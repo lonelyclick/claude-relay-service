@@ -53,7 +53,6 @@ import {
 import {
   findOrganizationByRelayOrgId,
   formatOrganizationLabel,
-  getOrganizationRelayId,
   isPersonalOrganization,
   type DisplayOrganization,
 } from './orgDisplay'
@@ -659,7 +658,7 @@ function BillingSection({
   const workspaceTargets = useMemo(() => {
     const targets = organizations
       .map((organization) => {
-        const relayOrgId = getOrganizationRelayId(organization)
+        const relayOrgId = organization.relayOrgId?.trim()
         if (!relayOrgId) return null
         return { relayOrgId, organization }
       })

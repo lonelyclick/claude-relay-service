@@ -859,6 +859,16 @@ function resolveRelayOrgIdFromBetterAuthOrganization(organization) {
   );
 }
 
+async function resolveSyncedRelayOrgIdFromBetterAuthOrganization(services, organization) {
+  if (!organization?.id || !services.organizationStore) {
+    return null;
+  }
+  const relayOrganization = await services.organizationStore.getOrganizationByExternalId(
+    String(organization.id),
+  );
+  return relayOrganization?.id ?? null;
+}
+
 async function findBetterAuthUserForRelayUser(relayUser) {
   if (!relayUser) {
     return null;
@@ -1109,7 +1119,7 @@ async function buildBetterAuthUsersOverview(services) {
       ? getBetterAuthMembersPayload(membersResult.data)
       : [];
     const relayOrgId =
-      resolveRelayOrgIdFromBetterAuthOrganization(organization);
+      await resolveSyncedRelayOrgIdFromBetterAuthOrganization(services, organization);
     for (const member of members) {
       const list = membershipsByUserId.get(member.userId) ?? [];
       list.push({
