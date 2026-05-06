@@ -61,6 +61,25 @@ export const createBillingLedgerEntry = (
     payload,
   )
 
+export const getBillingOrganizationBalance = (organizationId: string) =>
+  get<BillingBalanceSummary>(`/admin/billing/organizations/${enc(organizationId)}/balance`)
+
+export const getBillingOrganizationLedger = (organizationId: string, limit = 100, offset = 0) => {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  return get<{ entries: BillingLedgerEntry[]; total: number }>(`/admin/billing/organizations/${enc(organizationId)}/ledger?${params.toString()}`)
+}
+
+export const createBillingOrganizationLedgerEntry = (
+  organizationId: string,
+  payload: { kind: 'topup' | 'manual_adjustment'; amountMicros: string; note?: string },
+) =>
+  post<{ ok: true; entry: BillingLedgerEntry; balance: BillingBalanceSummary }>(
+    `/admin/billing/organizations/${enc(organizationId)}/ledger`,
+    payload,
+  )
+
 export const listBaseSkus = () =>
   get<{ skus: BillingBaseSku[] }>('/admin/billing/base-skus')
 

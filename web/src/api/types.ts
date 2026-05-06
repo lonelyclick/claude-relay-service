@@ -655,7 +655,8 @@ export interface BillingSyncResult {
 }
 
 export interface BillingBalanceSummary {
-  userId: string
+  userId: string | null
+  organizationId?: string | null
   userName?: string | null
   billingMode: 'postpaid' | 'prepaid'
   billingCurrency: BillingCurrency
@@ -668,7 +669,8 @@ export interface BillingBalanceSummary {
 
 export interface BillingLedgerEntry {
   id: string
-  userId: string
+  userId: string | null
+  organizationId?: string | null
   userName?: string | null
   kind: 'topup' | 'manual_adjustment' | 'usage_debit'
   amountMicros: string

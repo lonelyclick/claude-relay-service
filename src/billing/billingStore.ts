@@ -1846,6 +1846,49 @@ export class BillingStore {
     };
   }
 
+  async listOrganizationLedger(
+    organizationId: string,
+    limit = 100,
+    offset = 0,
+  ): Promise<{ entries: BillingLedgerEntry[]; total: number }> {
+    const cappedLimit = Math.max(1, Math.min(limit, 500));
+    const cappedOffset = Math.max(0, offset);
+    const [{ rows }, countResult] = await Promise.all([
+      this.pool.query<BillingLedgerRow>(
+        `SELECT
+           l.id,
+           l.user_id,
+           l.organization_id,
+           o.name AS user_name,
+           l.kind,
+           l.amount_micros,
+           l.currency,
+           l.note,
+           l.usage_record_id,
+           l.request_id,
+           l.created_at,
+           l.updated_at
+         FROM billing_balance_ledger l
+         LEFT JOIN relay_organizations o ON o.id = l.organization_id
+         WHERE l.organization_id = $1
+         ORDER BY l.created_at DESC, l.id DESC
+         LIMIT $2 OFFSET $3`,
+        [organizationId, cappedLimit, cappedOffset],
+      ),
+      this.pool.query<{ total: string }>(
+        `SELECT COUNT(*)::int AS total
+         FROM billing_balance_ledger
+         WHERE organization_id = $1`,
+        [organizationId],
+      ),
+    ]);
+
+    return {
+      entries: rows.map(toBillingLedgerEntry),
+      total: Number(countResult.rows[0]?.total ?? 0),
+    };
+  }
+
   async createLedgerEntry(input: {
     userId: string;
     kind: Extract<BillingLedgerKind, "topup" | "manual_adjustment">;

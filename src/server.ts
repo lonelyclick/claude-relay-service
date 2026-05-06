@@ -6694,6 +6694,100 @@ export function createServer(services): express.Express {
       }),
     );
     app.get(
+      "/admin/billing/organizations/:organizationId/balance",
+      asyncRoute(async (req, res) => {
+        if (!services.billingStore) {
+          res.status(404).json({ error: "billing_disabled" });
+          return;
+        }
+        const organizationId = getRouteParam(req.params.organizationId);
+        const balance =
+          await services.billingStore.getOrganizationBalanceSummary(
+            organizationId,
+          );
+        if (!balance) {
+          res.status(404).json({ error: "billing_organization_not_found" });
+          return;
+        }
+        res.json(balance);
+      }),
+    );
+    app.get(
+      "/admin/billing/organizations/:organizationId/ledger",
+      asyncRoute(async (req, res) => {
+        if (!services.billingStore) {
+          res.status(404).json({ error: "billing_disabled" });
+          return;
+        }
+        const organizationId = getRouteParam(req.params.organizationId);
+        const limit =
+          typeof req.query.limit === "string" ? Number(req.query.limit) : 100;
+        const offset =
+          typeof req.query.offset === "string" ? Number(req.query.offset) : 0;
+        const balance =
+          await services.billingStore.getOrganizationBalanceSummary(
+            organizationId,
+          );
+        if (!balance) {
+          res.status(404).json({ error: "billing_organization_not_found" });
+          return;
+        }
+        const result = await services.billingStore.listOrganizationLedger(
+          organizationId,
+          limit,
+          offset,
+        );
+        res.json(result);
+      }),
+    );
+    app.post(
+      "/admin/billing/organizations/:organizationId/ledger",
+      asyncRoute(async (req, res) => {
+        if (!services.billingStore) {
+          res.status(404).json({ error: "billing_disabled" });
+          return;
+        }
+        const organizationId = getRouteParam(req.params.organizationId);
+        const kind =
+          req.body?.kind === "topup" ? "topup" : "manual_adjustment";
+        const amountMicros = req.body?.amountMicros;
+        if (
+          amountMicros === undefined ||
+          amountMicros === null ||
+          String(amountMicros).trim() === ""
+        ) {
+          res.status(400).json({
+            error: "missing_amount_micros",
+            message: "amountMicros is required",
+          });
+          return;
+        }
+        const existing =
+          await services.billingStore.getOrganizationBalanceSummary(
+            organizationId,
+          );
+        if (!existing) {
+          res.status(404).json({ error: "billing_organization_not_found" });
+          return;
+        }
+        try {
+          const result =
+            await services.billingStore.createOrganizationLedgerEntry({
+              organizationId,
+              kind,
+              amountMicros,
+              note: req.body?.note,
+            });
+          res.json({ ok: true, entry: result.entry, balance: result.balance });
+        } catch (error) {
+          res.status(400).json({
+            error: "invalid_billing_ledger_entry",
+            message: sanitizeErrorMessage(error),
+          });
+        }
+      }),
+    );
+    app.get(
       "/admin/support/tickets",
       asyncRoute(async (req, res) => {
         if (!services.supportStore) {

@@ -143,7 +143,7 @@ export function BillingUserPage() {
       amountMicros: entry.amountMicros,
       currency: entry.currency,
       status: entry.kind,
-      requestPath: entry.requestId ? `/users/${encodeURIComponent(entry.userId)}/requests/${encodeURIComponent(entry.requestId)}` : undefined,
+      requestPath: entry.requestId && entry.userId ? `/users/${encodeURIComponent(entry.userId)}/requests/${encodeURIComponent(entry.requestId)}` : undefined,
       badgeTone: getUserDetailLedgerKindTone(entry.kind),
     }))
     const usageRows: UnifiedEntry[] = (items.data?.items ?? []).map((item) => ({

@@ -14,8 +14,15 @@ import {
   deleteUser,
   getUserApiKeyPlaintext,
 } from '~/api/users'
-import { getBillingUserBalance, getBillingUserLedger, createBillingLedgerEntry } from '~/api/billing'
-import type { BillingCurrency, RelayApiKey, RelayKeySource, RoutingGroup } from '~/api/types'
+import {
+  getBillingUserBalance,
+  getBillingUserLedger,
+  createBillingLedgerEntry,
+  getBillingOrganizationBalance,
+  getBillingOrganizationLedger,
+  createBillingOrganizationLedgerEntry,
+} from '~/api/billing'
+import type { BillingBalanceSummary, BillingCurrency, BillingLedgerEntry, RelayApiKey, RelayKeySource, RoutingGroup } from '~/api/types'
 import { banBetterAuthUser, deleteBetterAuthUser, listBetterAuthSyncedUsers, unbanBetterAuthUser, updateBetterAuthUser, type BetterAuthManagedUser } from '~/api/betterAuth'
 import { listRoutingGroups } from '~/api/routing'
 import { Badge } from '~/components/Badge'
@@ -160,6 +167,7 @@ export function UserDetailPage() {
       <ApiKeySection userId={u.id} />
       <BillingSection
         user={u}
+        organizations={betterAuthOrganizations}
         balance={balance.data ?? null}
         ledgerEntries={ledger.data?.entries ?? []}
         ledgerTotal={ledger.data?.total ?? 0}
@@ -633,35 +641,24 @@ function KeyGroupSelects({ groups, value, onChange, compact = false }: {
 
 function BillingSection({
   user: u,
+  organizations,
   balance,
   ledgerEntries,
   ledgerTotal,
   requestDetailReturnState,
 }: {
-  user: { id: string; billingMode?: 'postpaid' | 'prepaid'; billingCurrency?: BillingCurrency; customerTier?: string; creditLimitMicros?: string; salesOwner?: string | null; riskStatus?: string }
-  balance: {
-    balanceMicros: string
-    billingMode: 'postpaid' | 'prepaid'
-    billingCurrency: BillingCurrency
-    totalCreditedMicros: string
-    totalDebitedMicros: string
-    currency: BillingCurrency
-    lastLedgerAt?: string | null
-  } | null
-  ledgerEntries: Array<{
-    id: string
-    kind: 'topup' | 'manual_adjustment' | 'usage_debit'
-    amountMicros: string
-    note?: string | null
-    requestId?: string | null
-    usageRecordId?: number | null
-    createdAt: string
-  }>
+  user: { id: string; orgId?: string | null; billingMode?: 'postpaid' | 'prepaid'; billingCurrency?: BillingCurrency; customerTier?: string; creditLimitMicros?: string; salesOwner?: string | null; riskStatus?: string }
+  organizations: DisplayOrganization[]
+  balance: BillingBalanceSummary | null
+  ledgerEntries: BillingLedgerEntry[]
   ledgerTotal: number
   requestDetailReturnState: UserDetailReturnState
 }) {
   const toast = useToast()
   const qc = useQueryClient()
+  const userOrgId = u.orgId?.trim() || null
+  const selectedOrganization = userOrgId ? findOrganizationByRelayOrgId(organizations, userOrgId) : null
+  const [billingTarget, setBillingTarget] = useState(userOrgId ? `org:${userOrgId}` : `user:${u.id}`)
   const [billingMode, setBillingMode] = useState<'postpaid' | 'prepaid'>(u.billingMode ?? 'postpaid')
   const [billingCurrency, setBillingCurrency] = useState<BillingCurrency>(u.billingCurrency ?? balance?.billingCurrency ?? balance?.currency ?? 'CNY')
   const [customerTier, setCustomerTier] = useState(u.customerTier ?? 'standard')
@@ -670,6 +667,42 @@ function BillingSection({
   const [riskStatus, setRiskStatus] = useState(u.riskStatus ?? 'normal')
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
+
+  useEffect(() => {
+    const nextTarget = userOrgId ? `org:${userOrgId}` : `user:${u.id}`
+    setBillingTarget((current) => {
+      if (current.startsWith('org:') && current !== nextTarget) return nextTarget
+      if (current.startsWith('user:') && current !== `user:${u.id}`) return nextTarget
+      return current
+    })
+  }, [u.id, userOrgId])
+
+  const target = parseBillingTarget(billingTarget)
+  const orgBalance = useQuery({
+    queryKey: ['billing-organization-balance', target.id],
+    queryFn: () => getBillingOrganizationBalance(target.id),
+    enabled: target.kind === 'organization',
+    retry: false,
+  })
+  const orgLedger = useQuery({
+    queryKey: ['billing-organization-ledger', target.id],
+    queryFn: () => getBillingOrganizationLedger(target.id, 20, 0),
+    enabled: target.kind === 'organization',
+    retry: false,
+  })
+
+  const activeBalance = target.kind === 'organization' ? orgBalance.data ?? null : balance
+  const activeLedgerEntries = target.kind === 'organization' ? orgLedger.data?.entries ?? [] : ledgerEntries
+  const activeLedgerTotal = target.kind === 'organization' ? orgLedger.data?.total ?? 0 : ledgerTotal
+  const activeCurrency = activeBalance?.currency ?? activeBalance?.billingCurrency ?? billingCurrency
+  const organizationTargetLabel = userOrgId
+    ? selectedOrganization
+      ? formatOrganizationLabel(selectedOrganization)
+      : userOrgId
+    : null
+  const targetLabel = target.kind === 'organization'
+    ? organizationTargetLabel ?? target.id
+    : 'Personal balance'
 
   const updateModeMut = useMutation({
     mutationFn: () => {
@@ -701,20 +734,26 @@ function BillingSection({
       if (!amountMicros) {
         throw new Error('Enter a valid amount with up to 6 decimals')
       }
-      return createBillingLedgerEntry(u.id, {
+      const payload = {
         kind,
         amountMicros,
         note: note.trim() || undefined,
-      })
+      }
+      if (target.kind === 'organization') {
+        return createBillingOrganizationLedgerEntry(target.id, payload)
+      }
+      return createBillingLedgerEntry(u.id, payload)
     },
     onSuccess: () => {
-      toast.success('Ledger entry created')
+      toast.success(`Ledger entry created for ${targetLabel}`)
       setAmount('')
       setNote('')
       qc.invalidateQueries({ queryKey: ['user', u.id] })
       qc.invalidateQueries({ queryKey: ['users'] })
       qc.invalidateQueries({ queryKey: ['billing-balance', u.id] })
       qc.invalidateQueries({ queryKey: ['billing-ledger', u.id] })
+      qc.invalidateQueries({ queryKey: ['billing-organization-balance', target.id] })
+      qc.invalidateQueries({ queryKey: ['billing-organization-ledger', target.id] })
       qc.invalidateQueries({ queryKey: ['billing-summary'] })
       qc.invalidateQueries({ queryKey: ['billing-users'] })
       qc.invalidateQueries({ queryKey: ['billing-user-detail'] })
@@ -724,43 +763,69 @@ function BillingSection({
 
   return (
     <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Billing & Recharge</div>
-        {balance?.lastLedgerAt ? <div className="text-xs text-slate-500">Last change {timeAgo(balance.lastLedgerAt)}</div> : null}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Billing & Recharge</div>
+          <div className="text-xs text-slate-500 mt-1">充值目标必须和前台 active 工作区一致；前台 /profile 显示的是 Organization balance。</div>
+        </div>
+        {activeBalance?.lastLedgerAt ? <div className="text-xs text-slate-500">Last change {timeAgo(activeBalance.lastLedgerAt)}</div> : null}
+      </div>
+
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+        <label className="space-y-1 block">
+          <span className="text-xs text-amber-200">Recharge Target</span>
+          <select
+            value={billingTarget}
+            onChange={(e) => setBillingTarget(e.target.value)}
+            className="w-full bg-bg-input border border-amber-500/30 rounded-lg px-3 py-1.5 text-sm text-slate-200"
+          >
+            <option value={`user:${u.id}`}>Personal balance · {u.id}</option>
+            {userOrgId ? (
+              <option value={`org:${userOrgId}`}>Organization balance · {organizationTargetLabel ?? userOrgId}</option>
+            ) : null}
+          </select>
+        </label>
+        <div className="text-xs text-amber-100/80">
+          当前选择：{target.kind === 'organization' ? '组织余额，会反映到用户前台 /profile active 工作区' : '个人余额，不会反映到组织工作区余额'}。
+        </div>
+        {target.kind === 'organization' && orgBalance.error ? (
+          <div className="text-xs text-red-300">Organization balance failed: {(orgBalance.error as Error).message}</div>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-4 gap-3 max-xl:grid-cols-2 max-md:grid-cols-1">
         <div className="rounded-lg border border-border-default bg-bg-card-raised p-3">
           <div className="text-[11px] uppercase tracking-wider text-slate-500">Current Balance</div>
-          <div className={`mt-2 text-lg font-semibold ${(balance?.balanceMicros ?? '0').startsWith('-') ? 'text-red-400' : 'text-slate-100'}`}>
-            {fmtMoneyMicros(balance?.balanceMicros ?? '0', balance?.currency ?? 'USD')}
+          <div className={`mt-2 text-lg font-semibold ${(activeBalance?.balanceMicros ?? '0').startsWith('-') ? 'text-red-400' : 'text-slate-100'}`}>
+            {fmtMoneyMicros(activeBalance?.balanceMicros ?? '0', activeCurrency)}
           </div>
         </div>
         <div className="rounded-lg border border-border-default bg-bg-card-raised p-3">
           <div className="text-[11px] uppercase tracking-wider text-slate-500">Credited</div>
           <div className="mt-2 text-lg font-semibold text-slate-100">
-            {fmtMoneyMicros(balance?.totalCreditedMicros ?? '0', balance?.currency ?? 'USD')}
+            {fmtMoneyMicros(activeBalance?.totalCreditedMicros ?? '0', activeCurrency)}
           </div>
         </div>
         <div className="rounded-lg border border-border-default bg-bg-card-raised p-3">
           <div className="text-[11px] uppercase tracking-wider text-slate-500">Debited</div>
           <div className="mt-2 text-lg font-semibold text-slate-100">
-            {fmtMoneyMicros(balance?.totalDebitedMicros ?? '0', balance?.currency ?? 'USD')}
+            {fmtMoneyMicros(activeBalance?.totalDebitedMicros ?? '0', activeCurrency)}
           </div>
         </div>
         <div className="rounded-lg border border-border-default bg-bg-card-raised p-3">
           <div className="text-[11px] uppercase tracking-wider text-slate-500">Mode</div>
-          <div className="mt-2">
-            <Badge tone={(balance?.billingMode ?? billingMode) === 'prepaid' ? 'yellow' : 'gray'}>
-              {balance?.billingMode ?? billingMode}
+          <div className="mt-2 flex items-center gap-2">
+            <Badge tone={(activeBalance?.billingMode ?? billingMode) === 'prepaid' ? 'yellow' : 'gray'}>
+              {activeBalance?.billingMode ?? billingMode}
             </Badge>
+            <Badge tone="gray">{activeCurrency}</Badge>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 max-xl:grid-cols-1">
+      <div className="grid grid-cols-[1.1fr_0.9fr] gap-4 max-lg:grid-cols-1">
         <div className="rounded-lg border border-border-default bg-bg-card-raised p-4 space-y-3">
-          <div className="text-sm font-medium text-slate-100">Billing Settings</div>
+          <div className="text-sm font-medium text-slate-100">Billing Controls</div>
           <div className="text-xs text-slate-500">New users stay `standard + prepaid`; only admins should manually switch approved business/enterprise users to `postpaid`. 欠款额度=允许余额透支到负数的上限；正余额充值不需要额度。</div>
           <div className="grid grid-cols-2 gap-2 max-md:grid-cols-1">
             <label className="space-y-1">
@@ -808,9 +873,9 @@ function BillingSection({
 
         <div className="rounded-lg border border-border-default bg-bg-card-raised p-4 space-y-3">
           <div className="text-sm font-medium text-slate-100">Recharge / Adjustment</div>
-          <div className="text-xs text-slate-500">Enter a currency amount, for example `10`, `5.25`, or `-2`.</div>
+          <div className="text-xs text-slate-500">Enter a currency amount for {targetLabel}, for example `10`, `5.25`, or `-2`.</div>
           <label className="space-y-1 block">
-            <span className="text-xs text-slate-400">Amount ({balance?.currency ?? 'USD'})</span>
+            <span className="text-xs text-slate-400">Amount ({activeCurrency})</span>
             <input
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
@@ -833,7 +898,7 @@ function BillingSection({
               disabled={ledgerMut.isPending}
               className="px-4 py-1.5 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-500 disabled:opacity-50"
             >
-              Top Up
+              Top Up {target.kind === 'organization' ? 'Organization' : 'Personal'}
             </button>
             <button
               onClick={() => ledgerMut.mutate('manual_adjustment')}
@@ -848,10 +913,10 @@ function BillingSection({
 
       <div>
         <div className="flex items-center justify-between mb-3">
-          <div className="text-sm font-medium text-slate-100">Recent Ledger</div>
-          <div className="text-xs text-slate-500">{ledgerTotal} entries</div>
+          <div className="text-sm font-medium text-slate-100">Recent Ledger · {targetLabel}</div>
+          <div className="text-xs text-slate-500">{activeLedgerTotal} entries</div>
         </div>
-        {ledgerEntries.length === 0 ? (
+        {activeLedgerEntries.length === 0 ? (
           <div className="text-sm text-slate-500">No ledger entries yet.</div>
         ) : (
           <div className="overflow-x-auto">
@@ -866,14 +931,14 @@ function BillingSection({
                 </tr>
               </thead>
               <tbody>
-                {ledgerEntries.map((entry) => (
+                {activeLedgerEntries.map((entry) => (
                   <tr key={entry.id} className="border-b border-border-default/30 hover:bg-bg-card-raised/30">
                     <td className="py-1.5 px-2 text-slate-500 whitespace-nowrap">{timeAgo(entry.createdAt)}</td>
                     <td className="py-1.5 px-2 text-center">
                       <Badge tone={getUserDetailLedgerKindTone(entry.kind)}>{getUserDetailLedgerKindLabel(entry.kind)}</Badge>
                     </td>
                     <td className={`py-1.5 px-2 text-right ${entry.amountMicros.startsWith('-') ? 'text-red-400' : 'text-green-400'}`}>
-                      {fmtMoneyMicros(entry.amountMicros, balance?.currency ?? 'USD')}
+                      {fmtMoneyMicros(entry.amountMicros, activeCurrency)}
                     </td>
                     <td className="py-1.5 px-2 text-slate-300">{entry.note || '—'}</td>
                     <td className="py-1.5 px-2 text-right">
@@ -888,7 +953,7 @@ function BillingSection({
                           View
                         </Link>
                       ) : (
-                        <span className="text-slate-500">—</span>
+                        <span className="text-slate-600">—</span>
                       )}
                     </td>
                   </tr>
@@ -901,6 +966,23 @@ function BillingSection({
     </section>
   )
 }
+
+type BillingTarget = { kind: 'user'; id: string } | { kind: 'organization'; id: string }
+
+function parseBillingTarget(value: string): BillingTarget {
+  if (value.startsWith('org:')) {
+    const id = value.slice(4).trim()
+    if (!id) throw new Error('Billing organization target is empty')
+    return { kind: 'organization', id }
+  }
+  if (value.startsWith('user:')) {
+    const id = value.slice(5).trim()
+    if (!id) throw new Error('Billing user target is empty')
+    return { kind: 'user', id }
+  }
+  throw new Error(`Unknown billing target: ${value}`)
+}
+
 
 function InventoryFilters({
   devices,
