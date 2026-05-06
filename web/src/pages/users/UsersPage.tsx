@@ -240,7 +240,10 @@ export function UsersPage() {
                         <Badge tone={relay?.billingMode === 'prepaid' ? 'yellow' : 'gray'}>{relay?.billingMode ?? 'postpaid'}</Badge>
                         <div className="mt-1"><Badge tone="blue">{relay?.billingCurrency ?? 'USD'}</Badge></div>
                       </td>
-                      <td className="py-2 px-3 text-right text-slate-300">{fmtMoneyMicros(relay?.balanceMicros ?? '0', relay?.billingCurrency ?? 'USD')}</td>
+                      <td className="py-2 px-3 text-right text-slate-300">
+                        <div>{fmtMoneyMicros(relay?.balanceMicros ?? '0', relay?.billingCurrency ?? 'USD')}</div>
+                        <div className="text-[10px] text-slate-600">legacy user</div>
+                      </td>
                       <td className="py-2 px-3 text-right text-slate-300">{fmtNum(relay?.sessionCount ?? 0)}</td>
                       <td className="py-2 px-3 text-right text-slate-300">{fmtNum(relay?.totalRequests ?? 0)}</td>
                       <td className="py-2 px-3 text-right text-slate-300">{fmtTokens((relay?.totalInputTokens ?? 0) + (relay?.totalOutputTokens ?? 0))}</td>

@@ -17,7 +17,6 @@ import {
 import {
   getBillingUserBalance,
   getBillingUserLedger,
-  createBillingLedgerEntry,
   getBillingOrganizationBalance,
   getBillingOrganizationLedger,
   createBillingOrganizationLedgerEntry,
@@ -54,6 +53,8 @@ import {
 import {
   findOrganizationByRelayOrgId,
   formatOrganizationLabel,
+  getOrganizationRelayId,
+  isPersonalOrganization,
   type DisplayOrganization,
 } from './orgDisplay'
 
@@ -150,6 +151,7 @@ export function UserDetailPage() {
   const u = user.data
   const betterAuthUser = betterAuthUsers.data?.users.find((item) => item.relay?.id === u.id) ?? null
   const betterAuthOrganizations = betterAuthUsers.data?.organizations ?? []
+  const userBillingOrganizations = betterAuthUser?.organizations ?? []
   const currentOrganization = findOrganizationByRelayOrgId(betterAuthOrganizations, u.orgId)
 
   return (
@@ -161,13 +163,13 @@ export function UserDetailPage() {
         &larr; Back to Users
       </button>
 
-      <UserHeader user={u} balance={balance.data ?? null} organization={currentOrganization} />
+      <UserHeader user={u} organization={currentOrganization} />
       <UserManagementSection relayUser={u} betterAuthUser={betterAuthUser} />
       <OrgSection user={u} organizations={betterAuthOrganizations} />
       <ApiKeySection userId={u.id} />
       <BillingSection
         user={u}
-        organizations={betterAuthOrganizations}
+        organizations={userBillingOrganizations}
         balance={balance.data ?? null}
         ledgerEntries={ledger.data?.entries ?? []}
         ledgerTotal={ledger.data?.total ?? 0}
@@ -201,16 +203,13 @@ export function UserDetailPage() {
 
 function UserHeader({
   user: u,
-  balance,
   organization,
 }: {
   user: { id: string; name: string; isActive: boolean; orgId?: string | null; routingMode?: string; accountId?: string; routingGroupId?: string; totalRequests?: number; totalInputTokens?: number; totalOutputTokens?: number; billingMode?: 'postpaid' | 'prepaid'; billingCurrency?: BillingCurrency; customerTier?: string; creditLimitMicros?: string; salesOwner?: string | null; riskStatus?: string; balanceMicros?: string }
-  balance: { balanceMicros: string; billingMode: 'postpaid' | 'prepaid'; billingCurrency?: BillingCurrency; currency?: BillingCurrency } | null
   organization?: DisplayOrganization | null
 }) {
-  const balanceMicros = balance?.balanceMicros ?? u.balanceMicros ?? '0'
-  const billingMode = balance?.billingMode ?? u.billingMode ?? 'postpaid'
-  const billingCurrency = balance?.billingCurrency ?? balance?.currency ?? u.billingCurrency ?? 'USD'
+  const billingMode = u.billingMode ?? 'postpaid'
+  const billingCurrency = u.billingCurrency ?? 'USD'
   const organizationLabel = organization ? formatOrganizationLabel(organization, u.orgId) : (u.orgId ?? '—')
   return (
     <section className="bg-bg-card border border-border-default rounded-xl p-5 shadow-xs">
@@ -228,7 +227,7 @@ function UserHeader({
         <Badge tone={billingMode === 'prepaid' ? 'yellow' : 'gray'}>{billingMode}</Badge>
         <Badge tone={u.customerTier === 'enterprise'  ? 'blue' : u.customerTier === 'business' ? 'blue' : u.customerTier === 'plus' ? 'cyan' : 'gray'}>{u.customerTier ?? 'standard'}</Badge>
         <Badge tone="blue">{billingCurrency}</Badge>
-        <Badge tone={balanceMicros.startsWith('-') ? 'red' : 'green'}>{fmtMoneyMicros(balanceMicros, billingCurrency)} balance</Badge>
+        <Badge tone="gray">workspace balance in Billing section</Badge>
       </div>
     </section>
   )
@@ -657,8 +656,32 @@ function BillingSection({
   const toast = useToast()
   const qc = useQueryClient()
   const userOrgId = u.orgId?.trim() || null
-  const selectedOrganization = userOrgId ? findOrganizationByRelayOrgId(organizations, userOrgId) : null
-  const [billingTarget, setBillingTarget] = useState(`user:${u.id}`)
+  const workspaceTargets = useMemo(() => {
+    const targets = organizations
+      .map((organization) => {
+        const relayOrgId = getOrganizationRelayId(organization)
+        if (!relayOrgId) return null
+        return { relayOrgId, organization }
+      })
+      .filter((target): target is { relayOrgId: string; organization: DisplayOrganization } => target !== null)
+    const seen = new Set<string>()
+    return targets.filter((target) => {
+      const key = target.relayOrgId.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }, [organizations])
+  const defaultWorkspaceTarget = (() => {
+    const currentWorkspace = userOrgId
+      ? workspaceTargets.find((target) => target.relayOrgId.toLowerCase() === userOrgId.toLowerCase())
+      : null
+    if (currentWorkspace) return `org:${currentWorkspace.relayOrgId}`
+    const personalWorkspace = workspaceTargets.find((target) => isPersonalOrganization(target.organization) || target.organization.slug?.startsWith('personal-'))
+    if (personalWorkspace) return `org:${personalWorkspace.relayOrgId}`
+    return workspaceTargets[0] ? `org:${workspaceTargets[0].relayOrgId}` : `user:${u.id}`
+  })()
+  const [billingTarget, setBillingTarget] = useState(defaultWorkspaceTarget)
   const [billingMode, setBillingMode] = useState<'postpaid' | 'prepaid'>(u.billingMode ?? 'postpaid')
   const [billingCurrency, setBillingCurrency] = useState<BillingCurrency>(u.billingCurrency ?? balance?.billingCurrency ?? balance?.currency ?? 'CNY')
   const [customerTier, setCustomerTier] = useState(u.customerTier ?? 'standard')
@@ -670,12 +693,12 @@ function BillingSection({
 
   useEffect(() => {
     setBillingTarget((current) => {
-      if (current.startsWith('org:')) {
-        return userOrgId && current === `org:${userOrgId}` ? current : `user:${u.id}`
+      if (current && workspaceTargets.some((target) => current === `org:${target.relayOrgId}`)) {
+        return current
       }
-      return current === `user:${u.id}` ? current : `user:${u.id}`
+      return defaultWorkspaceTarget
     })
-  }, [u.id, userOrgId])
+  }, [defaultWorkspaceTarget, workspaceTargets])
 
   const target = parseBillingTarget(billingTarget)
   const orgBalance = useQuery({
@@ -695,14 +718,15 @@ function BillingSection({
   const activeLedgerEntries = target.kind === 'organization' ? orgLedger.data?.entries ?? [] : ledgerEntries
   const activeLedgerTotal = target.kind === 'organization' ? orgLedger.data?.total ?? 0 : ledgerTotal
   const activeCurrency = activeBalance?.currency ?? activeBalance?.billingCurrency ?? billingCurrency
-  const organizationTargetLabel = userOrgId
-    ? selectedOrganization
-      ? formatOrganizationLabel(selectedOrganization)
-      : userOrgId
+  const targetOrganization = target.kind === 'organization' ? findOrganizationByRelayOrgId(organizations, target.id) : null
+  const organizationTargetLabel = target.kind === 'organization'
+    ? targetOrganization
+      ? formatOrganizationLabel(targetOrganization, target.id)
+      : target.id
     : null
   const targetLabel = target.kind === 'organization'
     ? organizationTargetLabel ?? target.id
-    : 'Personal balance'
+    : 'Legacy relay user balance'
 
   const updateModeMut = useMutation({
     mutationFn: () => {
@@ -739,10 +763,10 @@ function BillingSection({
         amountMicros,
         note: note.trim() || undefined,
       }
-      if (target.kind === 'organization') {
-        return createBillingOrganizationLedgerEntry(target.id, payload)
+      if (target.kind !== 'organization') {
+        throw new Error('Select a linked workspace before creating a ledger entry')
       }
-      return createBillingLedgerEntry(u.id, payload)
+      return createBillingOrganizationLedgerEntry(target.id, payload)
     },
     onSuccess: () => {
       toast.success(`Ledger entry created for ${targetLabel}`)
@@ -766,28 +790,37 @@ function BillingSection({
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <div className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Billing & Recharge</div>
-          <div className="text-xs text-slate-500 mt-1">计费按 API key 归属扣费：个人 key 扣 Personal，组织 key 扣 Organization；前台 /profile 显示 active 工作区余额。</div>
+          <div className="text-xs text-slate-500 mt-1">后台充值与前台 /profile 统一使用工作区余额；个人工作区也是 Better Auth organization 对应的 relay organization。</div>
         </div>
         {activeBalance?.lastLedgerAt ? <div className="text-xs text-slate-500">Last change {timeAgo(activeBalance.lastLedgerAt)}</div> : null}
       </div>
 
+      <div className="rounded-lg border border-slate-700/70 bg-bg-card-raised p-3 text-xs text-slate-400">
+        Legacy relay user balance（只读）：{fmtMoneyMicros(balance?.balanceMicros ?? '0', balance?.billingCurrency ?? balance?.currency ?? billingCurrency)}。前台个人/组织工作区不读取这套余额；请在下方选择工作区充值。
+      </div>
+
       <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
         <label className="space-y-1 block">
-          <span className="text-xs text-amber-200">Recharge Target</span>
+          <span className="text-xs text-amber-200">Recharge Workspace</span>
           <select
             value={billingTarget}
             onChange={(e) => setBillingTarget(e.target.value)}
             className="w-full bg-bg-input border border-amber-500/30 rounded-lg px-3 py-1.5 text-sm text-slate-200"
           >
-            <option value={`user:${u.id}`}>Personal balance · {u.id}</option>
-            {userOrgId ? (
-              <option value={`org:${userOrgId}`}>Organization balance · {organizationTargetLabel ?? userOrgId}</option>
-            ) : null}
+            {workspaceTargets.length === 0 ? <option value={`user:${u.id}`}>No linked workspace</option> : null}
+            {workspaceTargets.map(({ relayOrgId, organization }) => (
+              <option key={relayOrgId} value={`org:${relayOrgId}`}>
+                Workspace balance · {formatOrganizationLabel(organization, relayOrgId)}
+              </option>
+            ))}
           </select>
         </label>
         <div className="text-xs text-amber-100/80">
-          当前选择：{target.kind === 'organization' ? '组织余额：给组织 API key / 前台 active 工作区使用' : '个人余额：给个人 API key 使用，不影响组织余额'}。
+          当前选择：工作区余额。用户在前台切到同一个个人/组织工作区时，会看到同一笔余额。
         </div>
+        {workspaceTargets.length === 0 ? (
+          <div className="text-xs text-red-300">This Better Auth user has no linked relay workspace; create/sync the workspace before recharge.</div>
+        ) : null}
         {target.kind === 'organization' && orgBalance.error ? (
           <div className="text-xs text-red-300">Organization balance failed: {(orgBalance.error as Error).message}</div>
         ) : null}
@@ -895,14 +928,14 @@ function BillingSection({
           <div className="flex gap-2 flex-wrap">
             <button
               onClick={() => ledgerMut.mutate('topup')}
-              disabled={ledgerMut.isPending}
+              disabled={ledgerMut.isPending || target.kind !== 'organization'}
               className="px-4 py-1.5 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-500 disabled:opacity-50"
             >
-              Top Up {target.kind === 'organization' ? 'Organization' : 'Personal'}
+              Top Up Workspace
             </button>
             <button
               onClick={() => ledgerMut.mutate('manual_adjustment')}
-              disabled={ledgerMut.isPending}
+              disabled={ledgerMut.isPending || target.kind !== 'organization'}
               className="px-4 py-1.5 rounded-lg text-sm font-medium bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-50"
             >
               Apply Adjustment

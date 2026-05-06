@@ -1117,6 +1117,7 @@ async function buildBetterAuthUsersOverview(services) {
         name: organization.name,
         slug: organization.slug,
         relayOrgId,
+        metadata: organization.metadata ?? null,
         role: member.role,
         memberId: member.id,
       });

@@ -3,6 +3,7 @@ export type DisplayOrganization = {
   name?: string | null
   slug?: string | null
   relayOrgId?: string | null
+  metadata?: unknown
 }
 
 const clean = (value?: string | null) => value?.trim() || ''
@@ -42,4 +43,9 @@ export function formatOrganizationLabel(org?: DisplayOrganization | null, fallba
   const primary = getOrganizationPrimaryLabel(org, fallback)
   const secondary = getOrganizationSecondaryLabel(org)
   return secondary ? `${primary} (${secondary})` : primary
+}
+
+export function isPersonalOrganization(org?: DisplayOrganization | null) {
+  if (!org?.metadata || typeof org.metadata !== 'object' || Array.isArray(org.metadata)) return false
+  return (org.metadata as { kind?: unknown }).kind === 'personal'
 }

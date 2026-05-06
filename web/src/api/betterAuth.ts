@@ -49,6 +49,7 @@ export type BetterAuthManagedUser = BetterAuthUser & {
     name: string
     slug: string
     relayOrgId?: string | null
+    metadata?: unknown
     role: string
     memberId: string
   }>
