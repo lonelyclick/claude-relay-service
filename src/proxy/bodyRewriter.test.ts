@@ -175,13 +175,15 @@ test('bodyRewriter', async (t) => {
     assert.equal(result, null)
   })
 
-  await t.test('returns null for missing tools array', () => {
+  await t.test('fills missing tools from template', () => {
     const body = Buffer.from(JSON.stringify({
       model: 'test',
       system: [{ type: 'text', text: 'cc_version=2.1.90.232' }],
     }))
     const result = rewriteMessageBody(body, TEMPLATE)
-    assert.equal(result, null)
+    assert.ok(result)
+    const parsed = JSON.parse(result.toString('utf8'))
+    assert.deepEqual(parsed.tools.map((tool: { name: string }) => tool.name), ['Bash', 'Monitor'])
   })
 
   await t.test('handles single-block system by appending template blocks', () => {
@@ -250,6 +252,16 @@ test('bodyRewriter', async (t) => {
 
   await t.test('replaces non-object metadata.user_id JSON instead of forwarding it', () => {
     const body = makeBody({ metadata: { user_id: JSON.stringify(['not-object']) } })
+    const result = rewriteMessageBody(body, TEMPLATE)
+    assert.ok(result)
+    const parsed = JSON.parse(result.toString('utf8'))
+    const userId = JSON.parse(parsed.metadata.user_id)
+    assert.equal(userId.device_id, 'template-device-id-hex')
+    assert.equal(userId.account_uuid, 'template-account-uuid')
+  })
+
+  await t.test('replaces non-string metadata.user_id instead of rejecting normal requests', () => {
+    const body = makeBody({ metadata: { user_id: null } })
     const result = rewriteMessageBody(body, TEMPLATE)
     assert.ok(result)
     const parsed = JSON.parse(result.toString('utf8'))

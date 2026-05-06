@@ -21,7 +21,7 @@ import WebSocket, { WebSocketServer, type RawData } from 'ws'
 
 import { appConfig } from '../config.js'
 import type { BodyTemplate } from './bodyRewriter.js'
-import { rewriteCountTokensBody, rewriteMessageBody, rewriteEventLoggingBody } from './bodyRewriter.js'
+import { rewriteCountTokensBody, rewriteMessageBodyDetailed, rewriteEventLoggingBody } from './bodyRewriter.js'
 import {
   CliValidationError,
   tryParseMessageBody,
@@ -7148,15 +7148,15 @@ export class RelayService {
 
     // /v1/messages: full structured rewrite.
     if (path === '/v1/messages') {
-      const rewritten = rewriteMessageBody(body, template)
-      if (!rewritten) {
+      const rewritten = rewriteMessageBodyDetailed(body, template)
+      if (!rewritten.ok) {
         throw new CliValidationError({
           layer: 'L3',
           field: 'body_rewrite',
-          reason: 'rewriteMessageBody returned null',
+          reason: rewritten.reason,
         })
       }
-      return rewritten
+      return rewritten.body
     }
 
     // /v1/messages/count_tokens has a smaller request shape and must not be

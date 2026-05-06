@@ -1,6 +1,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+export type BodyRewriteResult =
+  | { ok: true; body: Buffer }
+  | { ok: false; reason: string }
+
 export type BodyTemplate = {
   ccVersion: string
   ccEntrypoint?: string
@@ -151,31 +155,42 @@ export function rewriteMessageBody(
   body: Buffer,
   template: BodyTemplate,
 ): Buffer | null {
+  const result = rewriteMessageBodyDetailed(body, template)
+  return result.ok ? result.body : null
+}
+
+export function rewriteMessageBodyDetailed(
+  body: Buffer,
+  template: BodyTemplate,
+): BodyRewriteResult {
   let parsed: Record<string, unknown>
   try {
     parsed = JSON.parse(body.toString('utf8'))
   } catch {
-    return null
+    return { ok: false, reason: 'invalid_json' }
   }
 
-  if (!hasOnlyAllowedMessageBodyKeys(parsed)) {
-    return null
+  const unknownKeys = Object.keys(parsed).filter((key) => !MESSAGE_BODY_ALLOWED_TOP_LEVEL_KEYS.has(key))
+  if (unknownKeys.length > 0) {
+    return { ok: false, reason: `unknown_top_level_keys:${unknownKeys.join(',')}` }
   }
 
   const system = parsed.system
   if (!Array.isArray(system) || system.length < 1) {
-    return null
+    return { ok: false, reason: 'system_missing_or_empty' }
   }
 
-  const tools = parsed.tools
-  if (!Array.isArray(tools)) {
-    return null
+  if (parsed.tools !== undefined && !Array.isArray(parsed.tools)) {
+    return { ok: false, reason: 'tools_not_array' }
   }
 
   // 1. Rewrite cc_version in system[0]
   const block0 = system[0] as SystemBlock
-  if (typeof block0?.text !== 'string' || !CC_VERSION_REGEX.test(block0.text)) {
-    return null
+  if (typeof block0?.text !== 'string') {
+    return { ok: false, reason: 'system0_text_missing' }
+  }
+  if (!CC_VERSION_REGEX.test(block0.text)) {
+    return { ok: false, reason: 'system0_cc_version_missing' }
   }
 
   let block0Text = block0.text.replace(CC_VERSION_REGEX, `cc_version=${template.ccVersion}`)
@@ -215,7 +230,7 @@ export function rewriteMessageBody(
   // 4. Normalize metadata.user_id so device_id and account_uuid
   //    match the relay account, not the individual client
   if (!rewriteMetadataUserId(parsed, template)) {
-    return null
+    return { ok: false, reason: 'metadata_user_id_not_string' }
   }
 
   // 5. Normalize cache_control shape across system[1..] and messages[].content[]
@@ -225,7 +240,7 @@ export function rewriteMessageBody(
     normalizeMessagesCacheControl(parsed.messages, template.cacheControl)
   }
 
-  return Buffer.from(JSON.stringify(parsed), 'utf8')
+  return { ok: true, body: Buffer.from(JSON.stringify(parsed), 'utf8') }
 }
 
 function normalizeCacheControl(
@@ -304,20 +319,21 @@ function rewriteMetadataUserId(
   if (raw === undefined) {
     return true
   }
-  if (typeof raw !== 'string') {
-    return false
-  }
 
   let record: Record<string, unknown>
-  try {
-    const userId = JSON.parse(raw) as unknown
-    if (!userId || typeof userId !== 'object' || Array.isArray(userId)) {
-      record = {}
-    } else {
-      record = userId as Record<string, unknown>
-    }
-  } catch {
+  if (typeof raw !== 'string') {
     record = {}
+  } else {
+    try {
+      const userId = JSON.parse(raw) as unknown
+      if (!userId || typeof userId !== 'object' || Array.isArray(userId)) {
+        record = {}
+      } else {
+        record = userId as Record<string, unknown>
+      }
+    } catch {
+      record = {}
+    }
   }
 
   record.device_id = template.deviceId
@@ -325,7 +341,6 @@ function rewriteMetadataUserId(
   meta.user_id = JSON.stringify(record)
   return true
 }
-
 function hasOnlyAllowedMessageBodyKeys(parsed: Record<string, unknown>): boolean {
   return Object.keys(parsed).every((key) => MESSAGE_BODY_ALLOWED_TOP_LEVEL_KEYS.has(key))
 }
