@@ -78,6 +78,10 @@ function skuKey(input: { protocol: BillingModelProtocol; modelVendor: BillingMod
   return `${input.protocol}|${input.modelVendor}|${input.model}`
 }
 
+function baseSkuKey(input: { protocol: BillingModelProtocol; modelVendor: BillingModelVendor; model: string; currency: BillingCurrency }): string {
+  return `${skuKey(input)}|${input.currency}`
+}
+
 function microsToHuman(micros: string): string {
   try {
     const v = BigInt(micros || '0')
@@ -462,7 +466,7 @@ function BaseSkuRow({ sku, onSaved }: { sku: BillingBaseSku; onSaved: () => void
       <td className="py-2 px-3 text-right text-[11px] text-slate-500">{timeAgo(sku.updatedAt)}</td>
       <td className="py-2 px-3 text-right">
         <button
-          onClick={() => { if (confirm(`删除该基准 SKU? ${sku.protocol}/${sku.modelVendor}/${sku.model}/${sku.currency}`)) del.mutate() }}
+          onClick={() => { if (confirm(`删除该基准 SKU? ${baseSkuKey(sku)}`)) del.mutate() }}
           disabled={del.isPending}
           className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
         >删除</button>
@@ -802,7 +806,7 @@ function AddMultiplierDialog({
   onAdded: () => void
 }) {
   const toast = useToast()
-  const enabledKeys = new Set(existing.map(skuKey))
+  const enabledKeys = useMemo(() => new Set(existing.map(skuKey)), [existing])
   const candidates = useMemo(() => {
     const seen = new Set<string>()
     const out: Array<{ provider: BillingModelProvider; modelVendor: BillingModelVendor; protocol: BillingModelProtocol; model: string; displayName: string }> = []
@@ -829,7 +833,7 @@ function AddMultiplierDialog({
       let added = 0
       for (const key of selected) {
         const candidate = candidates.find((c) => skuKey(c) === key)
-        if (!candidate) continue
+        if (!candidate) throw new Error(`Selected model is no longer available: ${key}`)
         await upsertChannelMultiplier({
           routingGroupId: group.id,
           provider: candidate.provider,

@@ -29,6 +29,7 @@ import {
   isBillableUsageTarget,
   resolveBillingLineItem,
 } from "./engine.js";
+import { officialModelSkuInputs } from "./officialModelSkus.js";
 import { openAIOfficialSkuInputs } from "./openaiOfficialSkus.js";
 
 const DEFAULT_BILLING_CURRENCY = normalizeBillingCurrency(
@@ -1066,46 +1067,47 @@ export class BillingStore {
          VALUES ('last_usage_record_id', '0')
          ON CONFLICT (key) DO NOTHING`,
       );
-      await this.seedOpenAIOfficialSkus(client);
-      await this.seedOpenAIOfficialChannelMultipliers(client);
+      await this.seedOfficialModelSkus(client);
+      await this.seedOfficialModelChannelMultipliers(client);
     } finally {
       client.release();
     }
   }
 
-  private async seedOpenAIOfficialSkus(client: pg.PoolClient): Promise<void> {
+  private async seedOfficialModelSkus(client: pg.PoolClient): Promise<void> {
     for (const sku of openAIOfficialSkuInputs()) {
+      await this.upsertBaseSkuWithClient(client, sku);
+    }
+    for (const sku of officialModelSkuInputs()) {
       await this.upsertBaseSkuWithClient(client, sku);
     }
   }
 
-  private async seedOpenAIOfficialChannelMultipliers(
+  private async seedOfficialModelChannelMultipliers(
     client: pg.PoolClient,
   ): Promise<void> {
     await client.query(
-      `WITH openai_groups AS (
+      `WITH existing_group_protocols AS (
          SELECT DISTINCT routing_group_id, provider, model_vendor, protocol
          FROM billing_channel_multipliers
-         WHERE provider = $2
-           AND model_vendor = $3
        )
        INSERT INTO billing_channel_multipliers (
          id, routing_group_id, provider, model_vendor, protocol, model,
          multiplier_micros, is_active, show_in_frontend, allow_calls
        )
        SELECT
-         concat_ws($4, g.routing_group_id, g.protocol, b.model_vendor, b.model),
+         concat_ws($2, g.routing_group_id, g.protocol, b.model_vendor, b.model),
          g.routing_group_id, g.provider, g.model_vendor, g.protocol, b.model,
          $1, true, true, true
-       FROM openai_groups g
+       FROM existing_group_protocols g
        JOIN billing_base_skus b
          ON b.provider = g.provider
         AND b.model_vendor = g.model_vendor
         AND b.protocol = g.protocol
-        AND b.currency = $5
+        AND b.currency = $3
         AND b.is_active = true
        ON CONFLICT (routing_group_id, protocol, model_vendor, model) DO NOTHING`,
-      [ONE_MILLION_MICROS, "openai", "openai", ":", "USD"],
+      [ONE_MILLION_MICROS, ":", "USD"],
     );
   }
 

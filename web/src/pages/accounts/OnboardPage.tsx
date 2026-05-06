@@ -28,6 +28,25 @@ const claudeAuthMethods: { id: ClaudeAuthMethod; label: string }[] = [
   { id: 'session-key', label: 'Session Key' },
   { id: 'import-tokens', label: 'Import Tokens' },
 ]
+const codexModelOptions = [
+  'gpt-5.5',
+  'gpt-5.4',
+  'gpt-5.4-mini',
+  'gpt-5.4-nano',
+  'gpt-5.3-codex',
+  'gpt-5.2-codex',
+  'gpt-5.1-codex-max',
+  'gpt-5.1-codex',
+  'gpt-5-codex',
+  'gpt-5.1-codex-mini',
+]
+
+const geminiModelOptions = [
+  'gemini-3.1-pro',
+  'gemini-3-flash',
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
+]
 
 export function OnboardPage() {
   const [provider, setProvider] = useState<Provider>('claude-official')
@@ -377,7 +396,12 @@ function CodexForm() {
               <Input value={code} onChange={(e) => setCode(e.target.value)} required />
             </Field>
             <Field label="Model Name">
-              <Input value={modelName} onChange={(e) => setModelName(e.target.value)} />
+              <Input value={modelName} onChange={(e) => setModelName(e.target.value)} list="codex-models" />
+              <datalist id="codex-models">
+                {codexModelOptions.map((model) => (
+                  <option key={model} value={model} />
+                ))}
+              </datalist>
             </Field>
             <Field label="API Base URL">
               <Input value={apiBaseUrl} onChange={(e) => setApiBaseUrl(e.target.value)} />
@@ -768,10 +792,9 @@ function GeminiForm() {
           <Field label="Model Name">
             <Input value={modelName} onChange={(e) => setModelName(e.target.value)} list="gemini-models" />
             <datalist id="gemini-models">
-              <option value="gemini-3.1-pro" />
-              <option value="gemini-3-flash" />
-              <option value="gemini-2.5-pro" />
-              <option value="gemini-2.5-flash" />
+              {geminiModelOptions.map((model) => (
+                <option key={model} value={model} />
+              ))}
             </datalist>
           </Field>
           <Field label="Proxy">
