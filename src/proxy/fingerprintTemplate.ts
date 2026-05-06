@@ -64,9 +64,9 @@ export function resolveVmFingerprintTemplateValue(
   _name: string,
   templateValue: string,
   incomingValues: readonly string[],
-): string {
+): string | null {
   if (templateValue === PASSTHROUGH_MARKER) {
-    return incomingValues[0] ?? ''
+    return incomingValues[0]?.trim() || null
   }
   return templateValue
 }
@@ -87,4 +87,3 @@ function normalizeTemplateValue(rawValue: string | readonly string[]): string | 
 
   return values.join(',')
 }
-

@@ -21,7 +21,8 @@
     "check:server": "pnpm --dir apps/server check",
     "check:web": "pnpm --dir apps/admin-web check",
     "check:root": "tsc --noEmit -p tsconfig.json",
-    "check": "pnpm run check:root && pnpm run check:relay && pnpm run check:server && pnpm run check:web"
+    "check": "pnpm run check:root && pnpm run check:relay && pnpm run check:server && pnpm run check:web",
+    "test": "TOKENQIAO_TEST_CONTEXT=1 node --import tsx --test src/**/*.test.ts"
   },
   "devDependencies": {
     "@types/express": "^5.0.1",

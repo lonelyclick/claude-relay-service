@@ -85,6 +85,10 @@ test('cliValidator', async (t) => {
     assert.equal(failure?.field, 'x-stainless-os')
   })
 
+  await t.test('L2: accepts MacOS x-stainless-os from current Claude Code', () => {
+    assert.equal(validateCliRequestHeaders(makeHeaders({ 'x-stainless-os': 'MacOS' })), null)
+  })
+
   await t.test('L2: rejects unknown x-stainless-arch', () => {
     const failure = validateCliRequestHeaders(makeHeaders({ 'x-stainless-arch': 'mips' }))
     assert.equal(failure?.field, 'x-stainless-arch')
@@ -324,6 +328,18 @@ test('cliValidator', async (t) => {
       [2, 1, 112],
     )
     assert.equal(failure?.field, 'platform')
+  })
+
+  await t.test('L4: treats Darwin UA and MacOS x-stainless-os as same platform', () => {
+    const failure = validateCliRequestConsistency(
+      makeHeaders({
+        'user-agent': 'claude-cli/2.1.112 (external, sdk-cli) Darwin',
+        'x-stainless-os': 'MacOS',
+      }),
+      makeBody(),
+      [2, 1, 112],
+    )
+    assert.equal(failure, null)
   })
 
   await t.test('L4: skips platform check when UA has no platform token', () => {

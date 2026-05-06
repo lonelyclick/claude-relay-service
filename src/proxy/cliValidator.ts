@@ -6,12 +6,12 @@ import type { IncomingHttpHeaders } from 'node:http'
 //   L4: cross-field consistency (UA version <-> body cc_version,
 //       UA platform <-> x-stainless-os)
 //
-// Aligned with the 2.1.112 client fingerprint captured in
+// Aligned with the 2.1.131 client fingerprint captured in
 // vm-fingerprint.template.json + data/v2.1.112-body-template.json.
 // When that fingerprint is rotated to a newer CLI, revisit the
 // constants in this file.
 
-const X_STAINLESS_OS_ALLOWED = new Set(['Linux', 'Darwin', 'Windows'])
+const X_STAINLESS_OS_ALLOWED = new Set(['Linux', 'Darwin', 'MacOS', 'Windows'])
 const X_STAINLESS_ARCH_ALLOWED = new Set(['x64', 'arm64'])
 const RUNTIME_VERSION_REGEX = /^v\d+\.\d+\.\d+/
 const HEX_64_REGEX = /^[0-9a-f]{64}$/i
@@ -19,6 +19,14 @@ const NUMERIC_REGEX = /^\d+$/
 const CC_VERSION_BODY_REGEX = /cc_version=(\d+)\.(\d+)\.(\d+)\.\w+/
 const CC_ENTRYPOINT_BODY_REGEX = /cc_entrypoint=\S+/
 const UA_PLATFORM_REGEX = /\b(Darwin|Linux|Windows)\b/i
+
+function normalizePlatformName(value: string): string {
+  const lower = value.toLowerCase()
+  if (lower === 'darwin' || lower === 'macos') {
+    return 'macos'
+  }
+  return lower
+}
 
 export type CliValidationFailure = {
   layer: 'L2' | 'L3' | 'L4'
@@ -244,8 +252,9 @@ export function validateCliRequestConsistency(
   }
   const uaPlatformMatch = ua.match(UA_PLATFORM_REGEX)
   if (uaPlatformMatch) {
-    const uaPlatform = uaPlatformMatch[1].toLowerCase()
-    const xOs = (getHeaderValue(headers, 'x-stainless-os') ?? '').toLowerCase()
+    const uaPlatform = normalizePlatformName(uaPlatformMatch[1])
+    const xOsHeader = getHeaderValue(headers, 'x-stainless-os') ?? ''
+    const xOs = normalizePlatformName(xOsHeader)
     if (xOs && uaPlatform !== xOs) {
       return failL4('platform', `ua=${uaPlatform} x-stainless-os=${xOs}`)
     }

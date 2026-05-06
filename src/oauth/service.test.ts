@@ -810,7 +810,13 @@ test('OAuthService.getSchedulerStats exposes routing guard limits and hot users/
   assert.equal(stats.routingGuard.users[0]?.userId, 'user-1')
   assert.equal(stats.routingGuard.users[0]?.requestUtilizationPercent, Math.round((30 / appConfig.routingUserMaxRequestsPerWindow) * 100))
   assert.equal(stats.routingGuard.devices[0]?.clientDeviceId, 'device-1')
-  assert.equal(stats.routingGuard.devices[0]?.tokenUtilizationPercent, 50)
+  assert.equal(
+    stats.routingGuard.devices[0]?.tokenUtilizationPercent,
+    Math.min(
+      100,
+      Math.round((200_000 / appConfig.routingDeviceMaxTokensPerWindow) * 100),
+    ),
+  )
 })
 
 test('OAuthService.refreshDueAccountsForKeepAlive refreshes expiring paused accounts', async () => {

@@ -10,7 +10,11 @@ import {
 } from './proxy/fingerprintTemplate.js'
 import { projectRoot } from './projectRoot.js'
 
-const isNodeTest = Boolean(process.env.NODE_TEST_CONTEXT || process.env.NODE_TEST_WORKER_ID)
+const isNodeTest = Boolean(
+  process.env.TOKENQIAO_TEST_CONTEXT ||
+    process.env.NODE_TEST_CONTEXT ||
+    process.env.NODE_TEST_WORKER_ID,
+)
 
 if (!isNodeTest) {
   dotenv.config({ path: path.join(projectRoot, '.env') })
@@ -183,6 +187,15 @@ const envSchema = z.object({
       const parts = value.trim().split('.').map(Number)
       if (parts.length !== 3 || parts.some(isNaN))
         throw new Error(`MIN_CLAUDE_VERSION must be in x.y.z format, got: ${value}`)
+      return parts as [number, number, number]
+    }),
+  MAX_CLAUDE_VERSION: z
+    .string()
+    .default('2.1.131')
+    .transform((value) => {
+      const parts = value.trim().split('.').map(Number)
+      if (parts.length !== 3 || parts.some(isNaN))
+        throw new Error(`MAX_CLAUDE_VERSION must be in x.y.z format, got: ${value}`)
       return parts as [number, number, number]
     }),
   DEFAULT_MAX_SESSIONS_PER_ACCOUNT: z.coerce.number().int().positive().default(1000),
@@ -462,6 +475,7 @@ export const appConfig = {
   bodyTemplateNewPath,
   bodyTemplateNew,
   minClaudeCliVersion: env.MIN_CLAUDE_VERSION,
+  maxClaudeCliVersion: env.MAX_CLAUDE_VERSION,
   defaultMaxSessionsPerAccount: env.DEFAULT_MAX_SESSIONS_PER_ACCOUNT,
   accountMaxSessionOverflow: env.ACCOUNT_MAX_SESSION_OVERFLOW,
   routingUserMaxActiveSessions: env.ROUTING_USER_MAX_ACTIVE_SESSIONS,

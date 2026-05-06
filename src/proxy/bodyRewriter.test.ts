@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 
-import { rewriteMessageBody, rewriteEventLoggingBody, type BodyTemplate } from './bodyRewriter.js'
+import { loadBodyTemplate, rewriteCountTokensBody, rewriteMessageBody, rewriteEventLoggingBody, type BodyTemplate } from './bodyRewriter.js'
 
 const TEMPLATE: BodyTemplate = {
   ccVersion: '2.1.98.e54',
@@ -46,13 +49,43 @@ function makeBody(overrides: Record<string, unknown> = {}): Buffer {
       { name: 'Bash', description: 'v90 Bash' },
     ],
     messages: [{ role: 'user', content: 'say ok' }],
-    metadata: { user_id: 'test' },
+    metadata: { user_id: JSON.stringify({ device_id: 'client-device-id-hex', account_uuid: 'client-account-uuid' }) },
     ...overrides,
   }
   return Buffer.from(JSON.stringify(body), 'utf8')
 }
 
 test('bodyRewriter', async (t) => {
+
+  await t.test('loadBodyTemplate rejects invalid template shape', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenqiao-template-'))
+    const templatePath = path.join(tempDir, 'bad-template.json')
+    fs.writeFileSync(templatePath, JSON.stringify({ ccVersion: '2.1.131.880', tools: [] }))
+
+    assert.throws(
+      () => loadBodyTemplate(templatePath),
+      /template systemBlocks must be a non-empty array/,
+    )
+  })
+
+  await t.test('loadBodyTemplate rejects duplicate tool names', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenqiao-template-'))
+    const templatePath = path.join(tempDir, 'bad-template.json')
+    fs.writeFileSync(templatePath, JSON.stringify({
+      ccVersion: '2.1.131.880',
+      systemBlocks: [{ type: 'text', text: 'template' }],
+      tools: [{ name: 'Bash' }, { name: 'Bash' }],
+      deviceId: 'device',
+      accountUuid: '',
+    }))
+
+    assert.throws(
+      () => loadBodyTemplate(templatePath),
+      /template tools duplicate name Bash/,
+    )
+  })
+
+
   await t.test('rewrites cc_version in system[0]', () => {
     const result = rewriteMessageBody(makeBody(), TEMPLATE)
     assert.ok(result)
@@ -99,7 +132,7 @@ test('bodyRewriter', async (t) => {
     assert.equal(parsed.tools[1].name, 'Monitor')
   })
 
-  await t.test('preserves request-only tools such as MCP tools', () => {
+  await t.test('drops request-only tools so unknown tools never reach upstream', () => {
     const body = makeBody({
       tools: [
         { name: 'Bash', description: 'client Bash' },
@@ -109,12 +142,10 @@ test('bodyRewriter', async (t) => {
     const result = rewriteMessageBody(body, TEMPLATE)
     assert.ok(result)
     const parsed = JSON.parse(result.toString('utf8'))
-    assert.equal(parsed.tools.length, 3)
-    assert.equal(parsed.tools[0].name, 'Bash')
-    assert.equal(parsed.tools[0].description, 'v98 Bash')
-    assert.equal(parsed.tools[1].name, 'Monitor')
-    assert.equal(parsed.tools[2].name, 'mcp__skill__search')
-    assert.equal(parsed.tools[2].description, 'runtime MCP tool')
+    assert.deepEqual(
+      parsed.tools.map((tool: { name: string }) => tool.name),
+      ['Bash', 'Monitor'],
+    )
   })
 
   await t.test('preserves other fields unchanged', () => {
@@ -124,11 +155,17 @@ test('bodyRewriter', async (t) => {
     assert.equal(parsed.model, 'claude-opus-4-6')
     assert.equal(parsed.max_tokens, 64000)
     assert.deepEqual(parsed.messages, [{ role: 'user', content: 'say ok' }])
-    assert.deepEqual(parsed.metadata, { user_id: 'test' })
+    assert.deepEqual(parsed.metadata, { user_id: JSON.stringify({ device_id: 'template-device-id-hex', account_uuid: 'template-account-uuid' }) })
   })
 
   await t.test('returns null for invalid JSON', () => {
     const result = rewriteMessageBody(Buffer.from('not json'), TEMPLATE)
+    assert.equal(result, null)
+  })
+
+  await t.test('returns null for unknown top-level fields', () => {
+    const body = makeBody({ rogue_field: { should_not: 'reach upstream' } })
+    const result = rewriteMessageBody(body, TEMPLATE)
     assert.equal(result, null)
   })
 
@@ -199,6 +236,18 @@ test('bodyRewriter', async (t) => {
     assert.ok(result)
     const parsed = JSON.parse(result.toString('utf8'))
     assert.deepEqual(parsed.metadata, { other: 'value' })
+  })
+
+  await t.test('returns null for malformed metadata.user_id', () => {
+    const body = makeBody({ metadata: { user_id: 'not-json' } })
+    const result = rewriteMessageBody(body, TEMPLATE)
+    assert.equal(result, null)
+  })
+
+  await t.test('returns null for non-object metadata.user_id JSON', () => {
+    const body = makeBody({ metadata: { user_id: JSON.stringify(['not-object']) } })
+    const result = rewriteMessageBody(body, TEMPLATE)
+    assert.equal(result, null)
   })
 
   await t.test('normalizes cache_control in system[1..] when template provides cacheControl', () => {
@@ -323,6 +372,32 @@ test('bodyRewriter', async (t) => {
     assert.ok(result)
     const parsed = JSON.parse(result.toString('utf8'))
     assert.equal(parsed.system[parsed.system.length - 1].text, 'block-2-template-text-long-content')
+  })
+})
+
+
+test('rewriteCountTokensBody', async (t) => {
+  await t.test('accepts real count_tokens shape without system or metadata', () => {
+    const body = Buffer.from(JSON.stringify({
+      model: 'deepseek',
+      messages: [{ role: 'user', content: 'foo' }],
+      tools: [{ name: 'Skill', description: 'runtime skill tool' }],
+    }))
+    const result = rewriteCountTokensBody(body)
+    assert.ok(result)
+    const parsed = JSON.parse(result.toString('utf8'))
+    assert.deepEqual(Object.keys(parsed).sort(), ['messages', 'model', 'tools'])
+    assert.equal(parsed.messages[0].content, 'foo')
+    assert.equal(parsed.tools[0].name, 'Skill')
+  })
+
+  await t.test('rejects unknown count_tokens top-level fields', () => {
+    const body = Buffer.from(JSON.stringify({
+      model: 'deepseek',
+      messages: [{ role: 'user', content: 'foo' }],
+      rogue_field: true,
+    }))
+    assert.equal(rewriteCountTokensBody(body), null)
   })
 })
 

@@ -573,7 +573,7 @@ export class AccountScheduler {
     )
     const totalScore =
       0.3 * quotaScore +
-      0.15 * sessionAffinityScore +
+      0.35 * sessionAffinityScore +
       0.15 * healthScore +
       0.25 * capacityScore +
       0.05 * proxyScore +

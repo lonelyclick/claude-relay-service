@@ -21,7 +21,7 @@ import WebSocket, { WebSocketServer, type RawData } from 'ws'
 
 import { appConfig } from '../config.js'
 import type { BodyTemplate } from './bodyRewriter.js'
-import { rewriteMessageBody, rewriteEventLoggingBody } from './bodyRewriter.js'
+import { rewriteCountTokensBody, rewriteMessageBody, rewriteEventLoggingBody } from './bodyRewriter.js'
 import {
   CliValidationError,
   tryParseMessageBody,
@@ -265,6 +265,11 @@ function formatBillingMicrosForDisplay(
   return `${sign}${symbol}${major}.${minor}`
 }
 
+type RelayAuthRejection = {
+  code: RelayErrorCode
+  message: string
+}
+
 type ResolvedRelayUserContext = {
   userId: string | null
   organizationId: string | null
@@ -275,7 +280,7 @@ type ResolvedRelayUserContext = {
   apiKeyGroupAssignments: RelayApiKeyGroupAssignments | null
   relayKeySource: RelayKeySource | null
   stripped: boolean
-  rejected: string | null
+  rejected: RelayAuthRejection | null
 }
 
 type ResolvedRelayUserLookup = {
@@ -317,10 +322,40 @@ class RelayRequestTimeoutError extends Error {
  * Build an error response body that matches the Anthropic API format so
  * relay-generated rejections are indistinguishable from upstream errors.
  */
+// Relay-coded outcomes that should never be retried by the SDK retry loop:
+// auth, validation, route/method, payload-too-large, billing failures, etc.
+// Setting `x-should-retry: false` on these responses tells Anthropic/OpenAI
+// SDKs to surface the error to the user immediately rather than burning N
+// retry attempts on a 401 the user can only fix by changing their config.
+const WS_NO_RETRY_RELAY_CODES = new Set<string>([
+  RELAY_ERROR_CODES.RELAY_USER_REJECTED,
+  RELAY_ERROR_CODES.RELAY_KEY_PREFIX_TYPO,
+  RELAY_ERROR_CODES.RELAY_KEY_LOOKS_LIKE_VENDOR,
+  RELAY_ERROR_CODES.UNAUTHORIZED,
+  RELAY_ERROR_CODES.FORBIDDEN,
+  RELAY_ERROR_CODES.UNSUPPORTED_CLIENT,
+  RELAY_ERROR_CODES.UNSUPPORTED_CLIENT_VERSION,
+  RELAY_ERROR_CODES.INVALID_FORCE_ACCOUNT,
+  RELAY_ERROR_CODES.METHOD_NOT_ALLOWED,
+  RELAY_ERROR_CODES.ROUTE_NOT_FOUND,
+  RELAY_ERROR_CODES.PAYLOAD_TOO_LARGE,
+  RELAY_ERROR_CODES.BODY_TOO_LARGE,
+  RELAY_ERROR_CODES.BAD_REQUEST,
+  RELAY_ERROR_CODES.PAYMENT_REQUIRED,
+  RELAY_ERROR_CODES.BILLING_INSUFFICIENT_BALANCE,
+  RELAY_ERROR_CODES.BILLING_RULE_MISSING,
+  RELAY_ERROR_CODES.ROUTING_GROUP_UNAVAILABLE,
+  RELAY_ERROR_CODES.ACCOUNT_NOT_FOUND,
+])
+
+// All client-facing relay errors carry a stable internal_code (e.g.
+// "TQ_RELAY_USER_REJECTED") and, when available, the trace request_id so
+// operators can pivot from a user report straight to the matching log entry.
 function anthropicErrorBody(
   statusCode: number,
   message: string,
   internalCode: RelayErrorCode = fallbackRelayErrorCode(statusCode),
+  requestId: string | null = null,
 ): Record<string, unknown> {
   const ANTHROPIC_ERROR_TYPES: Record<number, string> = {
     400: 'invalid_request_error',
@@ -336,20 +371,20 @@ function anthropicErrorBody(
     503: 'api_error',
     529: 'overloaded_error',
   }
-  return {
-    type: 'error',
-    error: {
-      type: ANTHROPIC_ERROR_TYPES[statusCode] ?? 'api_error',
-      message,
-      internal_code: internalCode,
-    },
+  const error: Record<string, unknown> = {
+    type: ANTHROPIC_ERROR_TYPES[statusCode] ?? 'api_error',
+    message,
+    internal_code: internalCode,
   }
+  if (requestId) error.request_id = requestId
+  return { type: 'error', error }
 }
 
 function openAIErrorBody(
   statusCode: number,
   message: string,
   internalCode: RelayErrorCode = fallbackRelayErrorCode(statusCode),
+  requestId: string | null = null,
 ): Record<string, unknown> {
   const OPENAI_ERROR_TYPES: Record<number, string> = {
     400: 'invalid_request_error',
@@ -368,13 +403,13 @@ function openAIErrorBody(
     503: 'server_error',
     529: 'server_error',
   }
-  return {
-    error: {
-      message,
-      type: OPENAI_ERROR_TYPES[statusCode] ?? 'api_error',
-      code: internalCode,
-    },
+  const error: Record<string, unknown> = {
+    message,
+    type: OPENAI_ERROR_TYPES[statusCode] ?? 'api_error',
+    code: internalCode,
   }
+  if (requestId) error.request_id = requestId
+  return { error }
 }
 
 function isOpenAIStyleHttpPath(pathname: string): boolean {
@@ -386,10 +421,11 @@ function localHttpErrorBody(
   statusCode: number,
   message: string,
   internalCode: RelayErrorCode = fallbackRelayErrorCode(statusCode),
+  requestId: string | null = null,
 ): Record<string, unknown> {
   return isOpenAIStyleHttpPath(pathname)
-    ? openAIErrorBody(statusCode, message, internalCode)
-    : anthropicErrorBody(statusCode, message, internalCode)
+    ? openAIErrorBody(statusCode, message, internalCode, requestId)
+    : anthropicErrorBody(statusCode, message, internalCode, requestId)
 }
 
 function findSseBlockBoundary(buffer: string): { index: number; length: number } | null {
@@ -476,6 +512,7 @@ class SseErrorInspectTransform extends Transform {
 
 const CLAUDE_CLI_UA_REGEX = /^claude-cli\/(\d+)\.(\d+)\.(\d+)\b/
 const MIN_CLAUDE_CLI_VERSION: readonly [number, number, number] = appConfig.minClaudeCliVersion
+const MAX_CLAUDE_CLI_VERSION: readonly [number, number, number] = appConfig.maxClaudeCliVersion
 
 function parseClaudeCliVersion(
   userAgent: string | undefined,
@@ -493,6 +530,15 @@ function isVersionAtLeast(
   const encode = (v: readonly [number, number, number]) =>
     v[0] * 1_000_000 + v[1] * 1_000 + v[2]
   return encode(version) >= encode(min)
+}
+
+function isVersionAtMost(
+  version: [number, number, number],
+  max: readonly [number, number, number],
+): boolean {
+  const encode = (v: readonly [number, number, number]) =>
+    v[0] * 1_000_000 + v[1] * 1_000 + v[2]
+  return encode(version) <= encode(max)
 }
 
 function parseTemplateCcVersion(
@@ -917,6 +963,33 @@ export class RelayService {
     }
   }
 
+  // Heuristics for the second-most common misconfiguration (after a wrong rk_*):
+  // the user typed the key into ANTHROPIC_AUTH_TOKEN with the wrong prefix.
+  // We only fail-fast on patterns that are clearly NOT a Claude OAuth bearer
+  // token (which the relay still passes through on purpose), so we keep the
+  // "bring your own OAuth token" pass-through path intact.
+  private detectMistypedRelayKey(token: string): RelayAuthRejection | null {
+    if (!token) return null
+    if (/^rk[^_]/i.test(token) || /^rk$/i.test(token)) {
+      return {
+        code: RELAY_ERROR_CODES.RELAY_KEY_PREFIX_TYPO,
+        message:
+          "TokenQiao API keys must start with 'rk_' (underscore). " +
+          "Your token starts with 'rk' but is missing the underscore. " +
+          'Re-copy the key from your TokenQiao admin and update the client config.',
+      }
+    }
+    if (/^sk[-_]/i.test(token)) {
+      return {
+        code: RELAY_ERROR_CODES.RELAY_KEY_LOOKS_LIKE_VENDOR,
+        message:
+          "TokenQiao does not accept Anthropic-style 'sk-...' API keys. " +
+          "Use a TokenQiao-issued key with the 'rk_' prefix instead.",
+      }
+    }
+    return null
+  }
+
   private async resolveRelayUser(headers: IncomingHttpHeaders): Promise<ResolvedRelayUserContext> {
     if (!this.userStore) {
       return {
@@ -936,6 +1009,25 @@ export class RelayService {
     const xApiKey = typeof headers['x-api-key'] === 'string' ? headers['x-api-key'] : ''
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : xApiKey.trim()
     if (!token.startsWith('rk_')) {
+      // Heuristic guards to surface "user typed something into ANTHROPIC_AUTH_TOKEN
+      // that is clearly not a TokenQiao relay key", instead of silently passing
+      // the bad token to the upstream where it returns the misleading
+      // "Please run /login · Invalid bearer token" message.
+      const earlyRejection = this.detectMistypedRelayKey(token)
+      if (earlyRejection) {
+        return {
+          userId: null,
+          organizationId: null,
+          userAccountId: null,
+          routingMode: 'auto',
+          billingMode: 'postpaid',
+          billingCurrency: appConfig.billingCurrency as BillingCurrency,
+          apiKeyGroupAssignments: null,
+          relayKeySource: null,
+          stripped: false,
+          rejected: earlyRejection,
+        }
+      }
       return {
         userId: null,
         organizationId: null,
@@ -965,7 +1057,13 @@ export class RelayService {
         apiKeyGroupAssignments: null,
         relayKeySource: null,
         stripped: false,
-        rejected: 'Invalid relay API key',
+        rejected: {
+          code: RELAY_ERROR_CODES.RELAY_USER_REJECTED,
+          message:
+            "TokenQiao rejected your API key — the 'rk_' token you sent does not match any active key. " +
+            'Verify the value issued by your TokenQiao admin and update ANTHROPIC_AUTH_TOKEN / API_KEY in your client config. ' +
+            '(This is a TokenQiao relay error, not an upstream login problem — do NOT run /login.)',
+        },
       }
     }
     if (organization) {
@@ -980,7 +1078,11 @@ export class RelayService {
           apiKeyGroupAssignments: groupAssignments,
           relayKeySource,
           stripped: false,
-          rejected: 'Organization is disabled',
+          rejected: {
+            code: RELAY_ERROR_CODES.RELAY_USER_REJECTED,
+            message:
+              'TokenQiao organization is disabled. Contact your TokenQiao admin to re-enable it.',
+          },
         }
       }
       headers.authorization = ''
@@ -1012,7 +1114,11 @@ export class RelayService {
         apiKeyGroupAssignments: groupAssignments,
         relayKeySource,
         stripped: false,
-        rejected: 'User is disabled',
+        rejected: {
+          code: RELAY_ERROR_CODES.RELAY_USER_REJECTED,
+          message:
+            'TokenQiao user is disabled. Contact your TokenQiao admin to re-enable your account.',
+        },
       }
     }
     // Strip the relay key so downstream treats this as no-auth → oauth mode
@@ -1226,12 +1332,15 @@ export class RelayService {
     relayUser: ResolvedRelayUserContext
   }): Promise<void> {
     if (!input.relayUser.userId && !input.relayUser.organizationId) {
+      input.res.setHeader('x-request-id', input.trace.requestId)
+      input.res.setHeader('x-should-retry', 'false')
       input.res.status(401).json(
         localHttpErrorBody(
           '/v1/models',
           401,
-          'Relay API key required',
+          "TokenQiao API key required. Set ANTHROPIC_AUTH_TOKEN to a 'rk_' key issued by your TokenQiao admin.",
           RELAY_ERROR_CODES.RELAY_USER_REJECTED,
+          input.trace.requestId,
         ),
       )
       this.logHttpRejection(input.trace, {
@@ -1336,6 +1445,12 @@ export class RelayService {
     const clearRequestDeadline = this.createHttpRequestDeadline(req, res, trace, requestController)
     const requestUrl = this.buildUpstreamUrlFromRawUrl(req.originalUrl)
 
+    // Single-point upgrade for client-facing errors: every relay-generated
+    // error JSON gets x-request-id + request_id auto-attached, and any
+    // TokenQiao-coded auth/quota rejection gets x-should-retry:false so SDKs
+    // (Anthropic/OpenAI) abort their built-in retry loops immediately.
+    this.installErrorResponseDecorator(res, trace.requestId)
+
     try {
       this.setHttpTracePhase(trace, 'match_route')
       const route = this.matchHttpRoute(req.path)
@@ -1399,18 +1514,24 @@ export class RelayService {
       this.setHttpTracePhase(trace, 'resolve_relay_user')
       const relayUser = await this.resolveRelayUser(req.headers)
       if (relayUser.rejected) {
+        res.setHeader('x-request-id', trace.requestId)
+        // Anthropic SDK convention: when this header is "false" the SDK
+        // skips its built-in retry loop regardless of status code, so the
+        // user sees the auth failure immediately instead of N×6s retries.
+        res.setHeader('x-should-retry', 'false')
         res.status(401).json(
           localHttpErrorBody(
             req.path,
             401,
-            relayUser.rejected,
-            RELAY_ERROR_CODES.RELAY_USER_REJECTED,
+            relayUser.rejected.message,
+            relayUser.rejected.code,
+            trace.requestId,
           ),
         )
         this.logHttpRejection(trace, {
-          error: `relay_user_rejected: ${relayUser.rejected}`,
+          error: `relay_user_rejected: ${relayUser.rejected.code}`,
           forceAccountId: null,
-          internalCode: RELAY_ERROR_CODES.RELAY_USER_REJECTED,
+          internalCode: relayUser.rejected.code,
           routeAuthStrategy: route.authStrategy,
           statusCode: 401,
           statusText: STATUS_CODES[401] ?? 'Unauthorized',
@@ -1630,6 +1751,18 @@ export class RelayService {
           res.status(400).json(anthropicErrorBody(400, `Claude Code version ${versionStr} is not supported. Please use ${MIN_CLAUDE_CLI_VERSION.join('.')} or later.`, RELAY_ERROR_CODES.UNSUPPORTED_CLIENT_VERSION))
           this.logHttpRejection(trace, {
             error: `unsupported_client_version: ${versionStr}`,
+            internalCode: RELAY_ERROR_CODES.UNSUPPORTED_CLIENT_VERSION,
+            routeAuthStrategy: route.authStrategy,
+            statusCode: 400,
+            statusText: STATUS_CODES[400] ?? 'Bad Request',
+          })
+          return
+        }
+        if (!isVersionAtMost(clientVersion, MAX_CLAUDE_CLI_VERSION)) {
+          const versionStr = clientVersion.join('.')
+          res.status(400).json(anthropicErrorBody(400, `Claude Code version ${versionStr} is not supported yet. Please use ${MAX_CLAUDE_CLI_VERSION.join('.')} or earlier.`, RELAY_ERROR_CODES.UNSUPPORTED_CLIENT_VERSION))
+          this.logHttpRejection(trace, {
+            error: `unsupported_client_version_too_new: ${versionStr}`,
             internalCode: RELAY_ERROR_CODES.UNSUPPORTED_CLIENT_VERSION,
             routeAuthStrategy: route.authStrategy,
             statusCode: 400,
@@ -2468,7 +2601,7 @@ export class RelayService {
       const route = this.matchWebSocketRoute(requestUrl.pathname)
 
       if (!route) {
-        this.rejectUpgrade(socket, 404, anthropicErrorBody(404, `Not Found`, RELAY_ERROR_CODES.ROUTE_NOT_FOUND))
+        this.rejectUpgrade(socket, 404, anthropicErrorBody(404, `Not Found`, RELAY_ERROR_CODES.ROUTE_NOT_FOUND), { requestId: trace.requestId })
         this.logWsRejected(trace, {
           error: 'unsupported_path',
           internalCode: RELAY_ERROR_CODES.ROUTE_NOT_FOUND,
@@ -2480,7 +2613,7 @@ export class RelayService {
       }
 
       if ((req.method ?? 'GET').toUpperCase() !== 'GET') {
-        this.rejectUpgrade(socket, 405, anthropicErrorBody(405, `Method ${req.method ?? 'UNKNOWN'} is not allowed for ${requestUrl.pathname}`, RELAY_ERROR_CODES.METHOD_NOT_ALLOWED))
+        this.rejectUpgrade(socket, 405, anthropicErrorBody(405, `Method ${req.method ?? 'UNKNOWN'} is not allowed for ${requestUrl.pathname}`, RELAY_ERROR_CODES.METHOD_NOT_ALLOWED), { requestId: trace.requestId })
         this.logWsRejected(trace, {
           error: 'unsupported_method',
           internalCode: RELAY_ERROR_CODES.METHOD_NOT_ALLOWED,
@@ -2493,7 +2626,7 @@ export class RelayService {
 
       const clientVersion = parseClaudeCliVersion(req.headers['user-agent'])
       if (!clientVersion) {
-        this.rejectUpgrade(socket, 400, anthropicErrorBody(400, `Unsupported client. Please use Claude Code ${MIN_CLAUDE_CLI_VERSION.join('.')} or later.`, RELAY_ERROR_CODES.UNSUPPORTED_CLIENT))
+        this.rejectUpgrade(socket, 400, anthropicErrorBody(400, `Unsupported client. Please use Claude Code ${MIN_CLAUDE_CLI_VERSION.join('.')} or later.`, RELAY_ERROR_CODES.UNSUPPORTED_CLIENT), { requestId: trace.requestId })
         this.logWsRejected(trace, {
           error: `unsupported_client: ${req.headers['user-agent'] ?? '(none)'}`,
           internalCode: RELAY_ERROR_CODES.UNSUPPORTED_CLIENT,
@@ -2505,9 +2638,21 @@ export class RelayService {
       }
       if (!isVersionAtLeast(clientVersion, MIN_CLAUDE_CLI_VERSION)) {
         const versionStr = clientVersion.join('.')
-        this.rejectUpgrade(socket, 400, anthropicErrorBody(400, `Claude Code version ${versionStr} is not supported. Please use ${MIN_CLAUDE_CLI_VERSION.join('.')} or later.`, RELAY_ERROR_CODES.UNSUPPORTED_CLIENT_VERSION))
+        this.rejectUpgrade(socket, 400, anthropicErrorBody(400, `Claude Code version ${versionStr} is not supported. Please use ${MIN_CLAUDE_CLI_VERSION.join('.')} or later.`, RELAY_ERROR_CODES.UNSUPPORTED_CLIENT_VERSION), { requestId: trace.requestId })
         this.logWsRejected(trace, {
           error: `unsupported_client_version: ${versionStr}`,
+          internalCode: RELAY_ERROR_CODES.UNSUPPORTED_CLIENT_VERSION,
+          routeAuthStrategy: route.authStrategy,
+          statusCode: 400,
+          statusText: STATUS_CODES[400] ?? 'Bad Request',
+        })
+        return
+      }
+      if (!isVersionAtMost(clientVersion, MAX_CLAUDE_CLI_VERSION)) {
+        const versionStr = clientVersion.join('.')
+        this.rejectUpgrade(socket, 400, anthropicErrorBody(400, `Claude Code version ${versionStr} is not supported yet. Please use ${MAX_CLAUDE_CLI_VERSION.join('.')} or earlier.`, RELAY_ERROR_CODES.UNSUPPORTED_CLIENT_VERSION), { requestId: trace.requestId })
+        this.logWsRejected(trace, {
+          error: `unsupported_client_version_too_new: ${versionStr}`,
           internalCode: RELAY_ERROR_CODES.UNSUPPORTED_CLIENT_VERSION,
           routeAuthStrategy: route.authStrategy,
           statusCode: 400,
@@ -2525,7 +2670,7 @@ export class RelayService {
         parsedClientVersion: clientVersion,
       })
       if (wsValidationFailure && appConfig.cliValidatorMode === 'enforce') {
-        this.rejectUpgrade(socket, 400, anthropicErrorBody(400, 'Unsupported client.', RELAY_ERROR_CODES.UNSUPPORTED_CLIENT))
+        this.rejectUpgrade(socket, 400, anthropicErrorBody(400, 'Unsupported client.', RELAY_ERROR_CODES.UNSUPPORTED_CLIENT), { requestId: trace.requestId })
         this.logWsRejected(trace, {
           error: `cli_validation_failed:${wsValidationFailure.layer}:${wsValidationFailure.field}`,
           internalCode: RELAY_ERROR_CODES.UNSUPPORTED_CLIENT,
@@ -2544,7 +2689,7 @@ export class RelayService {
         )
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        this.rejectUpgrade(socket, 400, anthropicErrorBody(400, message, RELAY_ERROR_CODES.INVALID_FORCE_ACCOUNT))
+        this.rejectUpgrade(socket, 400, anthropicErrorBody(400, message, RELAY_ERROR_CODES.INVALID_FORCE_ACCOUNT), { requestId: trace.requestId })
         this.logWsRejected(trace, {
           error: message,
           internalCode: RELAY_ERROR_CODES.INVALID_FORCE_ACCOUNT,
@@ -2558,7 +2703,17 @@ export class RelayService {
       // ── Relay user resolution (WebSocket) ──
       const relayUser = await this.resolveRelayUser(req.headers)
       if (relayUser.rejected) {
-        this.rejectUpgrade(socket, 401, anthropicErrorBody(401, relayUser.rejected, RELAY_ERROR_CODES.RELAY_USER_REJECTED))
+        this.rejectUpgrade(
+          socket,
+          401,
+          anthropicErrorBody(
+            401,
+            relayUser.rejected.message,
+            relayUser.rejected.code,
+            trace.requestId,
+          ),
+          { requestId: trace.requestId, shouldRetry: false },
+        )
         return
       }
       if (relayUser.routingMode === 'pinned_account' && relayUser.userAccountId && !forceAccountId) {
@@ -2574,7 +2729,7 @@ export class RelayService {
           const statusCode = clientError?.statusCode ?? 403
           const message = clientError?.message ?? 'Requested routing group is unavailable.'
           const internalCode = clientError?.code ?? RELAY_ERROR_CODES.ROUTING_GROUP_UNAVAILABLE
-          this.rejectUpgrade(socket, statusCode, anthropicErrorBody(statusCode, message, internalCode))
+          this.rejectUpgrade(socket, statusCode, anthropicErrorBody(statusCode, message, internalCode), { requestId: trace.requestId })
           this.logWsRejected(trace, {
             error: error.message,
             forceAccountId,
@@ -2597,7 +2752,7 @@ export class RelayService {
           501,
           'openai-codex does not support Claude WebSocket upstream routes yet.',
           RELAY_ERROR_CODES.PROVIDER_WS_UNSUPPORTED,
-        ))
+        ), { requestId: trace.requestId })
         this.logWsRejected(trace, {
           error: 'openai_codex_ws_not_supported',
           forceAccountId,
@@ -2613,7 +2768,7 @@ export class RelayService {
           501,
           'openai-compatible does not support Claude WebSocket upstream routes yet.',
           RELAY_ERROR_CODES.PROVIDER_WS_UNSUPPORTED,
-        ))
+        ), { requestId: trace.requestId })
         this.logWsRejected(trace, {
           error: 'openai_compatible_ws_not_supported',
           forceAccountId,
@@ -2629,7 +2784,7 @@ export class RelayService {
           501,
           'claude-compatible does not support WebSocket upstream routes yet.',
           RELAY_ERROR_CODES.PROVIDER_WS_UNSUPPORTED,
-        ))
+        ), { requestId: trace.requestId })
         this.logWsRejected(trace, {
           error: 'claude_compatible_ws_not_supported',
           forceAccountId,
@@ -2645,7 +2800,7 @@ export class RelayService {
           501,
           'google-gemini-oauth does not support WebSocket upstream routes.',
           RELAY_ERROR_CODES.PROVIDER_WS_UNSUPPORTED,
-        ))
+        ), { requestId: trace.requestId })
         this.logWsRejected(trace, {
           error: 'google_gemini_ws_not_supported',
           forceAccountId,
@@ -2709,6 +2864,7 @@ export class RelayService {
             upstreamHeaders: failure.responseHeaders,
             upstreamRawHeaders: failure.responseRawHeaders,
             statusMessage: failure.responseStatusMessage,
+            requestId: trace.requestId,
           },
         )
         this.logWsRejected(trace, {
@@ -2820,7 +2976,7 @@ export class RelayService {
         statusText: STATUS_CODES[statusCode] ?? 'Internal Server Error',
       })
       const message = clientError?.message ?? 'Internal server error.'
-      this.rejectUpgrade(socket, statusCode, anthropicErrorBody(statusCode, message, internalCode))
+      this.rejectUpgrade(socket, statusCode, anthropicErrorBody(statusCode, message, internalCode), { requestId: trace.requestId })
     }
   }
 
@@ -5347,6 +5503,8 @@ export class RelayService {
       upstreamHeaders?: IncomingHttpHeaders
       upstreamRawHeaders?: string[]
       statusMessage?: string
+      requestId?: string
+      shouldRetry?: false
     } = {},
   ): void {
     if (socket.destroyed) {
@@ -5354,6 +5512,31 @@ export class RelayService {
     }
 
     const isBufferedPayload = Buffer.isBuffer(payload)
+    // For relay-generated JSON error envelopes, mirror the HTTP-side decorator
+    // so request_id is also visible in the body and x-should-retry is set
+    // automatically when the internal_code falls in the no-retry bucket.
+    let resolvedShouldRetry: false | undefined = options.shouldRetry
+    if (!isBufferedPayload && payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      const root = payload as Record<string, unknown>
+      const error = root.error
+      if (error && typeof error === 'object' && !Array.isArray(error)) {
+        const errObj = error as Record<string, unknown>
+        if (options.requestId && errObj.request_id === undefined) {
+          errObj.request_id = options.requestId
+        }
+        if (resolvedShouldRetry !== false) {
+          const code =
+            typeof errObj.internal_code === 'string'
+              ? errObj.internal_code
+              : typeof errObj.code === 'string'
+                ? errObj.code
+                : null
+          if (code && WS_NO_RETRY_RELAY_CODES.has(code)) {
+            resolvedShouldRetry = false
+          }
+        }
+      }
+    }
     const body = isBufferedPayload
       ? payload
       : Buffer.from(JSON.stringify(payload), 'utf8')
@@ -5392,6 +5575,12 @@ export class RelayService {
     }
     if (!sawContentLength) {
       headerLines.push(`Content-Length: ${body.length}`)
+    }
+    if (options.requestId) {
+      headerLines.push(`x-request-id: ${options.requestId}`)
+    }
+    if (resolvedShouldRetry === false) {
+      headerLines.push('x-should-retry: false')
     }
     headerLines.push('', '')
     socket.end(Buffer.concat([Buffer.from(headerLines.join('\r\n'), 'utf8'), body]))
@@ -5551,6 +5740,51 @@ export class RelayService {
 
   private isClientDisconnected(trace: HttpTraceContext): boolean {
     return trace.signal.aborted && !(trace.signal.reason instanceof RelayRequestTimeoutError)
+  }
+
+  // Wraps res.json so that every relay-generated 4xx/5xx body picks up:
+  //   - body.error.request_id  (or body.request_id for unstructured payloads)
+  //   - response header x-request-id
+  //   - response header x-should-retry: false  (when the internal_code is one
+  //     of the TokenQiao auth / capacity buckets that should never be retried)
+  // The decorator only mutates payloads that look like a relay error envelope
+  // (have an `error` object with our `internal_code` / `code` fields), so it
+  // is safe to install before knowing whether the response will be 200 or 4xx.
+  private installErrorResponseDecorator(res: Response, requestId: string): void {
+    if (!requestId) return
+    type AnyRecord = Record<string, unknown>
+    const NO_RETRY_CODES = WS_NO_RETRY_RELAY_CODES
+    const decorate = (payload: unknown): unknown => {
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return payload
+      }
+      const root = payload as AnyRecord
+      const error = root.error
+      if (!error || typeof error !== 'object' || Array.isArray(error)) {
+        return payload
+      }
+      const errorObj = error as AnyRecord
+      if (errorObj.request_id === undefined) {
+        errorObj.request_id = requestId
+      }
+      const code =
+        typeof errorObj.internal_code === 'string'
+          ? errorObj.internal_code
+          : typeof errorObj.code === 'string'
+            ? errorObj.code
+            : null
+      if (!res.headersSent) {
+        if (!res.getHeader('x-request-id')) {
+          res.setHeader('x-request-id', requestId)
+        }
+        if (code && NO_RETRY_CODES.has(code) && !res.getHeader('x-should-retry')) {
+          res.setHeader('x-should-retry', 'false')
+        }
+      }
+      return payload
+    }
+    const originalJson = res.json.bind(res)
+    res.json = ((body: unknown) => originalJson(decorate(body))) as Response['json']
   }
 
   private createTraceContext(
@@ -5832,9 +6066,7 @@ export class RelayService {
   }
 
   private buildUpstreamUrlFromRawUrl(rawUrl: string | undefined): URL {
-    const upstreamUrl = new URL(rawUrl ?? '/', appConfig.anthropicApiBaseUrl)
-    upstreamUrl.searchParams.delete('force_account')
-    return upstreamUrl
+    return buildSanitizedUpstreamUrl(rawUrl, appConfig.anthropicApiBaseUrl)
   }
 
   private applySessionRouteToHttpRequest(
@@ -6915,23 +7147,29 @@ export class RelayService {
     }
 
     // /v1/messages: full structured rewrite.
-    if (path === '/v1/messages' || path === '/v1/messages/count_tokens') {
+    if (path === '/v1/messages') {
       const rewritten = rewriteMessageBody(body, template)
       if (!rewritten) {
-        if (appConfig.bodyRewriteSkipLogEnabled) {
-          console.warn('[body-rewrite] skipped: rewriteMessageBody returned null for %s', path)
-        }
-        if (path === '/v1/messages/count_tokens') {
-          return body
-        }
-        if (appConfig.cliValidatorMode === 'enforce') {
-          throw new CliValidationError({
-            layer: 'L3',
-            field: 'body_rewrite',
-            reason: 'rewriteMessageBody returned null',
-          })
-        }
-        return body
+        throw new CliValidationError({
+          layer: 'L3',
+          field: 'body_rewrite',
+          reason: 'rewriteMessageBody returned null',
+        })
+      }
+      return rewritten
+    }
+
+    // /v1/messages/count_tokens has a smaller request shape and must not be
+    // forced into the /v1/messages system/tools fingerprint. Validate and
+    // normalize JSON only so unknown fields still fail fast.
+    if (path === '/v1/messages/count_tokens') {
+      const rewritten = rewriteCountTokensBody(body)
+      if (!rewritten) {
+        throw new CliValidationError({
+          layer: 'L3',
+          field: 'body_rewrite',
+          reason: 'rewriteCountTokensBody returned null',
+        })
       }
       return rewritten
     }
@@ -8346,4 +8584,13 @@ function collapseIncomingHeaders(rawHeaders: string[]): IncomingHttpHeaders {
 
 function hasPerMessageDeflateExtension(extensions: string): boolean {
   return /(?:^|,)\s*permessage-deflate(?:\s*;|$)/i.test(extensions)
+}
+
+export function buildSanitizedUpstreamUrl(rawUrl: string | undefined, baseUrl: string): URL {
+  const upstreamUrl = new URL(rawUrl ?? '/', baseUrl)
+  upstreamUrl.searchParams.delete('force_account')
+  upstreamUrl.searchParams.delete('x-force-account')
+  upstreamUrl.searchParams.delete('account_group')
+  upstreamUrl.searchParams.delete('x-account-group')
+  return upstreamUrl
 }

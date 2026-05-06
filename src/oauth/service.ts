@@ -2607,7 +2607,7 @@ export class OAuthService {
       return null
     }
     const sanitized = trimmed
-      .replace(/\b(?:handoff|migration|migrated|account|provider|claude|openai|tokenqiao|session|upstream)[\w-]*\b/gi, 'context')
+      .replace(/\b(?:handoff|migration|migrated|account|provider|claude|openai|tokenqiao|upstream)[\w-]*\b/gi, 'context')
       .replace(/\n{3,}/g, '\n\n')
       .trim()
     return sanitized.slice(0, HANDOFF_SUMMARY_MAX_CHARS)
@@ -3458,7 +3458,6 @@ export class OAuthService {
 
     const newOnlyAgeMs = appConfig.claudeOfficialNewAccountNewSessionOnlyHours * 60 * 60 * 1000
     const matureHeavyAgeMs = appConfig.claudeOfficialHeavySessionAccountMinAgeHours * 60 * 60 * 1000
-    const isExistingSession = Boolean(input.currentRoute)
     const requestWeight = this.estimateRequestWeightFromPreview(input.options.currentRequestBodyPreview ?? null)
 
     for (const account of input.accounts) {
@@ -3466,9 +3465,6 @@ export class OAuthService {
       const warmup = resolveClaudeWarmupStatus({ account, now: input.now })
       const ageMs = warmup.effectiveAgeMs ?? this.getClaudeOfficialEffectiveAccountAgeMs(account, input.now)
       const isYoung = ageMs == null || ageMs < newOnlyAgeMs
-      if (isExistingSession && isYoung && account.id !== input.currentRoute?.accountId) {
-        disallowed.add(account.id)
-      }
       if (
         requestWeight.heavy &&
         hasExplicitClaudeWarmupPolicy(account) &&
@@ -3657,13 +3653,9 @@ export class OAuthService {
             ? 'route_account_missing'
             : null
       const migrationReason =
-        appConfig.claudeSessionAccountAffinityStrict &&
-          currentRouteAccount?.provider === CLAUDE_OFFICIAL_PROVIDER.id &&
-          this.isSoftSessionMigrationReason(baseMigrationReason)
-          ? null
-          : canRecoverToPrimary && !baseMigrationReason
-            ? 'primary_recovered'
-            : baseMigrationReason
+        canRecoverToPrimary && !baseMigrationReason
+          ? 'primary_recovered'
+          : baseMigrationReason
 
       const canReuseCurrentRoute =
         Boolean(

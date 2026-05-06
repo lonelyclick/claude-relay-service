@@ -1,19 +1,17 @@
 {
   "headers": {
-    "X-Stainless-Retry-Count": "$passthrough",
-    "X-Stainless-Timeout": "$passthrough",
-    "X-Stainless-Lang": "js",
-    "X-Stainless-Package-Version": "0.81.0",
-    "X-Stainless-OS": "Linux",
+    "User-Agent": "claude-cli/2.1.131 (external, sdk-cli)",
     "X-Stainless-Arch": "x64",
+    "X-Stainless-Lang": "js",
+    "X-Stainless-OS": "Linux",
+    "X-Stainless-Package-Version": "0.81.0",
+    "X-Stainless-Retry-Count": "$passthrough",
     "X-Stainless-Runtime": "node",
-    "X-Stainless-Runtime-Version": "v24.12.0",
+    "X-Stainless-Runtime-Version": "v24.3.0",
+    "X-Stainless-Timeout": "$passthrough",
     "anthropic-dangerous-direct-browser-access": "true",
     "anthropic-version": "2023-06-01",
     "x-app": "cli",
-    "User-Agent": "claude-cli/2.1.112 (external, sdk-cli)",
-    "accept-language": "*",
-    "sec-fetch-mode": "cors",
-    "accept-encoding": "gzip, deflate"
+    "accept-encoding": "gzip, deflate, br, zstd"
   }
 }

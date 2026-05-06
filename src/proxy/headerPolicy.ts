@@ -206,6 +206,9 @@ function buildForwardHeaders(
 
   for (const [rawName, rawValue] of pairs) {
     const name = rawName.toLowerCase()
+    if (INTERNAL_ONLY_HEADERS.has(name)) {
+      continue
+    }
     if (overrideMap.has(name)) {
       const overrideValue = overrideMap.get(name) ?? null
       appliedOverrides.add(name)
@@ -222,14 +225,14 @@ function buildForwardHeaders(
     const templateHeader = templateHeaders.get(name)
     if (templateHeader) {
       if (!appliedTemplateHeaders.has(name)) {
-        outgoing.push([
-          templateHeader.name,
-          resolveVmFingerprintTemplateValue(
-            name,
-            templateHeader.value,
-            incomingValuesByName.get(name) ?? [],
-          ),
-        ])
+        const templateValue = resolveVmFingerprintTemplateValue(
+          name,
+          templateHeader.value,
+          incomingValuesByName.get(name) ?? [],
+        )
+        if (templateValue !== null) {
+          outgoing.push([templateHeader.name, templateValue])
+        }
         appliedTemplateHeaders.add(name)
       }
       continue
@@ -273,14 +276,15 @@ function buildForwardHeaders(
       continue
     }
 
-    outgoing.push([
-      templateHeader.name,
-      resolveVmFingerprintTemplateValue(name, templateHeader.value, []),
-    ])
+    const templateValue = resolveVmFingerprintTemplateValue(name, templateHeader.value, [])
+    if (templateValue === null) {
+      continue
+    }
+    outgoing.push([templateHeader.name, templateValue])
   }
 
   for (const [name, value] of overrideMap.entries()) {
-    if (appliedOverrides.has(name) || !value) {
+    if (INTERNAL_ONLY_HEADERS.has(name) || appliedOverrides.has(name) || !value) {
       continue
     }
     outgoing.push([name, value])
@@ -372,7 +376,7 @@ function buildAnthropicBetaHeader(
   }
 
   // Template beta tokens come first to preserve the client-version
-  // fingerprint ordering a real 2.1.112 client would emit.
+  // fingerprint ordering a real 2.1.131 client would emit.
   for (const token of betaHeader.split(',')) {
     push(token)
   }

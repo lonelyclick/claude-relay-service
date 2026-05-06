@@ -22,14 +22,23 @@ type SystemBlock = {
   text: string
 }
 
-type NamedTool = {
-  name: string
-}
-
 const CC_VERSION_REGEX = /cc_version=\d+\.\d+\.\d+\.\w+/
 const CC_ENTRYPOINT_REGEX = /cc_entrypoint=\S+?(?=;|$)/
 const CC_VERSION_FULL_REGEX = /\b\d+\.\d+\.\d+\.[a-z0-9]+\b/gi
+const TEMPLATE_CC_VERSION_REGEX = /^\d+\.\d+\.\d+\.[a-z0-9]+$/i
 const ENV_SECTION_MARKER = '\n# Environment\n'
+const MESSAGE_BODY_ALLOWED_TOP_LEVEL_KEYS: ReadonlySet<string> = new Set([
+  'context_management',
+  'max_tokens',
+  'messages',
+  'metadata',
+  'model',
+  'output_config',
+  'system',
+  'thinking',
+  'tools',
+])
+
 const EVENT_LOGGING_KEYS_TO_REWRITE: ReadonlySet<string> = new Set([
   'device_id',
   'account_uuid',
@@ -49,7 +58,93 @@ export function loadBodyTemplate(templatePath: string | null): BodyTemplate | nu
   }
 
   const raw = JSON.parse(fs.readFileSync(templatePath, 'utf8'))
+  assertBodyTemplate(raw, templatePath)
   return raw as BodyTemplate
+}
+
+function assertBodyTemplate(raw: unknown, templatePath: string): asserts raw is BodyTemplate {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`[bodyRewriter] template must be a JSON object: ${templatePath}`)
+  }
+
+  const template = raw as Record<string, unknown>
+  if (typeof template.ccVersion !== 'string' || !TEMPLATE_CC_VERSION_REGEX.test(template.ccVersion)) {
+    throw new Error(`[bodyRewriter] template ccVersion must be a Claude Code full version: ${templatePath}`)
+  }
+  if (template.ccEntrypoint !== undefined && typeof template.ccEntrypoint !== 'string') {
+    throw new Error(`[bodyRewriter] template ccEntrypoint must be a string: ${templatePath}`)
+  }
+  if (template.anthropicBeta !== undefined && typeof template.anthropicBeta !== 'string') {
+    throw new Error(`[bodyRewriter] template anthropicBeta must be a string: ${templatePath}`)
+  }
+  if (!Array.isArray(template.systemBlocks) || template.systemBlocks.length === 0) {
+    throw new Error(`[bodyRewriter] template systemBlocks must be a non-empty array: ${templatePath}`)
+  }
+  for (const [index, block] of template.systemBlocks.entries()) {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) {
+      throw new Error(`[bodyRewriter] template systemBlocks[${index}] must be an object: ${templatePath}`)
+    }
+    const record = block as Record<string, unknown>
+    if (typeof record.type !== 'string' || typeof record.text !== 'string') {
+      throw new Error(`[bodyRewriter] template systemBlocks[${index}] must include string type/text: ${templatePath}`)
+    }
+  }
+  if (!Array.isArray(template.tools) || template.tools.length === 0) {
+    throw new Error(`[bodyRewriter] template tools must be a non-empty array: ${templatePath}`)
+  }
+  const toolNames = new Set<string>()
+  for (const [index, tool] of template.tools.entries()) {
+    if (!tool || typeof tool !== 'object' || Array.isArray(tool)) {
+      throw new Error(`[bodyRewriter] template tools[${index}] must be an object: ${templatePath}`)
+    }
+    const name = (tool as Record<string, unknown>).name
+    if (typeof name !== 'string' || name.length === 0) {
+      throw new Error(`[bodyRewriter] template tools[${index}].name must be a non-empty string: ${templatePath}`)
+    }
+    if (toolNames.has(name)) {
+      throw new Error(`[bodyRewriter] template tools duplicate name ${name}: ${templatePath}`)
+    }
+    toolNames.add(name)
+  }
+  if (typeof template.deviceId !== 'string' || template.deviceId.trim().length === 0) {
+    throw new Error(`[bodyRewriter] template deviceId must be a non-empty string: ${templatePath}`)
+  }
+  if (typeof template.accountUuid !== 'string') {
+    throw new Error(`[bodyRewriter] template accountUuid must be a string: ${templatePath}`)
+  }
+  if (template.cacheControl !== undefined) {
+    const cacheControl = template.cacheControl
+    if (!cacheControl || typeof cacheControl !== 'object' || Array.isArray(cacheControl)) {
+      throw new Error(`[bodyRewriter] template cacheControl must be an object: ${templatePath}`)
+    }
+    const record = cacheControl as Record<string, unknown>
+    if (typeof record.type !== 'string' || (record.ttl !== undefined && typeof record.ttl !== 'string')) {
+      throw new Error(`[bodyRewriter] template cacheControl must include string type/ttl: ${templatePath}`)
+    }
+  }
+}
+
+
+export function rewriteCountTokensBody(
+  body: Buffer,
+): Buffer | null {
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(body.toString('utf8'))
+  } catch {
+    return null
+  }
+
+  if (!hasOnlyAllowedMessageBodyKeys(parsed)) {
+    return null
+  }
+  if (!Array.isArray(parsed.messages) || parsed.messages.length < 1) {
+    return null
+  }
+  if (parsed.tools !== undefined && !Array.isArray(parsed.tools)) {
+    return null
+  }
+  return Buffer.from(JSON.stringify(parsed), 'utf8')
 }
 
 export function rewriteMessageBody(
@@ -60,6 +155,10 @@ export function rewriteMessageBody(
   try {
     parsed = JSON.parse(body.toString('utf8'))
   } catch {
+    return null
+  }
+
+  if (!hasOnlyAllowedMessageBodyKeys(parsed)) {
     return null
   }
 
@@ -97,7 +196,7 @@ export function rewriteMessageBody(
     ...(block.cache_control ? { cache_control: { ...block.cache_control } } : {}),
   }))
 
-  // 2. Restructure system blocks to match v2.1.98 (3 blocks)
+  // 2. Restructure system blocks to match v2.1.131 (3 blocks)
   //    - block[0]: cc_version header (rewritten above)
   //    - block[1..]: replaced with template systemBlocks
   parsed.system = [newBlock0, ...clonedTemplateSystemBlocks]
@@ -109,12 +208,15 @@ export function rewriteMessageBody(
   // capture-time cwd to downstream viewers (relay session UIs, logs, etc.).
   backfillEnvSection(parsed.system as SystemBlock[], system as SystemBlock[])
 
-  // 3. Keep template tool definitions, but preserve request-only tools such as MCP tools.
-  parsed.tools = mergeTools(template.tools, tools)
+  // 3. Keep only captured template tool definitions. Unknown client-supplied tools
+  //    must not be forwarded to the official Claude upstream.
+  parsed.tools = cloneJsonArray(template.tools)
 
   // 4. Normalize metadata.user_id so device_id and account_uuid
   //    match the relay account, not the individual client
-  rewriteMetadataUserId(parsed, template)
+  if (!rewriteMetadataUserId(parsed, template)) {
+    return null
+  }
 
   // 5. Normalize cache_control shape across system[1..] and messages[].content[]
   //    to match the template era (e.g. drop ttl/scope for v2.1.112).
@@ -191,63 +293,42 @@ function backfillEnvSection(
 function rewriteMetadataUserId(
   parsed: Record<string, unknown>,
   template: BodyTemplate,
-): void {
+): boolean {
   const metadata = parsed.metadata
   if (!metadata || typeof metadata !== 'object') {
-    return
+    return true
   }
 
   const meta = metadata as Record<string, unknown>
   const raw = meta.user_id
+  if (raw === undefined) {
+    return true
+  }
   if (typeof raw !== 'string') {
-    return
+    return false
   }
 
   try {
-    const userId = JSON.parse(raw) as Record<string, unknown>
-    userId.device_id = template.deviceId
-    userId.account_uuid = template.accountUuid
-    meta.user_id = JSON.stringify(userId)
+    const userId = JSON.parse(raw) as unknown
+    if (!userId || typeof userId !== 'object' || Array.isArray(userId)) {
+      return false
+    }
+    const record = userId as Record<string, unknown>
+    record.device_id = template.deviceId
+    record.account_uuid = template.accountUuid
+    meta.user_id = JSON.stringify(record)
+    return true
   } catch {
-    // malformed user_id JSON — leave as-is
+    return false
   }
 }
 
-function mergeTools(
-  templateTools: readonly unknown[],
-  requestTools: readonly unknown[],
-): unknown[] {
-  const merged = [...templateTools]
-  const seenNames = new Set<string>()
-
-  for (const tool of templateTools) {
-    const name = getToolName(tool)
-    if (name) {
-      seenNames.add(name)
-    }
-  }
-
-  for (const tool of requestTools) {
-    const name = getToolName(tool)
-    if (!name) {
-      merged.push(tool)
-      continue
-    }
-    if (!seenNames.has(name)) {
-      merged.push(tool)
-      seenNames.add(name)
-    }
-  }
-
-  return merged
+function hasOnlyAllowedMessageBodyKeys(parsed: Record<string, unknown>): boolean {
+  return Object.keys(parsed).every((key) => MESSAGE_BODY_ALLOWED_TOP_LEVEL_KEYS.has(key))
 }
 
-function getToolName(tool: unknown): string | null {
-  if (!tool || typeof tool !== 'object') {
-    return null
-  }
-  const name = (tool as Partial<NamedTool>).name
-  return typeof name === 'string' && name.length > 0 ? name : null
+function cloneJsonArray(items: readonly unknown[]): unknown[] {
+  return items.map((item) => JSON.parse(JSON.stringify(item)) as unknown)
 }
 
 export function rewriteEventLoggingBody(

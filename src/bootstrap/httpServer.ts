@@ -40,7 +40,7 @@ export function rejectRelayUpgradeWhileDraining(socket: Duplex): void {
     error: {
       type: 'api_error',
       message: 'Relay instance is draining. Please retry on another instance.',
-      internal_code: 'COR_SERVICE_UNAVAILABLE',
+      internal_code: 'TQ_SERVICE_UNAVAILABLE',
     },
   })
   socket.end(
