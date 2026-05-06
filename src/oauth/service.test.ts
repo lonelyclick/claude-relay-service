@@ -1420,10 +1420,36 @@ test('OAuthService.selectAccount blocks heavy requests for explicit warmup-polic
   assert.match(account.autoBlockedReason ?? '', /warmup_preflight_block/)
 })
 
-test('OAuthService.selectAccount does not apply warmup limits to Claude accounts without warmup policy', async () => {
+test('OAuthService.selectAccount applies default warmup limits to Claude accounts without explicit policy', async () => {
   const { oauthService } = createService([
     buildAccount({
-      id: 'claude-no-warmup-heavy',
+      id: 'claude-default-warmup-heavy',
+      provider: 'claude-official',
+      createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      accountCreatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      warmupPolicyId: undefined,
+    }),
+  ])
+
+  await assert.rejects(
+    oauthService.selectAccount({
+      provider: 'claude-official',
+      forceAccountId: 'claude-default-warmup-heavy',
+      currentRequestBodyPreview: '{"cache_read_input_tokens":300000}',
+    }),
+    /warmup_preflight_block.*policy=a.*heavy_request=cache_read_preview_300000/,
+  )
+
+  const account = await oauthService.getAccount('claude-default-warmup-heavy')
+  assert.ok(account)
+  assert.equal(account.schedulerState, 'auto_blocked')
+  assert.match(account.autoBlockedReason ?? '', /warmup_preflight_block/)
+})
+
+test('OAuthService.selectAccount allows Claude accounts with warmup explicitly disabled', async () => {
+  const { oauthService } = createService([
+    buildAccount({
+      id: 'claude-warmup-disabled-heavy',
       provider: 'claude-official',
       warmupEnabled: false,
       warmupPolicyId: undefined,
@@ -1432,9 +1458,9 @@ test('OAuthService.selectAccount does not apply warmup limits to Claude accounts
 
   const resolved = await oauthService.selectAccount({
     provider: 'claude-official',
-    forceAccountId: 'claude-no-warmup-heavy',
+    forceAccountId: 'claude-warmup-disabled-heavy',
     currentRequestBodyPreview: '{"cache_read_input_tokens":300000}',
   })
 
-  assert.equal(resolved.account.id, 'claude-no-warmup-heavy')
+  assert.equal(resolved.account.id, 'claude-warmup-disabled-heavy')
 })

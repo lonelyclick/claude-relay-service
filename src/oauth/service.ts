@@ -82,8 +82,8 @@ function trimToNull(value: string | null | undefined): string | null {
   return trimmed ? trimmed : null
 }
 
-function hasExplicitClaudeWarmupPolicy(account: StoredAccount): boolean {
-  return account.provider === CLAUDE_OFFICIAL_PROVIDER.id && account.warmupEnabled !== false && account.warmupPolicyId != null
+function hasClaudeWarmupProtection(account: StoredAccount): boolean {
+  return account.provider === CLAUDE_OFFICIAL_PROVIDER.id && account.warmupEnabled !== false
 }
 
 function isMissingProxyDisabledError(value: string | null | undefined): boolean {
@@ -3406,7 +3406,7 @@ export class OAuthService {
     options: SelectAccountOptions
     now: number
   }): Promise<void> {
-    if (!hasExplicitClaudeWarmupPolicy(input.account)) return
+    if (!hasClaudeWarmupProtection(input.account)) return
     const warmup = resolveClaudeWarmupStatus({ account: input.account, now: input.now })
     if (!warmup.enabled) return
 
@@ -3467,7 +3467,7 @@ export class OAuthService {
       const isYoung = ageMs == null || ageMs < newOnlyAgeMs
       if (
         requestWeight.heavy &&
-        hasExplicitClaudeWarmupPolicy(account) &&
+        hasClaudeWarmupProtection(account) &&
         (ageMs == null || ageMs < matureHeavyAgeMs) &&
         account.id !== input.currentRoute?.accountId
       ) {
