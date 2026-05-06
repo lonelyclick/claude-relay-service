@@ -33,6 +33,91 @@ CREATE TABLE IF NOT EXISTS relay_organizations (
 CREATE INDEX IF NOT EXISTS idx_relay_organizations_external_id ON relay_organizations (external_organization_id);
 `
 
+const CREATE_QUOTA_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS relay_organization_quota (
+  organization_id TEXT PRIMARY KEY REFERENCES relay_organizations(id) ON DELETE CASCADE,
+  daily_limit_micros BIGINT,
+  monthly_limit_micros BIGINT,
+  alert_threshold_pct INTEGER NOT NULL DEFAULT 80 CHECK (alert_threshold_pct BETWEEN 1 AND 100),
+  last_alert_sent_at TIMESTAMPTZ,
+  alert_scope TEXT,
+  updated_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`
+
+export interface RelayOrganizationQuota {
+  organizationId: string
+  dailyLimitMicros: string | null
+  monthlyLimitMicros: string | null
+  alertThresholdPct: number
+  lastAlertSentAt: string | null
+  alertScope: 'daily' | 'monthly' | null
+  updatedBy: string | null
+  updatedAt: string | null
+}
+
+export interface RelayOrganizationCurrentSpend {
+  todayMicros: string
+  thisMonthMicros: string
+}
+
+function normalizeQuotaLimit(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null
+  if (typeof value === 'bigint') {
+    if (value < 0n) throw new Error('quota limit must be non-negative')
+    return value.toString()
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error('quota limit must be a finite number')
+    if (value < 0) throw new Error('quota limit must be non-negative')
+    return String(Math.floor(value))
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed === '') return null
+    if (!/^\d+$/.test(trimmed)) throw new Error('quota limit must be an integer string')
+    return trimmed
+  }
+  throw new Error('quota limit type invalid')
+}
+
+function normalizeAlertThreshold(value: unknown): number {
+  if (value === null || value === undefined) return 80
+  const n = typeof value === 'string' ? Number.parseInt(value, 10) : Number(value)
+  if (!Number.isFinite(n)) return 80
+  if (n < 1) return 1
+  if (n > 100) return 100
+  return Math.floor(n)
+}
+
+function rowToQuota(row: Record<string, unknown> | null | undefined, organizationId: string): RelayOrganizationQuota {
+  if (!row) {
+    return {
+      organizationId,
+      dailyLimitMicros: null,
+      monthlyLimitMicros: null,
+      alertThresholdPct: 80,
+      lastAlertSentAt: null,
+      alertScope: null,
+      updatedBy: null,
+      updatedAt: null,
+    }
+  }
+  const scope = row.alert_scope === 'daily' || row.alert_scope === 'monthly' ? row.alert_scope : null
+  return {
+    organizationId: row.organization_id as string,
+    dailyLimitMicros: row.daily_limit_micros == null ? null : String(row.daily_limit_micros),
+    monthlyLimitMicros: row.monthly_limit_micros == null ? null : String(row.monthly_limit_micros),
+    alertThresholdPct: Number(row.alert_threshold_pct ?? 80),
+    lastAlertSentAt: row.last_alert_sent_at ? (row.last_alert_sent_at as Date).toISOString() : null,
+    alertScope: scope,
+    updatedBy: row.updated_by ? (row.updated_by as string) : null,
+    updatedAt: row.updated_at ? (row.updated_at as Date).toISOString() : null,
+  }
+}
+
 export type RelayOrganizationKind = 'personal' | 'team'
 
 export interface RelayOrganization {
@@ -102,6 +187,89 @@ export class OrganizationStore {
     await this.pool.query('ALTER TABLE relay_organizations ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true')
     await this.pool.query(`UPDATE relay_organizations SET kind = 'team' WHERE kind NOT IN ('personal', 'team') OR kind IS NULL`)
     await this.pool.query(`UPDATE relay_organizations SET billing_mode = 'prepaid' WHERE billing_mode NOT IN ('postpaid', 'prepaid') OR billing_mode IS NULL`)
+    await this.pool.query(CREATE_QUOTA_TABLE_SQL)
+  }
+
+  async getOrganizationQuota(organizationId: string): Promise<RelayOrganizationQuota> {
+    const result = await this.pool.query(
+      'SELECT * FROM relay_organization_quota WHERE organization_id = $1',
+      [organizationId],
+    )
+    return rowToQuota(result.rows[0] ?? null, organizationId)
+  }
+
+  async setOrganizationQuota(
+    organizationId: string,
+    input: {
+      dailyLimitMicros?: string | number | null
+      monthlyLimitMicros?: string | number | null
+      alertThresholdPct?: number | null
+      updatedBy?: string | null
+    },
+  ): Promise<RelayOrganizationQuota> {
+    const dailyValue = normalizeQuotaLimit(input.dailyLimitMicros)
+    const monthlyValue = normalizeQuotaLimit(input.monthlyLimitMicros)
+    const alertPct = normalizeAlertThreshold(input.alertThresholdPct)
+    const updatedBy = typeof input.updatedBy === 'string' && input.updatedBy.trim()
+      ? input.updatedBy.trim().slice(0, 200)
+      : null
+
+    const result = await this.pool.query(
+      `INSERT INTO relay_organization_quota (
+         organization_id, daily_limit_micros, monthly_limit_micros,
+         alert_threshold_pct, updated_by
+       ) VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (organization_id) DO UPDATE SET
+         daily_limit_micros = EXCLUDED.daily_limit_micros,
+         monthly_limit_micros = EXCLUDED.monthly_limit_micros,
+         alert_threshold_pct = EXCLUDED.alert_threshold_pct,
+         updated_by = EXCLUDED.updated_by,
+         updated_at = NOW()
+       RETURNING *`,
+      [organizationId, dailyValue, monthlyValue, alertPct, updatedBy],
+    )
+    return rowToQuota(result.rows[0], organizationId)
+  }
+
+  async markQuotaAlertSent(
+    organizationId: string,
+    scope: 'daily' | 'monthly',
+    sentAt: Date = new Date(),
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE relay_organization_quota
+          SET last_alert_sent_at = $2,
+              alert_scope = $3,
+              updated_at = NOW()
+        WHERE organization_id = $1`,
+      [organizationId, sentAt, scope],
+    )
+  }
+
+  async getOrganizationCurrentSpend(
+    organizationId: string,
+  ): Promise<RelayOrganizationCurrentSpend> {
+    const result = await this.pool.query<{
+      today_micros: string | number | bigint | null
+      month_micros: string | number | bigint | null
+    }>(
+      `SELECT
+         COALESCE(SUM(amount_micros) FILTER (
+           WHERE usage_created_at >= date_trunc('day', NOW())
+         ), 0)::bigint AS today_micros,
+         COALESCE(SUM(amount_micros) FILTER (
+           WHERE usage_created_at >= date_trunc('month', NOW())
+         ), 0)::bigint AS month_micros
+       FROM billing_line_items
+       WHERE organization_id = $1
+         AND usage_created_at >= date_trunc('month', NOW())`,
+      [organizationId],
+    )
+    const row = result.rows[0]
+    return {
+      todayMicros: String(row?.today_micros ?? '0'),
+      thisMonthMicros: String(row?.month_micros ?? '0'),
+    }
   }
 
   async syncOrganization(input: {

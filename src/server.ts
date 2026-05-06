@@ -4309,6 +4309,122 @@ export function createServer(services): express.Express {
       }),
     );
 
+    app.get(
+      "/internal/ccwebapp/organizations/:relayOrgId/usage/:requestId",
+      asyncRoute(async (req, res) => {
+        if (!services.organizationStore || !services.userStore) {
+          res.status(503).json({ error: "billing_disabled" });
+          return;
+        }
+        const relayOrgId = getRouteParam(req.params.relayOrgId);
+        const organization =
+          await services.organizationStore.getOrganizationById(relayOrgId);
+        if (!organization) {
+          res.status(404).json({ error: "organization_not_found" });
+          return;
+        }
+        const requestId = getRouteParam(req.params.requestId);
+        const usageRecordIdRaw =
+          typeof req.query.usageRecordId === "string"
+            ? Number(req.query.usageRecordId)
+            : undefined;
+        const usageRecordId = Number.isFinite(usageRecordIdRaw)
+          ? usageRecordIdRaw
+          : undefined;
+        const legacyExternalUserId =
+          typeof req.query.legacyExternalUserId === "string"
+            ? req.query.legacyExternalUserId
+            : undefined;
+        const legacyUser = legacyExternalUserId && services.userStore
+          ? await services.userStore.getUserByExternalId(legacyExternalUserId)
+          : null;
+        const detail = await services.userStore.getOrganizationRequestDetail(
+          relayOrgId,
+          requestId,
+          usageRecordId ?? null,
+          legacyUser?.id ?? null,
+        );
+        if (!detail) {
+          res.status(404).json({ error: "request_not_found" });
+          return;
+        }
+        res.json({ request: detail });
+      }),
+    );
+
+    app.get(
+      "/internal/ccwebapp/organizations/:relayOrgId/quota",
+      asyncRoute(async (req, res) => {
+        if (!services.organizationStore) {
+          res.status(503).json({ error: "billing_disabled" });
+          return;
+        }
+        const relayOrgId = getRouteParam(req.params.relayOrgId);
+        const organization =
+          await services.organizationStore.getOrganizationById(relayOrgId);
+        if (!organization) {
+          res.status(404).json({ error: "organization_not_found" });
+          return;
+        }
+        const [quota, currentSpend] = await Promise.all([
+          services.organizationStore.getOrganizationQuota(relayOrgId),
+          services.organizationStore.getOrganizationCurrentSpend(relayOrgId),
+        ]);
+        res.json({ quota, currentSpend });
+      }),
+    );
+
+    app.post(
+      "/internal/ccwebapp/organizations/:relayOrgId/quota",
+      asyncRoute(async (req, res) => {
+        if (!services.organizationStore) {
+          res.status(503).json({ error: "billing_disabled" });
+          return;
+        }
+        const relayOrgId = getRouteParam(req.params.relayOrgId);
+        const organization =
+          await services.organizationStore.getOrganizationById(relayOrgId);
+        if (!organization) {
+          res.status(404).json({ error: "organization_not_found" });
+          return;
+        }
+        try {
+          const quota = await services.organizationStore.setOrganizationQuota(
+            relayOrgId,
+            {
+              dailyLimitMicros: req.body?.dailyLimitMicros ?? null,
+              monthlyLimitMicros: req.body?.monthlyLimitMicros ?? null,
+              alertThresholdPct: req.body?.alertThresholdPct,
+              updatedBy:
+                typeof req.body?.updatedBy === "string" ? req.body.updatedBy : null,
+            },
+          );
+          const currentSpend =
+            await services.organizationStore.getOrganizationCurrentSpend(relayOrgId);
+          res.json({ quota, currentSpend });
+        } catch (error) {
+          res.status(400).json({
+            error: "invalid_quota",
+            message: error instanceof Error ? error.message : "invalid quota",
+          });
+        }
+      }),
+    );
+
+    app.post(
+      "/internal/ccwebapp/organizations/:relayOrgId/quota/alert-sent",
+      asyncRoute(async (req, res) => {
+        if (!services.organizationStore) {
+          res.status(503).json({ error: "billing_disabled" });
+          return;
+        }
+        const relayOrgId = getRouteParam(req.params.relayOrgId);
+        const scope = req.body?.scope === "monthly" ? "monthly" : "daily";
+        await services.organizationStore.markQuotaAlertSent(relayOrgId, scope);
+        res.json({ ok: true });
+      }),
+    );
+
     app.post(
       "/internal/ccwebapp/organizations/:relayOrgId/topup",
       asyncRoute(async (req, res) => {

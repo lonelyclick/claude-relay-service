@@ -2350,32 +2350,73 @@ export class UserStore {
 
     if (!rows.length) return null
     const r = rows[0]
-    return {
-      usageRecordId: Number(r.usage_record_id),
-      requestId: r.request_id,
-      accountId: r.account_id,
-      sessionKey: r.session_key,
-      clientDeviceId: r.client_device_id ?? null,
-      model: r.model,
-      inputTokens: Number(r.input_tokens),
-      outputTokens: Number(r.output_tokens),
-      cacheReadTokens: Number(r.cache_read_input_tokens ?? 0),
-      cacheCreationTokens: Number(r.cache_creation_input_tokens ?? 0),
-      statusCode: r.status_code,
-      durationMs: r.duration_ms,
-      target: r.target,
-      relayKeySource: r.relay_key_source ?? null,
-      createdAt: (r.created_at as Date).toISOString(),
-      requestHeaders: r.request_headers ?? null,
-      requestBodyPreview: r.request_body_preview ?? null,
-      responseHeaders: r.response_headers ?? null,
-      responseBodyPreview: r.response_body_preview ?? null,
-      upstreamRequestHeaders: r.upstream_request_headers ?? null,
+    return mapUsageRecordRowToDetail(r)
+  }
+
+  async getOrganizationRequestDetail(
+    organizationId: string,
+    requestId: string,
+    usageRecordId?: number | null,
+    legacyUserId?: string | null,
+  ): Promise<Record<string, unknown> | null> {
+    const hasUsageRecordId = Number.isFinite(usageRecordId)
+    const params: unknown[] = [organizationId, requestId]
+    let ownerFilter = 'organization_id = $1'
+    if (legacyUserId) {
+      params.push(legacyUserId)
+      ownerFilter = `(organization_id = $1 OR user_id = $${params.length})`
     }
+    let usageRecordFilter = ''
+    if (hasUsageRecordId) {
+      params.push(Math.floor(Number(usageRecordId)))
+      usageRecordFilter = `AND id = $${params.length}`
+    }
+
+    const { rows } = await this.pool.query(`
+      SELECT id AS usage_record_id, request_id, account_id, session_key, client_device_id, model,
+             input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens,
+             status_code, duration_ms, target, relay_key_source, created_at,
+             request_headers, request_body_preview, response_headers, response_body_preview, upstream_request_headers
+      FROM usage_records
+      WHERE ${ownerFilter}
+        AND request_id = $2
+        ${usageRecordFilter}
+        AND COALESCE(attempt_kind, 'final') = 'final'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `, params)
+
+    if (!rows.length) return null
+    return mapUsageRecordRowToDetail(rows[0])
   }
 
   async close(): Promise<void> {
     await this.pool.end()
+  }
+}
+
+function mapUsageRecordRowToDetail(r: Record<string, unknown>): Record<string, unknown> {
+  return {
+    usageRecordId: Number(r.usage_record_id),
+    requestId: r.request_id,
+    accountId: r.account_id,
+    sessionKey: r.session_key,
+    clientDeviceId: r.client_device_id ?? null,
+    model: r.model,
+    inputTokens: Number(r.input_tokens),
+    outputTokens: Number(r.output_tokens),
+    cacheReadTokens: Number(r.cache_read_input_tokens ?? 0),
+    cacheCreationTokens: Number(r.cache_creation_input_tokens ?? 0),
+    statusCode: r.status_code,
+    durationMs: r.duration_ms,
+    target: r.target,
+    relayKeySource: r.relay_key_source ?? null,
+    createdAt: (r.created_at as Date).toISOString(),
+    requestHeaders: r.request_headers ?? null,
+    requestBodyPreview: r.request_body_preview ?? null,
+    responseHeaders: r.response_headers ?? null,
+    responseBodyPreview: r.response_body_preview ?? null,
+    upstreamRequestHeaders: r.upstream_request_headers ?? null,
   }
 }
 
