@@ -196,6 +196,7 @@ export interface ITokenStore {
   updateAccountRateLimitedUntil?(accountId: string, until: number): Promise<void>
   getActiveRateLimitedUntilMap?(now: number): Promise<Map<string, number>>
   updateAccountLastProbeAttemptAt?(accountId: string, at: number): Promise<void>
+  renameRoutingGroup?(oldId: string, newId: string): Promise<RoutingGroup | null>
   clear(): Promise<void>
   close?(): Promise<void>
 }

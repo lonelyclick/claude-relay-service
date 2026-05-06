@@ -387,18 +387,6 @@ export class ApiKeyStore {
     return rows[0] ? rowToApiKey(rows[0]) : null
   }
 
-  async renameGroup(oldGroupId: string, newGroupId: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE relay_api_keys
-       SET anthropic_group_id = CASE WHEN anthropic_group_id = $1 THEN $2 ELSE anthropic_group_id END,
-           openai_group_id = CASE WHEN openai_group_id = $1 THEN $2 ELSE openai_group_id END,
-           google_group_id = CASE WHEN google_group_id = $1 THEN $2 ELSE google_group_id END
-       WHERE anthropic_group_id = $1 OR openai_group_id = $1 OR google_group_id = $1`,
-      [oldGroupId, newGroupId],
-    )
-    this.hashLookupCache.clear()
-  }
-
   async rotateLatestForUser(
     userId: string,
     options: { name?: string } = {},

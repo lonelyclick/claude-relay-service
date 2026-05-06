@@ -1833,6 +1833,10 @@ async function updateRoutingGroupControl(services, groupId, body) {
   const newId = getOptionalString(body?.id);
   let routingGroup = null;
   if (newId && newId !== groupId) {
+    // PgTokenStore.renameRoutingGroup updates routing_groups, accounts (JSONB),
+    // relay_users, relay_api_keys, billing_channel_multipliers (incl. PK rebuild),
+    // billing_line_items, and usage_records in a single transaction. No further
+    // per-store cascade is needed here.
     routingGroup = await services.oauthService.renameRoutingGroup(
       groupId,
       newId,
@@ -1843,8 +1847,6 @@ async function updateRoutingGroupControl(services, groupId, body) {
         message: `路由组不存在: ${groupId}`,
       });
     }
-    await services.userStore?.renameRoutingGroup?.(groupId, newId);
-    await services.apiKeyStore?.renameGroup?.(groupId, newId);
   }
   const targetGroupId = routingGroup?.id ?? groupId;
   routingGroup = await services.oauthService.updateRoutingGroup(targetGroupId, {

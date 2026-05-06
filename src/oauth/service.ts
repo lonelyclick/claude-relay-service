@@ -1036,6 +1036,20 @@ export class OAuthService {
     if (oldGroupId === nextGroupId) {
       return this.getRoutingGroup(oldGroupId)
     }
+    // Production stores (PgTokenStore) implement renameRoutingGroup atomically across
+    // routing_groups, accounts, relay_users, relay_api_keys, billing_channel_multipliers,
+    // billing_line_items, and usage_records inside a single transaction.
+    if (this.store.renameRoutingGroup) {
+      try {
+        return await this.store.renameRoutingGroup(oldGroupId, nextGroupId)
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('Routing group already exists:')) {
+          throw new InputValidationError(error.message)
+        }
+        throw error
+      }
+    }
+    // In-memory fallback for unit tests: only renames within the token store snapshot.
     return this.store.updateData((current) => {
       const data = this.pruneExpiredStickySessions(current)
       const existing = (data.routingGroups ?? []).find((group) => group.id === oldGroupId) ?? null

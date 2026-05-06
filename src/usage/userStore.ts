@@ -740,17 +740,6 @@ export class UserStore {
     await this.pool.query('DELETE FROM session_routes')
   }
 
-  async renameRoutingGroup(oldGroupId: string, newGroupId: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE relay_users
-       SET routing_group_id = CASE WHEN routing_group_id = $1 THEN $2 ELSE routing_group_id END,
-           preferred_group = CASE WHEN preferred_group = $1 THEN $2 ELSE preferred_group END,
-           updated_at = NOW()
-       WHERE routing_group_id = $1 OR preferred_group = $1`,
-      [oldGroupId, newGroupId],
-    )
-  }
-
   async listSessionHandoffs(limit = 200): Promise<SessionHandoff[]> {
     const { rows } = await this.pool.query(
       'SELECT * FROM session_handoffs ORDER BY created_at DESC LIMIT $1',

@@ -455,6 +455,148 @@ export class PgTokenStore implements ITokenStore {
     await this.pool.end()
   }
 
+  async renameRoutingGroup(oldId: string, newId: string): Promise<RoutingGroup | null> {
+    if (oldId === newId) {
+      const groups = await this.getRoutingGroups()
+      return groups.find((group) => group.id === oldId) ?? null
+    }
+
+    const run = async (): Promise<RoutingGroup | null> => {
+      const client = await this.pool.connect()
+      let began = false
+      try {
+        await this.ensureTablesWithClient(client)
+        await client.query('BEGIN')
+        began = true
+
+        const lockResult = await client.query(
+          'SELECT id FROM routing_groups WHERE id = $1 FOR UPDATE',
+          [oldId],
+        )
+        if (!lockResult.rows.length) {
+          await client.query('COMMIT')
+          return null
+        }
+
+        const collisionResult = await client.query(
+          'SELECT id FROM routing_groups WHERE id = $1',
+          [newId],
+        )
+        if (collisionResult.rows.length) {
+          throw new Error(`Routing group already exists: ${newId}`)
+        }
+
+        // routing_groups itself
+        const groupResult = await client.query(
+          `UPDATE routing_groups
+           SET id = $2,
+               name = CASE WHEN name = $1 THEN $2 ELSE name END,
+               updated_at = NOW()
+           WHERE id = $1
+           RETURNING id, name, type, description, description_zh, is_active, created_at, updated_at`,
+          [oldId, newId],
+        )
+
+        // accounts.data JSONB (routingGroupId + group mirror)
+        await client.query(
+          `UPDATE accounts
+           SET data = jsonb_set(
+                        jsonb_set(data, '{routingGroupId}', to_jsonb($2::text), true),
+                        '{group}', to_jsonb($2::text), true
+                      ),
+               updated_at = NOW()
+           WHERE data->>'routingGroupId' = $1 OR data->>'group' = $1`,
+          [oldId, newId],
+        )
+
+        // relay_users
+        await client.query(
+          `UPDATE relay_users
+           SET routing_group_id = CASE WHEN routing_group_id = $1 THEN $2 ELSE routing_group_id END,
+               preferred_group  = CASE WHEN preferred_group  = $1 THEN $2 ELSE preferred_group  END,
+               updated_at = NOW()
+           WHERE routing_group_id = $1 OR preferred_group = $1`,
+          [oldId, newId],
+        )
+
+        // relay_api_keys (anthropic / openai / google group columns)
+        await client.query(
+          `UPDATE relay_api_keys
+           SET anthropic_group_id = CASE WHEN anthropic_group_id = $1 THEN $2 ELSE anthropic_group_id END,
+               openai_group_id    = CASE WHEN openai_group_id    = $1 THEN $2 ELSE openai_group_id    END,
+               google_group_id    = CASE WHEN google_group_id    = $1 THEN $2 ELSE google_group_id    END
+           WHERE anthropic_group_id = $1 OR openai_group_id = $1 OR google_group_id = $1`,
+          [oldId, newId],
+        )
+
+        // billing_channel_multipliers — PK is `${routing_group_id}:${protocol}:${vendor}:${model}`,
+        // so rebuild the id from the canonical columns whenever we shift the group.
+        await client.query(
+          `UPDATE billing_channel_multipliers
+           SET id = $2 || ':' || protocol || ':' || model_vendor || ':' || model,
+               routing_group_id = $2,
+               updated_at = NOW()
+           WHERE routing_group_id = $1`,
+          [oldId, newId],
+        )
+
+        // billing_line_items
+        await client.query(
+          `UPDATE billing_line_items
+           SET routing_group_id = $2,
+               updated_at = NOW()
+           WHERE routing_group_id = $1`,
+          [oldId, newId],
+        )
+
+        // usage_records
+        await client.query(
+          `UPDATE usage_records
+           SET routing_group_id = $2
+           WHERE routing_group_id = $1`,
+          [oldId, newId],
+        )
+
+        await client.query('COMMIT')
+
+        const row = groupResult.rows[0] as {
+          id: string
+          name: string
+          type: RoutingGroup['type']
+          description: string | null
+          description_zh: string | null
+          is_active: boolean
+          created_at: Date
+          updated_at: Date
+        }
+        return {
+          id: row.id,
+          name: row.name,
+          type: row.type,
+          description: row.description,
+          descriptionZh: row.description_zh,
+          isActive: row.is_active,
+          createdAt: row.created_at.toISOString(),
+          updatedAt: row.updated_at.toISOString(),
+        }
+      } catch (error) {
+        if (began) {
+          await client.query('ROLLBACK').catch(() => {})
+        }
+        throw error
+      } finally {
+        client.release()
+      }
+    }
+
+    const task = this.updateChain.then(run, run)
+    this.updateChain = task.then(
+      () => undefined,
+      () => undefined,
+    )
+    return task
+  }
+
   private async readData(): Promise<TokenStoreData> {
     const client = await this.pool.connect()
     try {
